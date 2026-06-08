@@ -6,7 +6,7 @@ import api, { getAuthHeaders, getBackendHost, getWsBaseUrl } from './auth'
 import dayjs from 'dayjs'
 import mammoth from 'mammoth'
 import * as XLSX from 'xlsx'
-import { useAppStore } from './store/useAppStore'
+import { useUIStore } from './store/useUIStore'
 
 const { Content } = Layout
 const { Title } = Typography
@@ -48,7 +48,7 @@ const getFileIcon = (fileType) => {
 
 const Documents = ({ user, companies = [], users = [] }) => {
     const { t } = useTranslation()
-    const { setCurrentDoc, setPreviewOpen: setAppPreviewOpen } = useAppStore()
+    const { setCurrentDoc, setPreviewOpen: setAppPreviewOpen } = useUIStore()
     const [documents, setDocuments] = useState([])
     const [loading, setLoading] = useState(false)
     const [uploading, setUploading] = useState(false)

@@ -1,5 +1,8 @@
 import { create } from 'zustand'
 
+// ── Core business state: user, data, system config ──
+// UI-only state (modals, panels, display toggles) lives in useUIStore.
+
 export const useAppStore = create((set) => ({
   // User state
   user: null,
@@ -11,22 +14,6 @@ export const useAppStore = create((set) => ({
   users: [],
   setUsers: (users) => set({ users }),
 
-  // Global UI State
-  siderCollapsed: false,
-  setSiderCollapsed: (collapsed) => set({ siderCollapsed: collapsed }),
-  
-  showLogs: true,
-  setShowLogs: (show) => set({ showLogs: show }),
-  
-  showSettings: false,
-  setShowSettings: (show) => set({ showSettings: show }),
-
-  showUsersManagement: false,
-  setShowUsersManagement: (show) => set({ showUsersManagement: show }),
-
-  showCompanyManagement: false,
-  setShowCompanyManagement: (show) => set({ showCompanyManagement: show }),
-
   // Local Agent Status
   localAgentStatus: 'checking',
   setLocalAgentStatus: (status) => set({ localAgentStatus: status }),
@@ -36,15 +23,9 @@ export const useAppStore = create((set) => ({
   setProviders: (providers) => set({ providers }),
   selectedProvider: '',
   setSelectedProvider: (provider) => set({ selectedProvider: provider }),
-  
+
   dbConfigs: [],
   setDbConfigs: (dbConfigs) => set({ dbConfigs }),
-
-  // Document Preview State
-  currentDoc: null,
-  setCurrentDoc: (doc) => set({ currentDoc: doc }),
-  previewOpen: false,
-  setPreviewOpen: (open) => set({ previewOpen: open }),
 
   // Company Channel Access
   companyChannels: [],

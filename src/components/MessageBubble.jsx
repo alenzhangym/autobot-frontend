@@ -5,54 +5,8 @@ import { Light as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { Avatar, Button, Tooltip, Space, Tag, Collapse } from 'antd';
 import { RobotOutlined, UserOutlined, CopyOutlined, CheckOutlined, CloseOutlined, ReloadOutlined, ExpandAltOutlined, LoadingOutlined, ClockCircleOutlined, ApartmentOutlined, LinkOutlined, BranchesOutlined, NodeIndexOutlined, ShareAltOutlined, DeleteOutlined, AppstoreOutlined, ExclamationCircleOutlined, BulbOutlined } from '@ant-design/icons';
-import { useState, useEffect, useMemo } from 'react';
-import { extractDataStoreIds, isValidDataStoreResponse, fetchMissingDataFromServer, injectDataStoreData, decodeHtmlEntities, cleanScriptSrc, wrapUiHtml, isHtmlContent, MarkdownContent, extractTrailingStateJson, stripAgentMarkers, tryParseAnalysisResult } from '../utils/helpers.jsx';
-
-
-/**
- * Strip agent command markers and trailing JSON state from message content.
- * Removes __CMD__ blocks and the {...} state JSON at the end.
- *
- * <p>All __CMD__ extraction uses the depth-tracking
- * {@link extractTrailingJsonObject} which correctly handles nested
- * JSON objects and  characters inside string values — unlike the
- * previous regex-based approach ({@code [^}]*}) which broke on
- * {@code "content":"class Foo { }"} inside write commands.</p>
- */
-function extractTrailingAnalysisStateJson(content) {
-  if (!content || typeof content !== 'string') return ''
-  const stateJson = extractTrailingStateJson(content)
-  return stateJson || ''
-}
-
-function extractAnalysisState(content) {
-  if (!content || typeof content !== 'string') return null
-  const stateJson = extractTrailingStateJson(content)
-  if (!stateJson) return null
-  try {
-    const parsed = JSON.parse(stateJson)
-    return parsed && parsed.__state ? parsed : null
-  } catch (e) {
-    return null
-  }
-}
-
-function decodeStateStringList(encoded) {
-  if (!encoded || typeof encoded !== 'string') return []
-  try {
-    const normalized = encoded.replace(/-/g, '+').replace(/_/g, '/')
-    const padded = normalized + '='.repeat((4 - (normalized.length % 4 || 4)) % 4)
-    const decoded = atob(padded)
-    const bytes = Uint8Array.from(decoded, ch => ch.charCodeAt(0))
-    const text = new TextDecoder().decode(bytes)
-    const parsed = JSON.parse(text)
-    return Array.isArray(parsed)
-      ? parsed.filter(item => typeof item === 'string' && item.trim())
-      : []
-  } catch (e) {
-    return []
-  }
-}
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { extractDataStoreIds, isValidDataStoreResponse, fetchMissingDataFromServer, injectDataStoreData, decodeHtmlEntities, cleanScriptSrc, wrapUiHtml, isHtmlContent, MarkdownContent, extractTrailingStateJson, stripAgentMarkers, extractAnalysisState, tryParseAnalysisResult, decodeStateStringList } from '../utils/helpers.jsx';
 
 function formatAnalysisPhase(phase) {
   switch ((phase || '').trim()) {
@@ -402,14 +356,45 @@ function MessageBubble({ msg, onCopy, onRegenerate, onExpand, onDelete, sessionI
   const [fullscreen, setFullscreen] = useState(false);
   const isUser = msg.role === 'user';
   const isPlan = msg.role === 'plan';
-  const analysisState = useMemo(
-    () => msg.__cmd?.state || (typeof msg.content === 'string' ? extractAnalysisState(msg.content) : null),
-    [msg.__cmd?.state, msg.content]
-  );
+
+  // ── Graceful degradation: keep last valid parse results ──
+  // When a new message's JSON is truncated/malformed, parsing returns null.
+  // Without a cache, child components (CodeAnalysisProgress, EvidenceTags)
+  // would disappear from the DOM entirely. By retaining the last valid state,
+  // the UI stays stable — progress bars persist, tags remain visible.
+  const lastValidState = useRef(null)
+  const lastValidResult = useRef(null)
+
+  const analysisState = useMemo(() => {
+    const parsed = msg.__cmd?.state || (typeof msg.content === 'string' ? extractAnalysisState(msg.content) : null)
+    if (parsed) {
+      lastValidState.current = parsed
+      return parsed
+    }
+    // If msg.__cmd exists but state is null, _parseErrors may explain why.
+    // Degrade gracefully: keep the previous valid state instead of null.
+    if (msg.__cmd && !msg.__cmd.state && lastValidState.current) {
+      return lastValidState.current
+    }
+    return null
+  }, [msg.__cmd?.state, msg.content]);
+
   const strippedContent = useMemo(
     () => msg.__cmd?.displayContent || (typeof msg.content === 'string' ? stripAgentMarkers(msg.content) : null),
     [msg.__cmd?.displayContent, msg.content]
   );
+
+  const analysisResult = useMemo(() => {
+    const parsed = msg.__cmd?.analysisResult
+    if (parsed) {
+      lastValidResult.current = parsed
+      return parsed
+    }
+    if (msg.__cmd && !msg.__cmd.analysisResult && lastValidResult.current) {
+      return lastValidResult.current
+    }
+    return null
+  }, [msg.__cmd?.analysisResult]);
 
   const handleCopy = () => {
     if (onCopy) onCopy(msg.content);
@@ -566,6 +551,21 @@ function MessageBubble({ msg, onCopy, onRegenerate, onExpand, onDelete, sessionI
           <span style={{ color: '#888', fontSize: 12 }}>{isUser ? 'You' : 'AutoBot'}</span>
           {msg.timestamp && <span style={{ color: '#555', fontSize: 11 }}>{msg.timestamp}</span>}
           {!isUser && msg.model && <Tag style={{ fontSize: 10, margin: 0 }}>{msg.model}</Tag>}
+          {!isUser && msg.__cmd?._parseErrors && (
+            <Tooltip
+              title={msg.__cmd._parseErrors.map((e, i) => (
+                <div key={i} style={{ marginBottom: 4 }}>
+                  <strong>{e.field}:</strong> {e.error}
+                </div>
+              ))}
+              overlayStyle={{ maxWidth: 360 }}
+            >
+              <Tag color="warning" style={{ fontSize: 10, margin: 0, cursor: 'help' }}>
+                <ExclamationCircleOutlined style={{ marginRight: 2 }} />
+                parse issues ({msg.__cmd._parseErrors.length})
+              </Tag>
+            </Tooltip>
+          )}
         </div>
         <div style={{ 
           background: isUser ? '#1a1a1a' : '#111', 
@@ -581,7 +581,7 @@ function MessageBubble({ msg, onCopy, onRegenerate, onExpand, onDelete, sessionI
             </div>
           ) : null}
           {!isUser && analysisState && <CodeAnalysisProgress state={analysisState} />}
-          {strippedContent && renderContent(strippedContent, msg.__cmd?.analysisResult)}
+          {strippedContent && renderContent(strippedContent, analysisResult)}
           {msg.content && typeof msg.content === 'object' && !msg.content.plan && (
             msg.content.type === 'provenance_context'
               ? <ProvenanceContextView units={msg.content.units} />
@@ -1155,7 +1155,7 @@ function renderContent(content, preParsedAnalysis) {
   }
 
   if (isHtmlContent(content)) {
-    // Unwrap JSON-wrapped HTML: {"html": "<html>..."} → raw HTML
+    // ... existing HTML handling ...
     let html = content;
     try {
       if (html.trim().startsWith('{') && html.includes('"html"')) {
@@ -1164,10 +1164,7 @@ function renderContent(content, preParsedAnalysis) {
           html = parsed.html;
         }
       }
-    } catch (e) {
-      // Not valid JSON — use as-is
-    }
-    // Strip markdown code fences if present
+    } catch (e) {}
     html = html.replace(/^```[a-z]*\s*\n?/i, '').replace(/\n?```\s*$/i, '');
 
     const styledHtml = `
@@ -1204,7 +1201,39 @@ function renderContent(content, preParsedAnalysis) {
     );
   }
 
+  // If content appears to be JSON (not handled by tryParseAnalysisResult),
+  // wrap it in a code fence so it renders with syntax highlighting instead
+  // of plain unformatted text.
+  if (looksLikeJsonBlob(content)) {
+    return <MarkdownContent content={'```json\n' + content + '\n```'} />;
+  }
+
   return <MarkdownContent content={content} />;
+}
+
+/**
+ * Heuristic: does the content appear to be primarily a JSON blob?
+ * True when the trimmed content starts with { or [ and the first/last
+ * braces are balanced at the top level.
+ */
+function looksLikeJsonBlob(content) {
+  const trimmed = content.trim();
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return false;
+  // Quick balance check: count { } or [ ] in the first 2000 chars
+  const sample = trimmed.slice(0, 2000);
+  let depth = 0;
+  let inString = false;
+  let escaping = false;
+  for (let i = 0; i < sample.length; i++) {
+    const ch = sample[i];
+    if (escaping) { escaping = false; continue; }
+    if (ch === '\\') { escaping = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === '{' || ch === '[') depth++;
+    else if (ch === '}' || ch === ']') depth--;
+  }
+  return depth === 0;
 }
 
 export default React.memo(MessageBubble);

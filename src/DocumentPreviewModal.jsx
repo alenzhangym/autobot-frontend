@@ -3,7 +3,7 @@ import { Modal, Spin, message, Table, Button } from 'antd'
 import { DownloadOutlined, FileWordOutlined } from '@ant-design/icons'
 import api from './auth'
 import DocumentParserWorker from './workers/documentParser.worker?worker'
-import { useAppStore } from './store/useAppStore'
+import { useUIStore } from './store/useUIStore'
 
 // File types rendered as a plain/code text block
 const CODE_TYPES = new Set([
@@ -17,7 +17,7 @@ const CODE_TYPES = new Set([
 const IMAGE_TYPES = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg'])
 
 export default function DocumentPreviewModal() {
-  const { currentDoc: doc, previewOpen: open, setPreviewOpen, setCurrentDoc } = useAppStore()
+  const { currentDoc: doc, previewOpen: open, setPreviewOpen, setCurrentDoc } = useUIStore()
   const [previewUrl, setPreviewUrl] = useState(null)
   const [previewType, setPreviewType] = useState('iframe')
   const [previewHtml, setPreviewHtml] = useState('')

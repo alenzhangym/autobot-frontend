@@ -3,9 +3,23 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import SyntaxHighlighter from 'react-syntax-highlighter/dist/esm/prism';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { useAppStore } from '../store/useAppStore';
+import { useUIStore } from '../store/useUIStore';
 
 // ── Clean script src in HTML ─────────────────────────────────────────────────
+
+// Module-level parse error side-channel so callers can distinguish
+// "no data found" (null) from "data found but failed to parse" (null + error).
+let _lastParseError = null
+
+export function getLastParseError() {
+  const e = _lastParseError
+  _lastParseError = null
+  return e
+}
+
+function recordParseError(fn, detail) {
+  _lastParseError = { fn, detail }
+}
 export const cleanScriptSrc = (html) => {
   if (!html || typeof html !== 'string') return html;
   let fixed = html
@@ -310,25 +324,98 @@ export const extractTrailingJsonObject = (text, fromIndex = 0) => {
  * Extract the trailing `{"__state": ...}` block from a message payload,
  * using proper depth tracking (NOT naive lastIndexOf).
  *
+ * Falls back to reverse-scanning from the end of content to find any
+ * JSON object containing __state, in case the Agent output has
+ * interference characters around the opening brace.
+ *
  * @param {string} content - the raw message text
  * @returns {string|null} the JSON state string, or null if not present
  */
 export const extractTrailingStateJson = (content) => {
   if (!content || typeof content !== 'string') return null;
+
+  // Strategy 1: marker-based lookup (fast path, 95%+ of cases)
   const marker = '"__state"';
   const idx = content.indexOf(marker);
-  if (idx < 0) return null;
-  // Walk backwards from `marker` to find the opening `{` (depth=1)
-  let braceStart = -1;
-  for (let i = idx; i >= 0; i -= 1) {
-    if (content[i] === '{') {
-      braceStart = i;
-      break;
+  if (idx >= 0) {
+    let braceStart = -1;
+    for (let i = idx; i >= 0; i -= 1) {
+      if (content[i] === '{') {
+        braceStart = i;
+        break;
+      }
+    }
+    if (braceStart >= 0) {
+      const result = extractTrailingJsonObject(content, braceStart);
+      if (result) return result;
+      // Marker found but JSON extraction failed — malformed braces or truncated
+      recordParseError('extractTrailingStateJson', 'found __state marker at ' + idx + ' but JSON extraction failed')
     }
   }
-  if (braceStart < 0) return null;
-  return extractTrailingJsonObject(content, braceStart);
+
+  // Strategy 2: reverse scan — find the last balanced JSON object
+  // containing "__state". Handles cases where Agent output has stray
+  // markdown / code fences / whitespace around the state block.
+  return extractStateFromEnd(content);
 };
+
+/**
+ * Parse a trailing `{"__state":...}` block into a structured object.
+ * Returns the parsed state object on success, or null if absent/unparseable.
+ * This is the single source of truth for state extraction — both the
+ * Worker and MessageBubble must use this function (not a local copy).
+ */
+export function extractAnalysisState(content) {
+  if (!content || typeof content !== 'string') return null
+  const stateJson = extractTrailingStateJson(content)
+  if (!stateJson) return null
+  try {
+    const parsed = JSON.parse(stateJson)
+    return parsed && parsed.__state ? parsed : null
+  } catch (e) {
+    return null
+  }
+}
+
+/**
+ * Scan from the end of content backwards to find the last balanced
+ * JSON object. If it contains __state, return it.
+ */
+function extractStateFromEnd(content) {
+  let end = content.length - 1;
+  // Skip trailing whitespace / newlines
+  while (end >= 0 && /\s/.test(content[end])) end--;
+  if (end < 0 || content[end] !== '}') return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaping = false;
+  for (let i = end; i >= 0; i--) {
+    const ch = content[i];
+    if (inString && escaping) { escaping = false; continue; }
+    if (inString && ch === '\\') { escaping = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === '}') depth++;
+    else if (ch === '{') {
+      depth--;
+      if (depth === 0) {
+        const json = content.slice(i, end + 1);
+        if (json.includes('"__state"')) return json;
+        // Not a state block — try further up (there may be a trailing
+        // non-state JSON, e.g. a code block, after the state block)
+        end = i - 1;
+        while (end >= 0 && /\s/.test(content[end])) end--;
+        if (end < 0 || content[end] !== '}') return null;
+        depth = 0;
+        inString = false;
+        escaping = false;
+        continue;
+      }
+    }
+  }
+  return null;
+}
 
 /**
  * Strip the trailing `{"__state": ...}` block from a message payload
@@ -383,6 +470,7 @@ export function tryParseAnalysisResult(content) {
         try {
           parsed = JSON.parse(candidate)
         } catch (e) {
+          recordParseError('tryParseAnalysisResult', 'JSON.parse: ' + e.message)
           return null
         }
         const hasShape = parsed && typeof parsed === 'object' && (
@@ -401,6 +489,99 @@ export function tryParseAnalysisResult(content) {
     }
   }
   return null
+}
+
+// ── Base64 state-list decoding ──────────────────────────────────────────────
+// The backend encodes state string-lists via:
+//   Base64.getUrlEncoder().withoutPadding()
+//       .encodeToString(json.getBytes(StandardCharsets.UTF_8))
+// This function reverses that: -/_ → +//, restores padding, decodes UTF-8.
+
+export function decodeStateStringList(encoded) {
+  if (!encoded || typeof encoded !== 'string') return []
+  try {
+    const normalized = encoded.replace(/-/g, '+').replace(/_/g, '/')
+    const pad = (4 - (normalized.length % 4)) % 4
+    const padded = pad > 0 ? normalized + '='.repeat(pad) : normalized
+    const binary = atob(padded)
+    const bytes = new Uint8Array(binary.length)
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i)
+    }
+    const text = new TextDecoder().decode(bytes)
+    const parsed = JSON.parse(text)
+    return Array.isArray(parsed)
+      ? parsed.filter(item => typeof item === 'string' && item.trim())
+      : []
+  } catch (e) {
+    return []
+  }
+}
+
+// ── State string-list encoding ─────────────────────────────────────────────
+// Reverse of decodeStateStringList — encodes a string array as URL-safe
+// Base64 for the backend state JSON.
+
+export function encodeStateStringList(values) {
+  try {
+    const json = JSON.stringify(Array.from(new Set((values || []).filter(v => typeof v === 'string' && v.trim()))))
+    const bytes = new TextEncoder().encode(json)
+    let binary = ''
+    bytes.forEach(byte => { binary += String.fromCharCode(byte) })
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
+  } catch (e) {
+    return ''
+  }
+}
+
+// ── State merging for multi-round analysis ─────────────────────────────────
+
+export function replaceTrailingAnalysisState(content, state) {
+  if (!content || typeof content !== 'string' || !state) return content
+  const stripped = stripTrailingStateJson(content).trimEnd()
+  const serialized = JSON.stringify(state)
+  return `${stripped}\n\n${serialized}`
+}
+
+export function mergeAnalysisStateContent(previousContent, nextContent) {
+  if (typeof previousContent !== 'string' || typeof nextContent !== 'string') return nextContent
+  const previousState = extractAnalysisState(previousContent)
+  const nextState = extractAnalysisState(nextContent)
+  if (!previousState || !nextState) return nextContent
+
+  const mergedCompletedFiles = [
+    ...decodeStateStringList(previousState.__completed_read_files),
+    ...decodeStateStringList(nextState.__completed_read_files)
+  ]
+  const mergedReadFiles = [
+    ...decodeStateStringList(previousState.__read),
+    ...decodeStateStringList(nextState.__read)
+  ]
+  const mergedFocusedFiles = [
+    ...decodeStateStringList(previousState.__focused_files),
+    ...decodeStateStringList(nextState.__focused_files)
+  ]
+
+  const mergedState = {
+    ...nextState,
+    __round: Math.max(Number(previousState.__round || 0), Number(nextState.__round || 0)),
+    __max_rounds: Math.max(Number(previousState.__max_rounds || 0), Number(nextState.__max_rounds || 0)),
+    __bytes: Math.max(Number(previousState.__bytes || 0), Number(nextState.__bytes || 0)),
+    __read_count: Math.max(
+      Number(previousState.__read_count || 0),
+      Number(nextState.__read_count || 0),
+      new Set(mergedCompletedFiles).size
+    ),
+    __retained_context_count: Math.max(
+      Number(previousState.__retained_context_count || 0),
+      Number(nextState.__retained_context_count || 0)
+    ),
+    __read: encodeStateStringList(mergedReadFiles),
+    __completed_read_files: encodeStateStringList(mergedCompletedFiles),
+    __focused_files: encodeStateStringList(mergedFocusedFiles)
+  }
+
+  return replaceTrailingAnalysisState(nextContent, mergedState)
 }
 
 // ── HTML entity decoding ────────────────────────────────────────────────────
@@ -610,7 +791,7 @@ export function MarkdownContent({ content }) {
               const label = String(props.children || docId);
               // Extract fileType from filename extension for document preview
               const fileType = label.includes('.') ? label.split('.').pop()?.toLowerCase() : undefined;
-              const { setCurrentDoc, setPreviewOpen } = useAppStore();
+              const { setCurrentDoc, setPreviewOpen } = useUIStore();
               const handlePreview = (e) => {
                 e.preventDefault();
                 e.stopPropagation();

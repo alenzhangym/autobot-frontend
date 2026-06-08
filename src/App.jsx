@@ -42,12 +42,13 @@ import SessionSidebar from './components/SessionSidebar'
 import { executeAgentCommands, appendStreamToken, tryStreamDispatch, resetStreamBuffer } from './components/WorkspacePanel'
 import MessageBubble from './components/MessageBubble'
 import { useAppStore } from './store/useAppStore'
+import { useUIStore } from './store/useUIStore'
 import { useTranslation } from 'react-i18next'
 import { probeToolchain, getClientInfo, clearToolchainCache } from './utils/probeTools'
 import zhCN from 'antd/es/locale/zh_CN'
 import enUS from 'antd/es/locale/en_US'
 import { Virtuoso } from 'react-virtuoso'
-import { extractTrailingStateJson, stripTrailingStateJson, stripAgentMarkers, tryParseAnalysisResult } from './utils/helpers.jsx'
+import { extractTrailingStateJson, stripAgentMarkers, tryParseAnalysisResult, getLastParseError, decodeStateStringList, replaceTrailingAnalysisState, mergeAnalysisStateContent } from './utils/helpers.jsx'
 import { createHealthPoller, probeHttp } from './utils/healthPoller.js'
 
 // ── Web Worker for async profileData ─────────────────────────────────────────
@@ -72,57 +73,8 @@ const { Sider, Header, Content } = Layout
 const { Text, Title } = Typography
 const { TextArea } = Input
 
-function extractTrailingAnalysisStateJson(content) {
-  // Delegate to the shared depth-tracking utility in helpers.jsx.
-  // Avoids the previous `lastIndexOf('{"__state"')` heuristic which
-  // could match the wrong occurrence on nested content.
-  return extractTrailingStateJson(content) || ''
-}
-
-function parseAnalysisState(content) {
-  const stateJson = extractTrailingAnalysisStateJson(content)
-  if (!stateJson) return null
-  try {
-    const parsed = JSON.parse(stateJson)
-    return parsed && parsed.__state ? parsed : null
-  } catch (e) {
-    return null
-  }
-}
-
-function decodeStateStringList(encoded) {
-  if (!encoded || typeof encoded !== 'string') return []
-  try {
-    const normalized = encoded.replace(/-/g, '+').replace(/_/g, '/')
-    const padded = normalized + '='.repeat((4 - (normalized.length % 4 || 4)) % 4)
-    const decoded = atob(padded)
-    const bytes = Uint8Array.from(decoded, ch => ch.charCodeAt(0))
-    const text = new TextDecoder().decode(bytes)
-    const parsed = JSON.parse(text)
-    return Array.isArray(parsed)
-      ? parsed.filter(item => typeof item === 'string' && item.trim())
-      : []
-  } catch (e) {
-    return []
-  }
-}
-
-function encodeStateStringList(values) {
-  try {
-    const json = JSON.stringify(Array.from(new Set((values || []).filter(v => typeof v === 'string' && v.trim()))))
-    const bytes = new TextEncoder().encode(json)
-    let binary = ''
-    bytes.forEach(byte => {
-      binary += String.fromCharCode(byte)
-    })
-    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
-  } catch (e) {
-    return ''
-  }
-}
-
 function extractCommandSignature(content) {
-  if (!content || typeof content !== 'string' || !content.includes('__CMD__')) return ''
+  if (!content || typeof content !== 'string' || !content.includes('__CMD__{')) return ''
   const signatures = []
   let searchStart = 0
   while (true) {
@@ -173,57 +125,6 @@ function extractCommandSignature(content) {
     }
   }
   return signatures.join('\n')
-}
-
-function replaceTrailingAnalysisState(content, state) {
-  if (!content || typeof content !== 'string' || !state) return content
-  // Use the shared depth-tracking utility to strip the existing state
-  // JSON (instead of the previous `lastIndexOf(stateJson)` heuristic
-  // which could match the wrong occurrence).
-  const stripped = stripTrailingStateJson(content).trimEnd()
-  const serialized = JSON.stringify(state)
-  return `${stripped}\n\n${serialized}`
-}
-
-function mergeAnalysisStateContent(previousContent, nextContent) {
-  if (typeof previousContent !== 'string' || typeof nextContent !== 'string') return nextContent
-  const previousState = parseAnalysisState(previousContent)
-  const nextState = parseAnalysisState(nextContent)
-  if (!previousState || !nextState) return nextContent
-
-  const mergedCompletedFiles = [
-    ...decodeStateStringList(previousState.__completed_read_files),
-    ...decodeStateStringList(nextState.__completed_read_files)
-  ]
-  const mergedReadFiles = [
-    ...decodeStateStringList(previousState.__read),
-    ...decodeStateStringList(nextState.__read)
-  ]
-  const mergedFocusedFiles = [
-    ...decodeStateStringList(previousState.__focused_files),
-    ...decodeStateStringList(nextState.__focused_files)
-  ]
-
-  const mergedState = {
-    ...nextState,
-    __round: Math.max(Number(previousState.__round || 0), Number(nextState.__round || 0)),
-    __max_rounds: Math.max(Number(previousState.__max_rounds || 0), Number(nextState.__max_rounds || 0)),
-    __bytes: Math.max(Number(previousState.__bytes || 0), Number(nextState.__bytes || 0)),
-    __read_count: Math.max(
-      Number(previousState.__read_count || 0),
-      Number(nextState.__read_count || 0),
-      new Set(mergedCompletedFiles).size
-    ),
-    __retained_context_count: Math.max(
-      Number(previousState.__retained_context_count || 0),
-      Number(nextState.__retained_context_count || 0)
-    ),
-    __read: encodeStateStringList(mergedReadFiles),
-    __completed_read_files: encodeStateStringList(mergedCompletedFiles),
-    __focused_files: encodeStateStringList(mergedFocusedFiles)
-  }
-
-  return replaceTrailingAnalysisState(nextContent, mergedState)
 }
 
 // ── Users Management Modal ───────────────────────────────────────────────────
@@ -826,11 +727,6 @@ function App() {
   const { t, i18n } = useTranslation()
   const {
     user, setUser,
-    siderCollapsed, setSiderCollapsed,
-    showLogs, setShowLogs,
-    showSettings, setShowSettings,
-    showUsersManagement, setShowUsersManagement,
-    showCompanyManagement, setShowCompanyManagement,
     dbConfigs, setDbConfigs,
     companies, setCompanies,
     users, setUsers,
@@ -838,6 +734,13 @@ function App() {
     localAgentStatus, setLocalAgentStatus,
     companyChannels, setCompanyChannels
   } = useAppStore()
+  const {
+    siderCollapsed, setSiderCollapsed,
+    showLogs, setShowLogs,
+    showSettings, setShowSettings,
+    showUsersManagement, setShowUsersManagement,
+    showCompanyManagement, setShowCompanyManagement
+  } = useUIStore()
 
   const isSuperAdmin = user?.role === 'SUPER_ADMIN' || user?.role?.toLowerCase() === 'admin' || user?.role?.toLowerCase() === 'superadmin'
 
@@ -1914,6 +1817,9 @@ function App() {
             console.warn('[Worker] messageNormalizer failed:', e.data.error)
             setMessages(history.map(normalizeMessage))
           } else {
+            if (e.data.errors && e.data.errors.length > 0) {
+              console.warn('[Worker] messageNormalizer encountered', e.data.errors.length, 'parse issue(s):', e.data.errors)
+            }
             setMessages(e.data.normalized)
           }
           setIsParsingHistory(false)
@@ -2005,17 +1911,34 @@ function App() {
     if (msg.role !== 'assistant' || typeof msg.content !== 'string') return msg
     if (msg.__cmd) return msg
     let state = null, analysisResult = null, displayContent = null
+    const parseErrors = []
     try {
       const stateJson = extractTrailingStateJson(msg.content)
-      if (stateJson) state = JSON.parse(stateJson)
-    } catch (e) { /* ignore parse errors */ }
+      if (stateJson) {
+        try {
+          state = JSON.parse(stateJson)
+        } catch (e) {
+          parseErrors.push({ field: 'state', error: 'JSON.parse: ' + e.message })
+        }
+      }
+      const extractErr = getLastParseError()
+      if (extractErr) parseErrors.push({ field: 'state', error: extractErr.detail })
+    } catch (e) {
+      parseErrors.push({ field: 'state', error: 'exception: ' + e.message })
+    }
     try {
       analysisResult = tryParseAnalysisResult(msg.content)
-    } catch (e) { /* ignore parse errors */ }
+      const extractErr = getLastParseError()
+      if (extractErr) parseErrors.push({ field: 'analysisResult', error: extractErr.detail })
+    } catch (e) {
+      parseErrors.push({ field: 'analysisResult', error: 'exception: ' + e.message })
+    }
     try {
       displayContent = stripAgentMarkers(msg.content)
-    } catch (e) { /* ignore parse errors */ }
-    return { ...msg, __cmd: { state, analysisResult, displayContent, hasCommands: msg.content.includes('__CMD__') } }
+    } catch (e) {
+      parseErrors.push({ field: 'displayContent', error: 'exception: ' + e.message })
+    }
+    return { ...msg, __cmd: { state, analysisResult, displayContent, hasCommands: msg.content.includes('__CMD__{'), _parseErrors: parseErrors.length > 0 ? parseErrors : undefined } }
   }
 
   const syncWorkspaceTreeSilently = async (dirPath, reason = 'auto') => {
@@ -2244,12 +2167,17 @@ function App() {
             message_id: planData.message_id
           })
           if (execRes.data.status === 'success') {
+            const hasCommands = typeof execRes.data.response === 'string' && execRes.data.response.includes('__CMD__{')
             setMessages(prev => [...prev, normalizeMessage({ id: nextMsgId(), role: 'assistant', content: execRes.data.response })])
             setMessages(prev => {
               const newMsgs = [...prev]
               for (let i = newMsgs.length - 1; i >= 0; i--) {
                 if (newMsgs[i].role === 'plan') {
-                  newMsgs[i] = { ...newMsgs[i], content: { ...newMsgs[i].content, status: 'executed' } }
+                  const newContent = { ...newMsgs[i].content, status: 'executed' }
+                  if (!hasCommands && newContent.plan) {
+                    newContent.plan = newContent.plan.map(s => ({ ...s, status: 'completed' }))
+                  }
+                  newMsgs[i] = { ...newMsgs[i], content: newContent }
                   break
                 }
               }
@@ -2288,7 +2216,7 @@ function App() {
     typeof content === 'string' && content.trim().startsWith('[COMMAND_RESULTS]')
 
   const isIntermediateCmdMessage = (content) =>
-    typeof content === 'string' && content.includes('__CMD__')
+    typeof content === 'string' && content.includes('__CMD__{')
 
   const isCommandResultsPlanMessage = (msg) => {
     if (!msg || msg.role !== 'plan') return false
@@ -2336,7 +2264,7 @@ function App() {
   useEffect(() => {
     const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null
     if (!lastMsg || lastMsg.role !== 'assistant') return
-    if (!lastMsg.content || !lastMsg.content.includes('__CMD__')) return
+    if (!lastMsg.content || !lastMsg.content.includes('__CMD__{')) return
     if (!lastMsg.id) return
 
     const commandExecutionKey = `${lastMsg.id}:${lastMsg.content}`
@@ -2376,7 +2304,7 @@ function App() {
     if (!liveLogActive) return
     const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null
     if (!lastMsg || lastMsg.role !== 'assistant') return
-    if (typeof lastMsg.content !== 'string' || lastMsg.content.includes('__CMD__')) return
+    if (typeof lastMsg.content !== 'string' || lastMsg.content.includes('__CMD__{')) return
     if (lastMsg._isComplete === false) return
     const timer = setTimeout(() => {
       endLiveLogSession()
@@ -2430,7 +2358,7 @@ function App() {
             if (!finalContent || !finalContent.trim()) {
               failureReason = '后端执行完成，但没有返回可显示的分析结论。'
               appendLiveLog('[CodeAnalysis] /chat/execute 返回空 response\n')
-            } else if (finalContent.includes('__CMD__')) {
+            } else if (finalContent.includes('__CMD__{')) {
               appendLiveLog('[CodeAnalysis] /chat/execute 返回新的中间态命令，继续等待下一轮本地执行\n')
             } else {
               appendLiveLog('[CodeAnalysis] /chat/execute 返回最终分析结论\n')
@@ -2460,7 +2388,7 @@ function App() {
       }
 
       const currentMessage = messages.find(m => m.id === targetMsgId)
-      let hasCmd = finalContent.includes('__CMD__')
+      let hasCmd = finalContent.includes('__CMD__{')
       if (hasCmd) {
         const previousSignature = extractCommandSignature(currentMessage?.content)
         const nextSignature = extractCommandSignature(finalContent)
@@ -2480,6 +2408,17 @@ function App() {
           ? normalizeMessage({ ...m, __cmd: undefined, content: mergeAnalysisStateContent(m.content, finalContent), _isComplete: !hasCmd })
           : m
       ))
+      // When analysis is complete, explicitly mark all plan steps as completed
+      if (!hasCmd) {
+        setMessages(prev => prev.map(m => {
+          if (m.role !== 'plan') return m
+          const newPlan = { ...m.content }
+          if (newPlan.plan) {
+            newPlan.plan = newPlan.plan.map(s => ({ ...s, status: 'completed' }))
+          }
+          return { ...m, content: newPlan }
+        }))
+      }
     } catch (e) {
       console.warn('Command results send failed:', e)
       appendLiveLog(`[CodeAnalysis] 回传异常: ${e?.message || '网络或服务异常'}\n`)

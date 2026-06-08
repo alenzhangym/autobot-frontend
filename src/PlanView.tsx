@@ -9,7 +9,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import ScheduleModal from './ScheduleModal'
 import DocumentPreviewModal from './DocumentPreviewModal'
 import InsightPanel from './InsightPanel'
-import { useAppStore } from './store/useAppStore'
+import { useUIStore } from './store/useUIStore'
 import type { PlanProps, AgentStep, Document } from './types/plan'
 
 const { Text, Paragraph } = Typography
@@ -45,7 +45,7 @@ function statusIcon(status?: string) {
 
 export default function PlanView({ plan, editable = false, onConfirm }: PlanProps) {
   const { token } = theme.useToken();
-  const { currentDoc, setCurrentDoc, previewOpen, setPreviewOpen } = useAppStore()
+  const { currentDoc, setCurrentDoc, previewOpen, setPreviewOpen } = useUIStore()
   
   // Safe parsing logic depending on whether `plan` is a string or an object
   let parsedPlanSteps: AgentStep[] = [];
