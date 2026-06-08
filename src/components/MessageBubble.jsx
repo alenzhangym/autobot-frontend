@@ -6,50 +6,24 @@ import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { Avatar, Button, Tooltip, Space, Tag, Collapse } from 'antd';
 import { RobotOutlined, UserOutlined, CopyOutlined, CheckOutlined, CloseOutlined, ReloadOutlined, ExpandAltOutlined, LoadingOutlined, ClockCircleOutlined, ApartmentOutlined, LinkOutlined, BranchesOutlined, NodeIndexOutlined, ShareAltOutlined, DeleteOutlined, AppstoreOutlined, ExclamationCircleOutlined, BulbOutlined } from '@ant-design/icons';
 import { useState, useEffect } from 'react';
-import { extractDataStoreIds, isValidDataStoreResponse, fetchMissingDataFromServer, injectDataStoreData, decodeHtmlEntities, cleanScriptSrc, wrapUiHtml, isHtmlContent, MarkdownContent } from '../utils/helpers.jsx';
+import { extractDataStoreIds, isValidDataStoreResponse, fetchMissingDataFromServer, injectDataStoreData, decodeHtmlEntities, cleanScriptSrc, wrapUiHtml, isHtmlContent, MarkdownContent, extractTrailingJsonObject, extractTrailingStateJson, stripTrailingStateJson } from '../utils/helpers.jsx';
 
 
 /**
  * Strip agent command markers and trailing JSON state from message content.
  * Removes __CMD__ blocks and the {...} state JSON at the end.
+ *
+ * <p>Refactored: now delegates to the depth-tracking
+ * {@link extractTrailingStateJson} and {@link stripTrailingStateJson}
+ * utilities in helpers.jsx. The previous implementation used naive
+ * {@code lastIndexOf('}')} / {@code lastIndexOf(stateJson)} which
+ * could crash on nested objects or strip the wrong occurrence when
+ * the state JSON appeared earlier in the content.</p>
  */
 function extractTrailingAnalysisStateJson(content) {
   if (!content || typeof content !== 'string') return ''
-  let start = content.lastIndexOf('{"__state"')
-  if (start < 0) {
-    start = content.lastIndexOf('{\n"__state"')
-  }
-  if (start < 0) return ''
-
-  let depth = 0
-  let inString = false
-  let escaping = false
-  for (let i = start; i < content.length; i += 1) {
-    const ch = content[i]
-    if (escaping) {
-      escaping = false
-      continue
-    }
-    if (ch === '\\') {
-      escaping = true
-      continue
-    }
-    if (ch === '"') {
-      inString = !inString
-      continue
-    }
-    if (inString) continue
-    if (ch === '{') {
-      depth += 1
-    } else if (ch === '}') {
-      depth -= 1
-      if (depth === 0) {
-        const candidate = content.slice(start, i + 1).trim()
-        return candidate.includes('"__state"') ? candidate : ''
-      }
-    }
-  }
-  return ''
+  const stateJson = extractTrailingStateJson(content)
+  return stateJson || ''
 }
 
 function stripAgentMarkers(content) {
@@ -60,13 +34,8 @@ function stripAgentMarkers(content) {
   if (commandResultsIdx >= 0) {
     cleaned = cleaned.substring(0, commandResultsIdx)
   }
-  const stateJson = extractTrailingAnalysisStateJson(cleaned)
-  if (stateJson) {
-    const stateIdx = cleaned.lastIndexOf(stateJson)
-    if (stateIdx >= 0) {
-      cleaned = cleaned.slice(0, stateIdx)
-    }
-  }
+  // Use depth-tracking utility instead of lastIndexOf(stateJson)
+  cleaned = stripTrailingStateJson(cleaned)
   // Remove duplicate newlines left behind
   cleaned = cleaned.replace(/\n{3,}/g, '\n\n')
   return cleaned.trim()
@@ -74,7 +43,7 @@ function stripAgentMarkers(content) {
 
 function extractAnalysisState(content) {
   if (!content || typeof content !== 'string') return null
-  const stateJson = extractTrailingAnalysisStateJson(content)
+  const stateJson = extractTrailingStateJson(content)
   if (!stateJson) return null
   try {
     const parsed = JSON.parse(stateJson)

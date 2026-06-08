@@ -266,6 +266,88 @@ export const extractJsonFromText = (text) => {
   return null;
 };
 
+/**
+ * Find a top-level JSON object in `text` using brace-depth tracking.
+ *
+ * <p>Unlike {@link extractJsonFromText} (which uses naive `lastIndexOf('}')`
+ * and breaks on nested `}` characters inside strings or inner objects),
+ * this function walks the string character by character and respects
+ * JSON string/escape rules. It returns the <b>last</b> top-level JSON
+ * object that starts with a literal "{", or null if none is found.</p>
+ *
+ * <p>Used to safely extract the trailing analysis-state JSON (e.g.
+ * `{"__state": "AWAITING_COMMANDS", ...}`) from a free-form agent
+ * message without crashing on nested structures or special characters.</p>
+ *
+ * @param {string} text - the input text to scan
+ * @param {number} fromIndex - optional; start scanning from this position
+ * @returns {string|null} the extracted JSON substring, or null
+ */
+export const extractTrailingJsonObject = (text, fromIndex = 0) => {
+  if (!text || typeof text !== 'string') return null;
+  const start = text.indexOf('{', fromIndex);
+  if (start < 0) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaping = false;
+  for (let i = start; i < text.length; i += 1) {
+    const ch = text[i];
+    if (escaping) { escaping = false; continue; }
+    if (ch === '\\') { escaping = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === '{') depth += 1;
+    else if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+  return null;
+};
+
+/**
+ * Extract the trailing `{"__state": ...}` block from a message payload,
+ * using proper depth tracking (NOT naive lastIndexOf).
+ *
+ * @param {string} content - the raw message text
+ * @returns {string|null} the JSON state string, or null if not present
+ */
+export const extractTrailingStateJson = (content) => {
+  if (!content || typeof content !== 'string') return null;
+  const marker = '"__state"';
+  const idx = content.indexOf(marker);
+  if (idx < 0) return null;
+  // Walk backwards from `marker` to find the opening `{` (depth=1)
+  let braceStart = -1;
+  for (let i = idx; i >= 0; i -= 1) {
+    if (content[i] === '{') {
+      braceStart = i;
+      break;
+    }
+  }
+  if (braceStart < 0) return null;
+  return extractTrailingJsonObject(content, braceStart);
+};
+
+/**
+ * Strip the trailing `{"__state": ...}` block from a message payload
+ * using proper depth tracking. Replaces the previous implementation that
+ * used `lastIndexOf(stateJson)` (which could match the wrong occurrence
+ * if the state JSON appeared earlier in the content).
+ *
+ * @param {string} content - the raw message text
+ * @returns {string} the content with the trailing state JSON removed
+ */
+export const stripTrailingStateJson = (content) => {
+  if (!content || typeof content !== 'string') return content;
+  const stateJson = extractTrailingStateJson(content);
+  if (!stateJson) return content;
+  const idx = content.lastIndexOf(stateJson);
+  if (idx < 0) return content;
+  return content.slice(0, idx);
+};
+
 // ── HTML entity decoding ────────────────────────────────────────────────────
 export const decodeHtmlEntities = (str) => {
   if (!str || typeof str !== 'string') return str;

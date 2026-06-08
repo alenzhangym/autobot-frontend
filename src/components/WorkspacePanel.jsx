@@ -4,6 +4,7 @@ import { FolderOpenOutlined, FileOutlined, ReloadOutlined, SaveOutlined, EditOut
 import api, { getBackendHost, getLocalAgentBaseUrl } from '../auth'
 import axios from 'axios'
 import { shouldRequireConfirmation, formatCommandSummary, addTrustedPattern, patternFromCommand } from './agentCommandSafety'
+import { extractTrailingStateJson } from '../utils/helpers.jsx'
 
 const localApi = axios.create({ baseURL: getLocalAgentBaseUrl() })
 
@@ -356,42 +357,10 @@ export default function WorkspacePanel({ workspaceDir, onDirChange, sessionId })
 }
 
 function extractTrailingAnalysisStateJson(content) {
-  if (!content || typeof content !== 'string') return ''
-  let start = content.lastIndexOf('{"__state"')
-  if (start < 0) {
-    start = content.lastIndexOf('{\n"__state"')
-  }
-  if (start < 0) return ''
-
-  let depth = 0
-  let inString = false
-  let escaping = false
-  for (let i = start; i < content.length; i += 1) {
-    const ch = content[i]
-    if (escaping) {
-      escaping = false
-      continue
-    }
-    if (ch === '\\') {
-      escaping = true
-      continue
-    }
-    if (ch === '"') {
-      inString = !inString
-      continue
-    }
-    if (inString) continue
-    if (ch === '{') {
-      depth += 1
-    } else if (ch === '}') {
-      depth -= 1
-      if (depth === 0) {
-        const candidate = content.slice(start, i + 1).trim()
-        return candidate.includes('"__state"') ? candidate : ''
-      }
-    }
-  }
-  return ''
+  // Delegate to the shared depth-tracking utility in helpers.jsx.
+  // Avoids the previous `lastIndexOf('{"__state"')` heuristic which
+  // could match the wrong occurrence on nested content.
+  return extractTrailingStateJson(content) || ''
 }
 
 // ── Streaming __CMD__ pre-dispatch ───

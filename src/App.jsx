@@ -46,6 +46,8 @@ import { useTranslation } from 'react-i18next'
 import { probeToolchain, getClientInfo, clearToolchainCache } from './utils/probeTools'
 import zhCN from 'antd/es/locale/zh_CN'
 import enUS from 'antd/es/locale/en_US'
+import { extractTrailingStateJson, stripTrailingStateJson } from './utils/helpers.jsx'
+import { createHealthPoller, probeHttp } from './utils/healthPoller.js'
 
 // ── Web Worker for async profileData ─────────────────────────────────────────
 const profileDataWorker = new Worker(new URL('./workers/profileData.worker.js', import.meta.url), { type: 'module' });
@@ -70,42 +72,10 @@ const { Text, Title } = Typography
 const { TextArea } = Input
 
 function extractTrailingAnalysisStateJson(content) {
-  if (!content || typeof content !== 'string') return ''
-  let start = content.lastIndexOf('{"__state"')
-  if (start < 0) {
-    start = content.lastIndexOf('{\n"__state"')
-  }
-  if (start < 0) return ''
-
-  let depth = 0
-  let inString = false
-  let escaping = false
-  for (let i = start; i < content.length; i += 1) {
-    const ch = content[i]
-    if (escaping) {
-      escaping = false
-      continue
-    }
-    if (ch === '\\') {
-      escaping = true
-      continue
-    }
-    if (ch === '"') {
-      inString = !inString
-      continue
-    }
-    if (inString) continue
-    if (ch === '{') {
-      depth += 1
-    } else if (ch === '}') {
-      depth -= 1
-      if (depth === 0) {
-        const candidate = content.slice(start, i + 1).trim()
-        return candidate.includes('"__state"') ? candidate : ''
-      }
-    }
-  }
-  return ''
+  // Delegate to the shared depth-tracking utility in helpers.jsx.
+  // Avoids the previous `lastIndexOf('{"__state"')` heuristic which
+  // could match the wrong occurrence on nested content.
+  return extractTrailingStateJson(content) || ''
 }
 
 function parseAnalysisState(content) {
@@ -206,12 +176,12 @@ function extractCommandSignature(content) {
 
 function replaceTrailingAnalysisState(content, state) {
   if (!content || typeof content !== 'string' || !state) return content
-  const stateJson = extractTrailingAnalysisStateJson(content)
+  // Use the shared depth-tracking utility to strip the existing state
+  // JSON (instead of the previous `lastIndexOf(stateJson)` heuristic
+  // which could match the wrong occurrence).
+  const stripped = stripTrailingStateJson(content).trimEnd()
   const serialized = JSON.stringify(state)
-  if (!stateJson) return `${content}\n\n${serialized}`
-  const idx = content.lastIndexOf(stateJson)
-  if (idx < 0) return `${content}\n\n${serialized}`
-  return `${content.slice(0, idx)}${serialized}`
+  return `${stripped}\n\n${serialized}`
 }
 
 function mergeAnalysisStateContent(previousContent, nextContent) {
@@ -1024,25 +994,33 @@ function App() {
     }
   }
 
-  const checkLocalAgentStatus = async () => {
-    try {
-      const res = await fetch(`${getLocalAgentBaseUrl()}/api/local/status`, { method: 'GET' })
-      if (res.ok) {
-        setLocalAgentStatus('ok')
-      } else {
-        setLocalAgentStatus('missing')
-      }
-    } catch (e) {
-      setLocalAgentStatus('missing')
-    }
+  const checkLocalAgentStatus = () => {
+    // Use the robust health poller: AbortController-based timeout,
+    // exponential backoff on failure, and automatic in-flight
+    // cancellation when the user logs out. The legacy implementation
+    // used a naked setInterval that would leak sockets on hung
+    // backends and never backed off on sustained failures.
+    //
+    // Synchronous factory: the useEffect cleanup needs the poller
+    // object directly, not a Promise. The probe itself is async but
+    // is invoked inside the poller, not here.
+    const poller = createHealthPoller({
+      probe: () => probeHttp(`${getLocalAgentBaseUrl()}/api/local/status`, 5000),
+      onStateChange: (state) => {
+        setLocalAgentStatus(state === 'ok' ? 'ok' : 'missing')
+      },
+      intervalMs: 30000,
+      maxBackoffMs: 300000,
+      requestTimeoutMs: 5000,
+    })
+    poller.start()
+    return poller
   }
 
   useEffect(() => {
-    if (user) {
-      checkLocalAgentStatus()
-      const interval = setInterval(checkLocalAgentStatus, 30000)
-      return () => clearInterval(interval)
-    }
+    if (!user) return
+    const poller = checkLocalAgentStatus()
+    return () => poller.stop()
   }, [user])
 
   useEffect(() => {
