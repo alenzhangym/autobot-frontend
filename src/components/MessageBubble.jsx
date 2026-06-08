@@ -5,40 +5,24 @@ import { Light as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { Avatar, Button, Tooltip, Space, Tag, Collapse } from 'antd';
 import { RobotOutlined, UserOutlined, CopyOutlined, CheckOutlined, CloseOutlined, ReloadOutlined, ExpandAltOutlined, LoadingOutlined, ClockCircleOutlined, ApartmentOutlined, LinkOutlined, BranchesOutlined, NodeIndexOutlined, ShareAltOutlined, DeleteOutlined, AppstoreOutlined, ExclamationCircleOutlined, BulbOutlined } from '@ant-design/icons';
-import { useState, useEffect } from 'react';
-import { extractDataStoreIds, isValidDataStoreResponse, fetchMissingDataFromServer, injectDataStoreData, decodeHtmlEntities, cleanScriptSrc, wrapUiHtml, isHtmlContent, MarkdownContent, extractTrailingJsonObject, extractTrailingStateJson, stripTrailingStateJson } from '../utils/helpers.jsx';
+import { useState, useEffect, useMemo } from 'react';
+import { extractDataStoreIds, isValidDataStoreResponse, fetchMissingDataFromServer, injectDataStoreData, decodeHtmlEntities, cleanScriptSrc, wrapUiHtml, isHtmlContent, MarkdownContent, extractTrailingStateJson, stripAgentMarkers, tryParseAnalysisResult } from '../utils/helpers.jsx';
 
 
 /**
  * Strip agent command markers and trailing JSON state from message content.
  * Removes __CMD__ blocks and the {...} state JSON at the end.
  *
- * <p>Refactored: now delegates to the depth-tracking
- * {@link extractTrailingStateJson} and {@link stripTrailingStateJson}
- * utilities in helpers.jsx. The previous implementation used naive
- * {@code lastIndexOf('}')} / {@code lastIndexOf(stateJson)} which
- * could crash on nested objects or strip the wrong occurrence when
- * the state JSON appeared earlier in the content.</p>
+ * <p>All __CMD__ extraction uses the depth-tracking
+ * {@link extractTrailingJsonObject} which correctly handles nested
+ * JSON objects and  characters inside string values — unlike the
+ * previous regex-based approach ({@code [^}]*}) which broke on
+ * {@code "content":"class Foo { }"} inside write commands.</p>
  */
 function extractTrailingAnalysisStateJson(content) {
   if (!content || typeof content !== 'string') return ''
   const stateJson = extractTrailingStateJson(content)
   return stateJson || ''
-}
-
-function stripAgentMarkers(content) {
-  if (!content || typeof content !== 'string') return content
-  // Remove everything from first __CMD__ to end of line
-  let cleaned = content.replace(/__CMD__\{[^}]*\}/g, '').replace(/__CMD__[^\n]*/g, '')
-  const commandResultsIdx = cleaned.indexOf('[COMMAND_RESULTS]')
-  if (commandResultsIdx >= 0) {
-    cleaned = cleaned.substring(0, commandResultsIdx)
-  }
-  // Use depth-tracking utility instead of lastIndexOf(stateJson)
-  cleaned = stripTrailingStateJson(cleaned)
-  // Remove duplicate newlines left behind
-  cleaned = cleaned.replace(/\n{3,}/g, '\n\n')
-  return cleaned.trim()
 }
 
 function extractAnalysisState(content) {
@@ -68,62 +52,6 @@ function decodeStateStringList(encoded) {
   } catch (e) {
     return []
   }
-}
-
-/**
- * Try to extract a structured analysis-result JSON block from arbitrary text.
- * The CodeAnalysisAgent final round emits a JSON object with one or more of
- * {modules, linkages, issues, recommendations} arrays.  We accept:
- *   - bare JSON
- *   - JSON inside ```json ... ``` fences
- *   - JSON preceded/followed by prose
- * Returns { parsed, prefix, suffix } on success, or null if no such block
- * is present (so the caller can fall through to the markdown / HTML path).
- */
-function tryParseAnalysisResult(content) {
-  if (!content || typeof content !== 'string') return null
-  let text = content.trim()
-  if (!text) return null
-  // Strip outer markdown code fence
-  text = text.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '')
-  const start = text.indexOf('{')
-  if (start < 0) return null
-  let depth = 0
-  let inString = false
-  let escaping = false
-  for (let i = start; i < text.length; i += 1) {
-    const ch = text[i]
-    if (escaping) { escaping = false; continue }
-    if (ch === '\\') { escaping = true; continue }
-    if (ch === '"') { inString = !inString; continue }
-    if (inString) continue
-    if (ch === '{') depth += 1
-    else if (ch === '}') {
-      depth -= 1
-      if (depth === 0) {
-        const candidate = text.slice(start, i + 1)
-        let parsed
-        try {
-          parsed = JSON.parse(candidate)
-        } catch (e) {
-          return null
-        }
-        const hasShape = parsed && typeof parsed === 'object' && (
-          Array.isArray(parsed.modules) ||
-          Array.isArray(parsed.linkages) ||
-          Array.isArray(parsed.issues) ||
-          Array.isArray(parsed.recommendations)
-        )
-        if (!hasShape) return null
-        return {
-          parsed,
-          prefix: text.slice(0, start).trim(),
-          suffix: text.slice(i + 1).trim()
-        }
-      }
-    }
-  }
-  return null
 }
 
 function formatAnalysisPhase(phase) {
@@ -474,7 +402,14 @@ function MessageBubble({ msg, onCopy, onRegenerate, onExpand, onDelete, sessionI
   const [fullscreen, setFullscreen] = useState(false);
   const isUser = msg.role === 'user';
   const isPlan = msg.role === 'plan';
-  const analysisState = typeof msg.content === 'string' ? extractAnalysisState(msg.content) : null
+  const analysisState = useMemo(
+    () => msg.__cmd?.state || (typeof msg.content === 'string' ? extractAnalysisState(msg.content) : null),
+    [msg.__cmd?.state, msg.content]
+  );
+  const strippedContent = useMemo(
+    () => msg.__cmd?.displayContent || (typeof msg.content === 'string' ? stripAgentMarkers(msg.content) : null),
+    [msg.__cmd?.displayContent, msg.content]
+  );
 
   const handleCopy = () => {
     if (onCopy) onCopy(msg.content);
@@ -646,7 +581,7 @@ function MessageBubble({ msg, onCopy, onRegenerate, onExpand, onDelete, sessionI
             </div>
           ) : null}
           {!isUser && analysisState && <CodeAnalysisProgress state={analysisState} />}
-          {msg.content && typeof msg.content === 'string' && renderContent(stripAgentMarkers(msg.content))}
+          {strippedContent && renderContent(strippedContent, msg.__cmd?.analysisResult)}
           {msg.content && typeof msg.content === 'object' && !msg.content.plan && (
             msg.content.type === 'provenance_context'
               ? <ProvenanceContextView units={msg.content.units} />
@@ -1197,11 +1132,12 @@ function parseProvenanceText(text) {
   return units.length >= 2 ? units : null;
 }
 
-function renderContent(content) {
+function renderContent(content, preParsedAnalysis) {
   if (typeof content !== 'string') return null;
 
   // Try structured code-analysis result (modules/linkages/issues/recommendations)
-  const analysis = tryParseAnalysisResult(content);
+  // Use pre-parsed data from normalization when available (avoids re-parsing)
+  const analysis = preParsedAnalysis || tryParseAnalysisResult(content);
   if (analysis) {
     return (
       <div>
@@ -1271,5 +1207,5 @@ function renderContent(content) {
   return <MarkdownContent content={content} />;
 }
 
-export default MessageBubble;
+export default React.memo(MessageBubble);
 

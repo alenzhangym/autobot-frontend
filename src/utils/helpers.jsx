@@ -348,6 +348,61 @@ export const stripTrailingStateJson = (content) => {
   return content.slice(0, idx);
 };
 
+/**
+ * Try to extract a structured analysis-result JSON block from arbitrary text.
+ * The CodeAnalysisAgent final round emits a JSON object with one or more of
+ * {modules, linkages, issues, recommendations} arrays.  We accept:
+ *   - bare JSON
+ *   - JSON inside ```json ... ``` fences
+ *   - JSON preceded/followed by prose
+ * Returns { parsed, prefix, suffix } on success, or null if no such block
+ * is present (so the caller can fall through to the markdown / HTML path).
+ */
+export function tryParseAnalysisResult(content) {
+  if (!content || typeof content !== 'string') return null
+  let text = content.trim()
+  if (!text) return null
+  text = text.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '')
+  const start = text.indexOf('{')
+  if (start < 0) return null
+  let depth = 0
+  let inString = false
+  let escaping = false
+  for (let i = start; i < text.length; i += 1) {
+    const ch = text[i]
+    if (escaping) { escaping = false; continue }
+    if (ch === '\\') { escaping = true; continue }
+    if (ch === '"') { inString = !inString; continue }
+    if (inString) continue
+    if (ch === '{') depth += 1
+    else if (ch === '}') {
+      depth -= 1
+      if (depth === 0) {
+        const candidate = text.slice(start, i + 1)
+        let parsed
+        try {
+          parsed = JSON.parse(candidate)
+        } catch (e) {
+          return null
+        }
+        const hasShape = parsed && typeof parsed === 'object' && (
+          Array.isArray(parsed.modules) ||
+          Array.isArray(parsed.linkages) ||
+          Array.isArray(parsed.issues) ||
+          Array.isArray(parsed.recommendations)
+        )
+        if (!hasShape) return null
+        return {
+          parsed,
+          prefix: text.slice(0, start).trim(),
+          suffix: text.slice(i + 1).trim()
+        }
+      }
+    }
+  }
+  return null
+}
+
 // ── HTML entity decoding ────────────────────────────────────────────────────
 export const decodeHtmlEntities = (str) => {
   if (!str || typeof str !== 'string') return str;
@@ -464,6 +519,47 @@ export function injectDataStoreData(htmlContent, dataStoreData) {
 }
 
 // ── Markdown renderer ──────────────────────────────────────────────────────
+/**
+ * Strip __CMD__{...} blocks from text using depth-tracking JSON extraction.
+ */
+export function stripCommandBlocks(text) {
+  if (!text || typeof text !== 'string') return text
+  let result = ''
+  let remaining = text
+  while (remaining.length > 0) {
+    const cmdIdx = remaining.indexOf('__CMD__')
+    if (cmdIdx < 0) { result += remaining; break }
+    result += remaining.slice(0, cmdIdx)
+    const afterCmd = cmdIdx + 7
+    if (remaining[afterCmd] === '{') {
+      const cmdJson = extractTrailingJsonObject(remaining, afterCmd)
+      if (cmdJson) {
+        remaining = remaining.slice(afterCmd + cmdJson.length)
+        continue
+      }
+    }
+    const nextNewline = remaining.indexOf('\n', afterCmd)
+    remaining = nextNewline >= 0 ? remaining.slice(nextNewline + 1) : ''
+  }
+  return result
+}
+
+/**
+ * Strip agent command markers (__CMD__{...}), [COMMAND_RESULTS] sections,
+ * and trailing `{"__state":...}` JSON from message content for display.
+ */
+export function stripAgentMarkers(content) {
+  if (!content || typeof content !== 'string') return content
+  let cleaned = stripCommandBlocks(content)
+  const commandResultsIdx = cleaned.indexOf('[COMMAND_RESULTS]')
+  if (commandResultsIdx >= 0) {
+    cleaned = cleaned.substring(0, commandResultsIdx)
+  }
+  cleaned = stripTrailingStateJson(cleaned)
+  cleaned = cleaned.replace(/\n{3,}/g, '\n\n')
+  return cleaned.trim()
+}
+
 export function MarkdownContent({ content }) {
   return (
     <div className="markdown-content" style={{ color: '#e3e3e3', fontSize: 14, lineHeight: 1.6 }}>

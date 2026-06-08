@@ -46,7 +46,8 @@ import { useTranslation } from 'react-i18next'
 import { probeToolchain, getClientInfo, clearToolchainCache } from './utils/probeTools'
 import zhCN from 'antd/es/locale/zh_CN'
 import enUS from 'antd/es/locale/en_US'
-import { extractTrailingStateJson, stripTrailingStateJson } from './utils/helpers.jsx'
+import { Virtuoso } from 'react-virtuoso'
+import { extractTrailingStateJson, stripTrailingStateJson, stripAgentMarkers, tryParseAnalysisResult } from './utils/helpers.jsx'
 import { createHealthPoller, probeHttp } from './utils/healthPoller.js'
 
 // ── Web Worker for async profileData ─────────────────────────────────────────
@@ -881,6 +882,8 @@ function App() {
   const [workspaceDir, setWorkspaceDir] = useState('')
   const [showWsPicker, setShowWsPicker] = useState(false)
   const [wsPickerChannel, setWsPickerChannel] = useState(null)
+  const [isChangingWorkspace, setIsChangingWorkspace] = useState(false)
+  const [isParsingHistory, setIsParsingHistory] = useState(false)
   const [wsBrowsePath, setWsBrowsePath] = useState(getInitialBrowsePath())
   const [wsBrowseEntries, setWsBrowseEntries] = useState([])
   const [wsBrowseLoading, setWsBrowseLoading] = useState(false)
@@ -906,7 +909,8 @@ function App() {
 
   const mediaRecorderRef = useRef(null)
   const chunksRef = useRef([])
-  const messagesEndRef = useRef(null)
+
+
   const fileInputRef = useRef(null)
   const chatWsRef = useRef(null)
   const liveLogActiveRef = useRef(false)
@@ -1761,7 +1765,6 @@ function App() {
 
 
 
-  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
 
   const fetchSessions = async () => {
     try {
@@ -1902,7 +1905,30 @@ function App() {
       }
 
       if (!isSameSession) setSessionId(id)
-      setMessages(history)
+      const batchThreshold = 10
+      if (history.length > batchThreshold) {
+        setIsParsingHistory(true)
+        const worker = new Worker(new URL('./workers/messageNormalizer.worker.js', import.meta.url), { type: 'module' })
+        worker.onmessage = (e) => {
+          if (e.data.error) {
+            console.warn('[Worker] messageNormalizer failed:', e.data.error)
+            setMessages(history.map(normalizeMessage))
+          } else {
+            setMessages(e.data.normalized)
+          }
+          setIsParsingHistory(false)
+          worker.terminate()
+        }
+        worker.onerror = (err) => {
+          console.warn('[Worker] messageNormalizer error:', err)
+          setMessages(history.map(normalizeMessage))
+          setIsParsingHistory(false)
+          worker.terminate()
+        }
+        worker.postMessage({ messages: history })
+      } else {
+        setMessages(history.map(normalizeMessage))
+      }
     } catch (e) {
       setMessages([{ role: 'error', content: 'Failed to load session history' }])
     } finally { setIsLoading(false) }
@@ -1975,6 +2001,23 @@ function App() {
     }
   }
 
+  const normalizeMessage = (msg) => {
+    if (msg.role !== 'assistant' || typeof msg.content !== 'string') return msg
+    if (msg.__cmd) return msg
+    let state = null, analysisResult = null, displayContent = null
+    try {
+      const stateJson = extractTrailingStateJson(msg.content)
+      if (stateJson) state = JSON.parse(stateJson)
+    } catch (e) { /* ignore parse errors */ }
+    try {
+      analysisResult = tryParseAnalysisResult(msg.content)
+    } catch (e) { /* ignore parse errors */ }
+    try {
+      displayContent = stripAgentMarkers(msg.content)
+    } catch (e) { /* ignore parse errors */ }
+    return { ...msg, __cmd: { state, analysisResult, displayContent, hasCommands: msg.content.includes('__CMD__') } }
+  }
+
   const syncWorkspaceTreeSilently = async (dirPath, reason = 'auto') => {
     if (!dirPath) return false
     const syncKey = `${sessionId}:${dirPath}`
@@ -2036,6 +2079,13 @@ function App() {
     })
   }
 
+  const changeWorkspaceDir = async (newDir) => {
+    if (!newDir || newDir === workspaceDir) return
+    setWorkspaceDir(newDir)
+    setWsInvalid(false)
+    await syncWorkspaceTreeSilently(newDir, 'workspace-change')
+  }
+
   const handleExecutePlan = async (editedPlanArray, msg) => {
     try {
       endLiveLogSession()
@@ -2078,7 +2128,7 @@ function App() {
       });
       
       if (res.data.status === 'success') {
-        setMessages(prev => [...prev, { role: 'assistant', content: res.data.response }]);
+        setMessages(prev => [...prev, normalizeMessage({ role: 'assistant', content: res.data.response })]);
         fetchSessions();
       } else {
         setMessages(prev => [...prev, { role: 'error', content: `Error: ${res.data.message}` }]);
@@ -2180,7 +2230,7 @@ function App() {
       }
       const res = await api.post('/chat', payload)
       if (res.data.status === 'success') {
-        setMessages(prev => [...prev, { id: nextMsgId(), role: 'assistant', content: res.data.response }])
+        setMessages(prev => [...prev, normalizeMessage({ id: nextMsgId(), role: 'assistant', content: res.data.response })])
         fetchSessions()
       } else if (res.data.status === 'plan_generated') {
         const planData = { ...res.data.plan, status: 'executing' }
@@ -2194,7 +2244,7 @@ function App() {
             message_id: planData.message_id
           })
           if (execRes.data.status === 'success') {
-            setMessages(prev => [...prev, { id: nextMsgId(), role: 'assistant', content: execRes.data.response }])
+            setMessages(prev => [...prev, normalizeMessage({ id: nextMsgId(), role: 'assistant', content: execRes.data.response })])
             setMessages(prev => {
               const newMsgs = [...prev]
               for (let i = newMsgs.length - 1; i >= 0; i--) {
@@ -2427,7 +2477,7 @@ function App() {
 
       setMessages(prev => prev.map(m =>
         m.id === targetMsgId
-          ? { ...m, content: mergeAnalysisStateContent(m.content, finalContent), _isComplete: !hasCmd }
+          ? normalizeMessage({ ...m, __cmd: undefined, content: mergeAnalysisStateContent(m.content, finalContent), _isComplete: !hasCmd })
           : m
       ))
     } catch (e) {
@@ -2440,7 +2490,7 @@ function App() {
       }
       setMessages(prev => prev.map(m =>
         m.id === targetMsgId
-          ? { ...m, content: mergeAnalysisStateContent(m.content, fallbackContent), _isComplete: true }
+          ? normalizeMessage({ ...m, __cmd: undefined, content: mergeAnalysisStateContent(m.content, fallbackContent), _isComplete: true })
           : m
       ))
     }
@@ -2811,7 +2861,16 @@ const handleDeleteSession = (id) => {
                 {activeTab === 'documents' ? t('nav.companyDocuments') : activeTab === 'sales_orders' ? '销售单管理' : activeTab === 'purchase_orders' ? '采购单管理' : activeTab === 'reconciliations' ? '对账单管理' : activeTab === 'erp' ? t('erp.dataManagement') : activeTab === 'outbound_orders' ? t('erp.outboundOrders') : activeTab === 'inbound_orders' ? t('erp.inboundOrders') : activeTab === 'parts' ? t('erp.parts') : activeTab === 'customers' ? t('erp.customers') : activeTab === 'suppliers' ? t('erp.suppliers') : activeTab === 'customer_part_mappings' ? '客户料号映射' : activeTab === 'import_product_relation' ? '导入产品关系' : activeTab === 'dashboard' ? t('erp.dashboard') : activeTab === 'databases' ? t('nav.databases') : activeTab === 'monitor' ? 'autobot-monitor' : (sessions.find(s => s.id === sessionId)?.title || t('nav.newChat'))}
               </Text>
               {activeTab === 'chat' && sessions.find(s => s.id === sessionId)?.channel === 'code' && workspaceDir && (
-                <Tag icon={<FolderOpenOutlined />} style={{ fontSize: 11, maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                <Tag 
+                  icon={<FolderOpenOutlined />} 
+                  style={{ fontSize: 11, maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', cursor: 'pointer' }}
+                  onClick={() => {
+                    setIsChangingWorkspace(true)
+                    setWsPickerChannel('code')
+                    setShowWsPicker(true)
+                    loadWsBrowse(workspaceDir)
+                  }}
+                >
                   📁 {workspaceDir.length > 40 ? '...' + workspaceDir.slice(-40) : workspaceDir}
                 </Tag>
               )}
@@ -2882,37 +2941,73 @@ const handleDeleteSession = (id) => {
             {/* Chat area */}
             <Content style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', flex: 1 }}>
               {/* Messages */}
-              <div style={{ flex: 1, overflow: 'auto', padding: '24px 0' }} className="custom-scrollbar">
-                <div style={{ maxWidth: 760, margin: '0 auto', padding: '0 24px' }}>
-                  {messages.length === 0 && !activeScheduledTask && (
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '50vh', color: '#444' }}>
-                      <ThunderboltOutlined style={{ fontSize: 48, marginBottom: 16, color: '#1677ff', opacity: 0.6 }} />
-                      <Title level={4} style={{ color: '#666', margin: 0 }}>{t('chat.greeting')}</Title>
-                    </div>
-                  )}
-                  {messages.length === 0 && activeScheduledTask && (
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '50vh', color: '#444' }}>
-                      <ClockCircleOutlined style={{ fontSize: 48, marginBottom: 16, color: '#1677ff', opacity: 0.6 }} />
-                      <Title level={4} style={{ color: '#666', margin: 0 }}>Waiting for the first execution...</Title>
-                    </div>
-                  )}
-                  {messages.map((msg, idx) => <MessageBubble key={msg.id || idx} msg={msg} onDelete={() => handleDeleteMessage(msg.id || msg._localId)} />)}
-                  {isLoading && messages.length === 0 && <SessionSkeleton />}
-                  {isLoading && messages.length > 0 && (
-                    <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
-                      <Avatar icon={<RobotOutlined />} size={32} style={{ background: '#1677ff', flexShrink: 0 }} />
-                      <div>
-                        <Text style={{ color: '#888', fontSize: 12, display: 'block', marginBottom: 6 }}>AutoBot</Text>
-                        <Space style={{ color: '#888' }}>
-                          <LoadingOutlined spin />
-                          <Text style={{ color: '#888', fontSize: 13 }}>Thinking...</Text>
-                        </Space>
+              {messages.length === 0 ? (
+                <div style={{ flex: 1, overflow: 'auto', padding: '24px 0' }} className="custom-scrollbar">
+                  <div style={{ maxWidth: 760, margin: '0 auto', padding: '0 24px' }}>
+                    {isLoading ? (
+                      <SessionSkeleton />
+                    ) : activeScheduledTask ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '50vh', color: '#444' }}>
+                        <ClockCircleOutlined style={{ fontSize: 48, marginBottom: 16, color: '#1677ff', opacity: 0.6 }} />
+                        <Title level={4} style={{ color: '#666', margin: 0 }}>Waiting for the first execution...</Title>
                       </div>
-                    </div>
-                  )}
-                  <div ref={messagesEndRef} />
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '50vh', color: '#444' }}>
+                        <ThunderboltOutlined style={{ fontSize: 48, marginBottom: 16, color: '#1677ff', opacity: 0.6 }} />
+                        <Title level={4} style={{ color: '#666', margin: 0 }}>{t('chat.greeting')}</Title>
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div style={{ flex: 1, padding: '24px 0' }}>
+                  <Virtuoso
+                    style={{ height: '100%' }}
+                    className="custom-scrollbar"
+                    totalCount={messages.length}
+                    followOutput="smooth"
+                    increaseViewportBy={{ top: 200, bottom: 200 }}
+                    itemContent={(index) => {
+                      const msg = messages[index]
+                      return (
+                        <div style={{ maxWidth: 760, margin: '0 auto', padding: '0 24px' }}>
+                          <MessageBubble msg={msg} onDelete={() => handleDeleteMessage(msg.id || msg._localId)} />
+                        </div>
+                      )
+                    }}
+                    components={{
+                      Header: () => isParsingHistory && !isLoading ? (
+                        <div style={{ maxWidth: 760, margin: '0 auto', padding: '0 24px' }}>
+                          <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
+                            <Avatar icon={<RobotOutlined />} size={32} style={{ background: '#1677ff', flexShrink: 0 }} />
+                            <div>
+                              <Text style={{ color: '#888', fontSize: 12, display: 'block', marginBottom: 6 }}>AutoBot</Text>
+                              <Space style={{ color: '#888' }}>
+                                <LoadingOutlined spin />
+                                <Text style={{ color: '#888', fontSize: 13 }}>Parsing session history...</Text>
+                              </Space>
+                            </div>
+                          </div>
+                        </div>
+                      ) : null,
+                      Footer: () => isLoading && messages.length > 0 ? (
+                        <div style={{ maxWidth: 760, margin: '0 auto', padding: '0 24px' }}>
+                          <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
+                            <Avatar icon={<RobotOutlined />} size={32} style={{ background: '#1677ff', flexShrink: 0 }} />
+                            <div>
+                              <Text style={{ color: '#888', fontSize: 12, display: 'block', marginBottom: 6 }}>AutoBot</Text>
+                              <Space style={{ color: '#888' }}>
+                                <LoadingOutlined spin />
+                                <Text style={{ color: '#888', fontSize: 13 }}>Thinking...</Text>
+                              </Space>
+                            </div>
+                          </div>
+                        </div>
+                      ) : null,
+                    }}
+                  />
+                </div>
+              )}
 
               {/* Input */}
               {activeScheduledTask ? (
@@ -3064,10 +3159,18 @@ const handleDeleteSession = (id) => {
       <Modal
         title="选择项目目录"
         open={showWsPicker}
-        onCancel={() => { setShowWsPicker(false); setWsPickerChannel(null) }}
+        onCancel={() => { setShowWsPicker(false); setWsPickerChannel(null); setIsChangingWorkspace(false) }}
         footer={[
-          <Button key="cancel" onClick={() => { setShowWsPicker(false); setWsPickerChannel(null) }}>取消</Button>,
-          <Button key="ok" type="primary" onClick={() => { createSessionDirect(wsPickerChannel, wsBrowsePath); setShowWsPicker(false) }}>选择此目录</Button>
+          <Button key="cancel" onClick={() => { setShowWsPicker(false); setWsPickerChannel(null); setIsChangingWorkspace(false) }}>取消</Button>,
+          <Button key="ok" type="primary" onClick={() => {
+            if (isChangingWorkspace) {
+              changeWorkspaceDir(wsBrowsePath)
+            } else {
+              createSessionDirect(wsPickerChannel, wsBrowsePath)
+            }
+            setShowWsPicker(false)
+            setIsChangingWorkspace(false)
+          }}>选择此目录</Button>
         ]}
         width={500}
       >

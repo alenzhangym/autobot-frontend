@@ -266,6 +266,16 @@ export default function MonitorPanel() {
     }
   };
 
+  const validatePath = async (dirPath) => {
+    try {
+      const res = await api.post('/api/local/workspace/validate', { path: dirPath }, { baseURL });
+      return res.data.valid === true;
+    } catch (e) {
+      console.warn('[Monitor] Validation failed:', e);
+      return false;
+    }
+  };
+
   const handleSaveConfig = async () => {
     if (!draftRepoRoot.trim()) {
       message.error('Please enter a project path');
@@ -273,6 +283,12 @@ export default function MonitorPanel() {
     }
     setBusy(true);
     try {
+      const isValid = await validatePath(draftRepoRoot.trim());
+      if (!isValid) {
+        message.error('Invalid path: directory does not exist or is not accessible');
+        setBusy(false);
+        return;
+      }
       const res = await api.post('/api/monitor/config', { repoRoot: draftRepoRoot.trim() }, { baseURL });
       message.success(`Switched to ${res.data.config.repoRoot}`);
       setSettingsOpen(false);
