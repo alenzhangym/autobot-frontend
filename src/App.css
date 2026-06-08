@@ -1,0 +1,9 @@
+/* App.css - Resetting default Vite styles that might interfere with full-screen layout */
+#root {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  text-align: left;
+}

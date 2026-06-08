@@ -1,0 +1,89 @@
+/* Custom Scrollbar */
+.custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+.custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+.custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
+.custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.15); }
+
+/* Markdown prose */
+.prose p { margin-bottom: 0.75em; }
+.prose p:last-child { margin-bottom: 0; }
+.prose pre { margin: 0.5em 0; border-radius: 8px; overflow: hidden; }
+.prose code { font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 0.88em; }
+.prose ul, .prose ol { padding-left: 1.5em; margin-bottom: 0.75em; }
+.prose li { margin-bottom: 0.25em; }
+.prose h1, .prose h2, .prose h3 { color: #e3e3e3; margin: 1em 0 0.5em; }
+.prose blockquote { border-left: 3px solid #333; padding-left: 12px; color: #888; margin: 0.5em 0; }
+.prose table { border-collapse: collapse; width: 100%; margin: 0.75em 0; }
+.prose th, .prose td { border: 1px solid #2a2a2a; padding: 6px 10px; font-size: 13px; }
+.prose th { background: #1a1a1a; color: #aaa; }
+
+/* Spin animation for loading icons */
+.spin-animation { animation: spin 1s linear infinite; }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+/* Log panel tabs fill height */
+.log-panel-tabs { height: 100%; }
+.log-panel-tabs .ant-tabs-content-holder { flex: 1; overflow: hidden; }
+.log-panel-tabs .ant-tabs-content { height: 100%; }
+.log-panel-tabs .ant-tabs-tabpane { height: 100%; display: flex; flex-direction: column; }
+
+/* Session delete button: only show on hover */
+.session-delete-btn, .session-actions { display: none !important; }
+.ant-menu-item:hover .session-delete-btn, .ant-menu-item:hover .session-actions { display: inline-flex !important; }
+
+/* AntD dark overrides */
+/* Removed hardcoded .ant-input overrides to let ConfigProvider handle dark mode natively */
+
+/* Global Dark Theme Overrides for Inputs */
+.ant-input-affix-wrapper {
+    background-color: #161616 !important;
+    border-color: #2a2a2a !important;
+}
+
+.ant-input {
+    background-color: #161616 !important;
+    color: #e3e3e3 !important;
+    border-color: #2a2a2a !important;
+}
+
+.ant-input-affix-wrapper .ant-input {
+    background-color: transparent !important;
+    border-color: transparent !important;
+}
+
+.ant-input-password input {
+    background-color: transparent !important;
+    color: #e3e3e3 !important;
+}
+
+.ant-input-affix-wrapper-focused, .ant-input:focus {
+    border-color: #1677ff !important;
+}
+
+.ant-input::placeholder {
+    color: #555 !important;
+}
+
+/* Fix Webkit Autofill in dark mode */
+input:-webkit-autofill,
+input:-webkit-autofill:hover, 
+input:-webkit-autofill:focus, 
+input:-webkit-autofill:active {
+    -webkit-box-shadow: 0 0 0 1000px #161616 inset !important;
+    -webkit-text-fill-color: #e3e3e3 !important;
+    transition: background-color 5000s ease-in-out 0s;
+    caret-color: #e3e3e3 !important;
+}
+
+/* Selection Highlight */
+::selection {
+    background-color: #1677ff;
+    color: #ffffff;
+    -webkit-text-fill-color: #ffffff;
+}
+
+input::selection, textarea::selection, .ant-input::selection {
+    background-color: #1677ff;
+    color: #ffffff;
+    -webkit-text-fill-color: #ffffff;
+}
