@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useMemo } from 'react'
 import {
   Layout, Menu, Button, Input, Avatar, Typography, Space, Tooltip,
   Modal, Form, Tabs, Tag, Dropdown, Divider, ConfigProvider, theme, Badge, Select, InputNumber, TimePicker, message, Checkbox,
-  List, Spin
+  List, Spin, Segmented
 } from 'antd'
 import dayjs from 'dayjs'
 import {
@@ -786,6 +786,7 @@ function App() {
   const nextMsgId = () => { msgIdCounter.current += 1; return msgIdCounter.current }
   const [input, setInput] = useState('')
   const [sessionId, setSessionId] = useState('')
+  const [codeMode, setCodeMode] = useState('plan')  // 'plan' (分析) or 'build' (构建)
   const [isLoading, setIsLoading] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
   const [workspaceDir, setWorkspaceDir] = useState('')
@@ -823,6 +824,31 @@ function App() {
   const fileInputRef = useRef(null)
   const chatWsRef = useRef(null)
   const virtuosoRef = useRef(null)
+
+  // ── Inject code mode toggle highlight styles ──
+  useEffect(() => {
+    const style = document.createElement('style')
+    style.textContent = `
+      .code-mode-segmented .ant-segmented-item-selected {
+        background: #1677ff !important;
+        color: #fff !important;
+        border-radius: 6px;
+      }
+      .code-mode-segmented .ant-segmented-item {
+        color: #888;
+        transition: color 0.2s, background 0.2s;
+      }
+      .code-mode-segmented .ant-segmented-item:hover:not(.ant-segmented-item-selected) {
+        color: #bbb;
+      }
+      .code-mode-segmented .ant-segmented-thumb {
+        background: #1677ff !important;
+        border-radius: 6px;
+      }
+    `
+    document.head.appendChild(style)
+    return () => { document.head.removeChild(style) }
+  }, [])
   const liveLogActiveRef = useRef(false)
 
   const sessionCacheRef = useRef(new Map())
@@ -2139,6 +2165,7 @@ function App() {
       }
 
       const payload = { message: text, session_id: sessionId };
+      if (codeMode === 'build') payload.code_mode = 'build';
       if (selectedImageBase64) {
         payload.image_base64 = selectedImageBase64;
       }
@@ -3034,6 +3061,31 @@ const handleDeleteSession = (id) => {
               ) : (
                 <div style={{ padding: '12px 24px 20px', background: '#0d0d0d', borderTop: '1px solid #1a1a1a' }}>
                   <div style={{ maxWidth: 760, margin: '0 auto' }}>
+                    {/* ── Code mode toggle (Plan / Build) ── */}
+                    {(() => {
+                      const currentSession = sessions.find(s => s.id === sessionId)
+                      if (currentSession?.channel === 'code') {
+                        return (
+                          <div style={{ marginBottom: 8 }}>
+                            <Segmented
+                              size="small"
+                              value={codeMode}
+                              onChange={setCodeMode}
+                              options={[
+                                { label: '🔍 分析', value: 'plan' },
+                                { label: '🔧 构建', value: 'build' }
+                              ]}
+                              style={{
+                                background: '#141414',
+                                border: '1px solid #2a2a2a'
+                              }}
+                              className="code-mode-segmented"
+                            />
+                          </div>
+                        )
+                      }
+                      return null
+                    })()}
                     <div style={{
                       background: '#1a1a1a', borderRadius: 24, border: '1px solid #2a2a2a',
                       padding: '10px 14px', display: 'flex', alignItems: 'flex-end', gap: 8,
