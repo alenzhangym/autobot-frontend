@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useMemo } from 'react'
 import {
   Layout, Menu, Button, Input, Avatar, Typography, Space, Tooltip,
   Modal, Form, Tabs, Tag, Dropdown, Divider, ConfigProvider, theme, Badge, Select, InputNumber, TimePicker, message, Checkbox,
-  List, Spin, Segmented
+  List, Spin
 } from 'antd'
 import dayjs from 'dayjs'
 import {
@@ -825,30 +825,7 @@ function App() {
   const chatWsRef = useRef(null)
   const virtuosoRef = useRef(null)
 
-  // ── Inject code mode toggle highlight styles ──
-  useEffect(() => {
-    const style = document.createElement('style')
-    style.textContent = `
-      .code-mode-segmented .ant-segmented-item-selected {
-        background: #1677ff !important;
-        color: #fff !important;
-        border-radius: 6px;
-      }
-      .code-mode-segmented .ant-segmented-item {
-        color: #888;
-        transition: color 0.2s, background 0.2s;
-      }
-      .code-mode-segmented .ant-segmented-item:hover:not(.ant-segmented-item-selected) {
-        color: #bbb;
-      }
-      .code-mode-segmented .ant-segmented-thumb {
-        background: #1677ff !important;
-        border-radius: 6px;
-      }
-    `
-    document.head.appendChild(style)
-    return () => { document.head.removeChild(style) }
-  }, [])
+  
   const liveLogActiveRef = useRef(false)
 
   const sessionCacheRef = useRef(new Map())
@@ -1705,7 +1682,10 @@ function App() {
   const fetchSessions = async () => {
     try {
       const res = await api.get('/sessions')
-      setSessions(res.data.sessions || [])
+      const loaded = res.data.sessions || []
+      setSessions(loaded)
+      const cur = loaded.find(s => s.id === sessionId)
+      if (cur?.channel) setCurrentChannel(cur.channel)
     } catch (e) {
       if (e.response?.status === 401) logout()
     }
@@ -1770,6 +1750,7 @@ function App() {
       const sessionWorkspaceDir = res.data.workspaceDir
 
       // ── Restore session metadata and validate workspace for code sessions ──
+      setCurrentChannel(sessionChannel || 'general')
       if (sessionChannel === 'code' && sessionWorkspaceDir) {
         setWorkspaceDir(sessionWorkspaceDir)
         const valid = await validateWorkspaceDir(sessionWorkspaceDir)
@@ -2116,7 +2097,8 @@ function App() {
 
     // ── Block chat if workspace is invalid for code sessions ──
     const currentSession = sessions.find(s => s.id === sessionId)
-    if (currentSession?.channel === 'code' && wsInvalid) {
+    const isCodeSess = currentSession?.channel === 'code' || (!currentSession?.channel && currentChannel === 'code')
+    if (isCodeSess && wsInvalid) {
       setShowWsPicker(true)
       return
     }
@@ -2157,10 +2139,12 @@ function App() {
     setMessages(prev => [...prev, { id: nextMsgId(), role: 'user', content: contentToDisplay }])
     
     if (!sessions.find(s => s.id === sessionId)) {
-      setSessions(prev => [{ id: sessionId, title: text || selectedImage || (uploadedDocuments.length > 0 ? uploadedDocuments[0].name : 'New Session'), timestamp: new Date().toISOString() }, ...prev])
+      const currentSession = sessions.find(s => s.id === sessionId)
+      const channelToUse = currentSession?.channel || currentChannel
+      setSessions(prev => [{ id: sessionId, title: text || selectedImage || (uploadedDocuments.length > 0 ? uploadedDocuments[0].name : 'New Session'), channel: channelToUse, timestamp: new Date().toISOString() }, ...prev])
     }
     try {
-      if (currentSession?.channel === 'code' && workspaceDir) {
+      if (isCodeSess && workspaceDir) {
         await syncWorkspaceTreeSilently(workspaceDir, 'before-chat')
       }
 
@@ -2844,7 +2828,7 @@ const handleDeleteSession = (id) => {
               <Text style={{ color: '#888', fontSize: 14 }}>
                 {activeTab === 'documents' ? t('nav.companyDocuments') : activeTab === 'sales_orders' ? '销售单管理' : activeTab === 'purchase_orders' ? '采购单管理' : activeTab === 'reconciliations' ? '对账单管理' : activeTab === 'erp' ? t('erp.dataManagement') : activeTab === 'outbound_orders' ? t('erp.outboundOrders') : activeTab === 'inbound_orders' ? t('erp.inboundOrders') : activeTab === 'parts' ? t('erp.parts') : activeTab === 'customers' ? t('erp.customers') : activeTab === 'suppliers' ? t('erp.suppliers') : activeTab === 'customer_part_mappings' ? '客户料号映射' : activeTab === 'import_product_relation' ? '导入产品关系' : activeTab === 'dashboard' ? t('erp.dashboard') : activeTab === 'databases' ? t('nav.databases') : activeTab === 'monitor' ? 'autobot-monitor' : (sessions.find(s => s.id === sessionId)?.title || t('nav.newChat'))}
               </Text>
-              {activeTab === 'chat' && sessions.find(s => s.id === sessionId)?.channel === 'code' && workspaceDir && (
+              {activeTab === 'chat' && (sessions.find(s => s.id === sessionId)?.channel === 'code' || (!sessions.find(s => s.id === sessionId)?.channel && currentChannel === 'code')) && workspaceDir && (
                 <Tag 
                   icon={<FolderOpenOutlined />} 
                   style={{ fontSize: 11, maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', cursor: 'pointer' }}
@@ -3064,23 +3048,31 @@ const handleDeleteSession = (id) => {
                     {/* ── Code mode toggle (Plan / Build) ── */}
                     {(() => {
                       const currentSession = sessions.find(s => s.id === sessionId)
-                      if (currentSession?.channel === 'code') {
+                      const isCodeChannel = currentSession?.channel === 'code' || (!currentSession?.channel && currentChannel === 'code')
+                      if (isCodeChannel) {
                         return (
-                          <div style={{ marginBottom: 8 }}>
-                            <Segmented
-                              size="small"
-                              value={codeMode}
-                              onChange={setCodeMode}
-                              options={[
-                                { label: '🔍 分析', value: 'plan' },
-                                { label: '🔧 构建', value: 'build' }
-                              ]}
+                          <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <span
+                              onClick={() => setCodeMode('plan')}
                               style={{
-                                background: '#141414',
-                                border: '1px solid #2a2a2a'
+                                cursor: 'pointer', padding: '2px 8px', borderRadius: 4, fontSize: 13,
+                                color: codeMode === 'plan' ? '#1677ff' : '#666',
+                                fontWeight: codeMode === 'plan' ? 600 : 400,
+                                background: codeMode === 'plan' ? 'rgba(22,119,255,0.08)' : 'transparent',
+                                transition: 'all 0.2s',
                               }}
-                              className="code-mode-segmented"
-                            />
+                            >🔍 分析</span>
+                            <span style={{ color: '#444', fontSize: 12 }}>|</span>
+                            <span
+                              onClick={() => setCodeMode('build')}
+                              style={{
+                                cursor: 'pointer', padding: '2px 8px', borderRadius: 4, fontSize: 13,
+                                color: codeMode === 'build' ? '#1677ff' : '#666',
+                                fontWeight: codeMode === 'build' ? 600 : 400,
+                                background: codeMode === 'build' ? 'rgba(22,119,255,0.08)' : 'transparent',
+                                transition: 'all 0.2s',
+                              }}
+                            >🔧 构建</span>
                           </div>
                         )
                       }
