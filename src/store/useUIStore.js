@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 
 // ── UI-only state: modals, panels, display preferences ──
-// Separated from useAppStore to keep business data and UI concerns
+// Separated from business-data stores to keep UI concerns
 // independently maintainable and to avoid unnecessary re-renders.
 
 export const useUIStore = create((set) => ({

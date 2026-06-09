@@ -41,7 +41,9 @@ import DocumentPreviewModal from './DocumentPreviewModal'
 import SessionSidebar from './components/SessionSidebar'
 import { executeAgentCommands, appendStreamToken, tryStreamDispatch, resetStreamBuffer } from './components/WorkspacePanel'
 import MessageBubble from './components/MessageBubble'
-import { useAppStore } from './store/useAppStore'
+import { useUserStore } from './store/useUserStore'
+import { useDataStore } from './store/useDataStore'
+import { useConfigStore } from './store/useConfigStore'
 import { useUIStore } from './store/useUIStore'
 import { useTranslation } from 'react-i18next'
 import { probeToolchain, getClientInfo, clearToolchainCache } from './utils/probeTools'
@@ -727,13 +729,17 @@ function App() {
   const { t, i18n } = useTranslation()
   const {
     user, setUser,
-    dbConfigs, setDbConfigs,
     companies, setCompanies,
     users, setUsers,
-    skills, setSkills,
-    localAgentStatus, setLocalAgentStatus,
     companyChannels, setCompanyChannels
-  } = useAppStore()
+  } = useUserStore()
+  const {
+    dbConfigs, setDbConfigs,
+    skills, setSkills
+  } = useDataStore()
+  const {
+    localAgentStatus, setLocalAgentStatus
+  } = useConfigStore()
   const {
     siderCollapsed, setSiderCollapsed,
     showLogs, setShowLogs,
@@ -816,6 +822,7 @@ function App() {
 
   const fileInputRef = useRef(null)
   const chatWsRef = useRef(null)
+  const virtuosoRef = useRef(null)
   const liveLogActiveRef = useRef(false)
 
   const sessionCacheRef = useRef(new Map())
@@ -2312,6 +2319,17 @@ function App() {
     return () => clearTimeout(timer)
   }, [messages, liveLogActive])
 
+  // ── Auto-scroll to bottom when new messages arrive ──
+  useEffect(() => {
+    if (messages.length > 0) {
+      // Small delay to let Virtuoso finish rendering the new item
+      const timer = setTimeout(() => {
+        virtuosoRef.current?.scrollToIndex({ index: messages.length - 1, behavior: 'smooth' })
+      }, 50)
+      return () => clearTimeout(timer)
+    }
+  }, [messages.length])
+
   /**
    * Send command results directly to backend without creating a user message.
    * Updates the target assistant message in place with the new response.
@@ -2901,6 +2919,7 @@ const handleDeleteSession = (id) => {
               ) : (
                 <div style={{ flex: 1, padding: '24px 0' }}>
                   <Virtuoso
+                    ref={virtuosoRef}
                     style={{ height: '100%' }}
                     className="custom-scrollbar"
                     totalCount={messages.length}

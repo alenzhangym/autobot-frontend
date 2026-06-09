@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Button, Menu, Avatar, Tooltip, Dropdown, Space, Tag } from 'antd';
 import { PlusOutlined, FileTextOutlined, DatabaseOutlined, LogoutOutlined, SettingOutlined, TeamOutlined, DeleteOutlined, PlayCircleOutlined, DownOutlined, ShopOutlined, FileSearchOutlined, CodeOutlined, MessageOutlined, SendOutlined, DashboardOutlined, InboxOutlined, ToolOutlined, UsergroupAddOutlined, CrownOutlined, LinkOutlined, UploadOutlined, SnippetsOutlined, ShoppingCartOutlined, AuditOutlined, SearchOutlined, ContainerOutlined, RocketOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
-import { useAppStore } from '../store/useAppStore';
+import { useUserStore } from '../store/useUserStore';
 import api, { getLocalAgentBaseUrl } from '../auth';
 
 const ALL_CHANNELS = [
@@ -38,7 +38,7 @@ export default function SessionSidebar({
   setShowCompanyManagement
 }) {
   const { t } = useTranslation()
-  const { companyChannels } = useAppStore()
+  const { companyChannels } = useUserStore()
   const isSuper = user?.role === 'SUPER_ADMIN' || user?.role?.toLowerCase() === 'admin' || user?.role?.toLowerCase() === 'superadmin'
   const CHANNELS = isSuper || companyChannels.length === 0
     ? ALL_CHANNELS
