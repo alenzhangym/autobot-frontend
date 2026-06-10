@@ -50,7 +50,7 @@ import { probeToolchain, getClientInfo, clearToolchainCache } from './utils/prob
 import zhCN from 'antd/es/locale/zh_CN'
 import enUS from 'antd/es/locale/en_US'
 import { Virtuoso } from 'react-virtuoso'
-import { extractTrailingStateJson, stripAgentMarkers, tryParseAnalysisResult, getLastParseError, decodeStateStringList, replaceTrailingAnalysisState, mergeAnalysisStateContent } from './utils/helpers.jsx'
+import { extractTrailingStateJson, stripAgentMarkers, tryParseAnalysisResult, getLastParseError, decodeStateStringList, replaceTrailingAnalysisState, mergeAnalysisStateContent, extractAnalysisState } from './utils/helpers.jsx'
 import { createHealthPoller, probeHttp } from './utils/healthPoller.js'
 
 // ── Web Worker for async profileData ─────────────────────────────────────────
@@ -2423,7 +2423,7 @@ function App() {
         const nextSignature = extractCommandSignature(finalContent)
         if (previousSignature && nextSignature && previousSignature === nextSignature) {
           appendLiveLog('[CodeAnalysis] 后端重复返回同一组中间态命令，停止自动重放以避免死循环\n')
-          const repeatedState = parseAnalysisState(finalContent)
+          const repeatedState = extractAnalysisState(finalContent)
           const repeatedWarning = '【Code Analysis】\n\n后端重复返回了与上一轮完全相同的本地读取命令，前端已停止自动重复执行，以避免死循环。\n\n请检查后端 focused/iterative 规划是否没有推进，或根据实时日志继续排查。'
           finalContent = repeatedState
             ? replaceTrailingAnalysisState(`${repeatedWarning}\n\n${JSON.stringify(repeatedState)}`, repeatedState)
