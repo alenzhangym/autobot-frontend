@@ -124,6 +124,16 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
   const handleSave = async () => {
     try {
       const values = await form.validateFields()
+      // 至少 1 条物料
+      if (items.length === 0) { message.error('请至少添加一行物料明细'); return }
+      // 整张订单任意非空行（用户保留的）都必须字段齐
+      const filledRows = items.filter(it => it.partType || it.partId || it.orderedQty || it.estimatedUnitPrice)
+      if (filledRows.length === 0) { message.error('请至少填写一行完整的物料明细（物料类型 / 物料 / 订量 / 预估单价 均必填）'); return }
+      const incompleteRows = filledRows.filter(it => !it.partType || !it.partId || !it.orderedQty || it.orderedQty <= 0 || it.estimatedUnitPrice == null)
+      if (incompleteRows.length > 0) {
+        message.error(`有 ${incompleteRows.length} 条物料字段未填全：物料类型 / 物料 / 订量 / 预估单价 均为必填`)
+        return
+      }
       // 数量校验：所有 partId 行的数量必须 > 0
       const rowsWithPart = items.filter(it => it.partId)
       const invalidQty = rowsWithPart.filter(it => !it.orderedQty || it.orderedQty <= 0)
@@ -134,7 +144,7 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
       const payload = {
         supplierName: values.supplierName,
         expectedDeliveryDate: values.expectedDeliveryDate ? values.expectedDeliveryDate.format('YYYY-MM-DD') : null,
-        status: editing ? editing.status : 'DRAFT',
+        status: editing ? editing.status : 'ORDERED',
         paymentStatus: values.paymentStatus, notes: values.notes,
         companyId: effectiveCompanyId || user?.companyId || 0,
         createdBy: user?.id, items: rowsWithPart.filter(it => it.orderedQty > 0).map(it => ({
@@ -241,7 +251,7 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
             <Space wrap>
               <Form.Item name="supplierName" label="供应商" rules={[{ required: true, message: '请输入' }]}>
                 <AutoComplete placeholder="供应商名称" style={{ width: 200 }} options={suppliers} /></Form.Item>
-              <Form.Item name="expectedDeliveryDate" label="预计到货"><DatePicker style={{ width: 160 }} /></Form.Item>
+              <Form.Item name="expectedDeliveryDate" label="预计到货" rules={[{ required: true, message: '请选择预计到货日期' }]}><DatePicker style={{ width: 160 }} /></Form.Item>
               <Form.Item name="paymentStatus" label="付款状态" initialValue="UNPAID">
                 <Select style={{ width: 120 }} options={[{ value: 'UNPAID', label: '未付款' }, { value: 'PARTIAL', label: '部分付款' }, { value: 'PAID', label: '已付款' }]} /></Form.Item>
             </Space>
