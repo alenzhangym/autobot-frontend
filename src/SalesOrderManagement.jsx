@@ -220,7 +220,14 @@ export default function SalesOrderManagement({ user, companies = [] }) {
         message.error(`有 ${unresolved.length} 条物料的客户料号未匹配到内部物料，请从下拉中选择`)
         return
       }
-      const validItems = items.filter(it => it.partId && it.orderedQty > 0)
+      // 数量校验：所有 partId 行的数量必须 > 0
+      const rowsWithPart = items.filter(it => it.partId)
+      const invalidQty = rowsWithPart.filter(it => !it.orderedQty || it.orderedQty <= 0)
+      if (invalidQty.length > 0) {
+        message.error(`有 ${invalidQty.length} 条物料数量为 0 或未填写，销售数量必须大于 0`)
+        return
+      }
+      const validItems = rowsWithPart.filter(it => it.orderedQty > 0)
       if (validItems.length === 0) { message.error('请至少添加一条物料明细'); return }
       const payload = {
         customerPo: values.customerPo, customerId: values.customerId,

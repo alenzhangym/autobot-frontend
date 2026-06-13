@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { Layout, Table, Button, Tabs, Tag, Space, message, Popconfirm, Typography, Descriptions, InputNumber, Tooltip, Modal, Form, DatePicker, Input } from 'antd'
-import { CheckOutlined, ReloadOutlined, InboxOutlined, SendOutlined, SaveOutlined, DeleteOutlined, HistoryOutlined, ExclamationCircleOutlined, DownloadOutlined, ExportOutlined } from '@ant-design/icons'
+import { Layout, Table, Pagination, Button, Tabs, Tag, Space, message, Popconfirm, Typography, InputNumber, Tooltip, Modal, Form, DatePicker, Input, Select } from 'antd'
+import { CheckOutlined, ReloadOutlined, InboxOutlined, SendOutlined, SaveOutlined, DeleteOutlined, HistoryOutlined, DownloadOutlined, ExportOutlined } from '@ant-design/icons'
 import api from './auth'
 import dayjs from 'dayjs'
 
@@ -27,6 +27,9 @@ export default function ReconciliationManagement({ user, companies = [] }) {
   const [exportForm] = Form.useForm()
   const [exporting, setExporting] = useState(false)
   const [exportResult, setExportResult] = useState(null)
+  const [customers, setCustomers] = useState([])
+  const [suppliers, setSuppliers] = useState([])
+  const [partyFilter, setPartyFilter] = useState(null)
 
   const fetchRecords = useCallback(async () => {
     setLoading(true)
@@ -34,13 +37,17 @@ export default function ReconciliationManagement({ user, companies = [] }) {
       const params = { recType: activeTab, limit: pageSize, offset: (page - 1) * pageSize }
       if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
       if (statusFilter) params.status = statusFilter
+      if (partyFilter) {
+        if (activeTab === 'OUTBOUND') params.customerId = partyFilter
+        else params.supplierName = partyFilter
+      }
       const res = await api.get('/erp/reconciliations', { params })
       setRecords(res.data.data || [])
       setTotal(res.data.count || 0)
     } catch (e) {
       message.error('加载对账单失败: ' + (e.response?.data?.error || e.message))
     } finally { setLoading(false) }
-  }, [page, pageSize, activeTab, statusFilter, effectiveCompanyId, isSuperAdmin])
+  }, [page, pageSize, activeTab, statusFilter, partyFilter, effectiveCompanyId, isSuperAdmin])
 
   const fetchPendingCount = useCallback(async () => {
     try {
@@ -53,6 +60,39 @@ export default function ReconciliationManagement({ user, companies = [] }) {
 
   useEffect(() => { fetchRecords() }, [fetchRecords])
   useEffect(() => { fetchPendingCount() }, [fetchPendingCount])
+
+  // 列表刷新后，自动预加载所有对账单的明细（用于在卡片中直接展示物料行）
+  useEffect(() => {
+    if (!records || records.length === 0) return
+    const missing = records.filter(r => !expandedDetails[r.reconciliation_id])
+    if (missing.length === 0) return
+    const params = {}
+    if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
+    Promise.all(missing.map(r =>
+      api.get(`/erp/reconciliations/${r.reconciliation_id}`, { params })
+        .then(res => ({ key: r.reconciliation_id, data: res.data }))
+        .catch(() => null)
+    )).then(results => {
+      const updates = {}
+      for (const r of results) if (r && r.data) updates[r.key] = r.data
+      if (Object.keys(updates).length > 0) {
+        setExpandedDetails(prev => ({ ...prev, ...updates }))
+      }
+    })
+  }, [records])
+
+  // 加载客户/供应商清单 (供选择器使用)
+  useEffect(() => {
+    const params = {}
+    if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
+    Promise.all([
+      api.get('/erp/customers', { params }).then(r => setCustomers(r.data.customers || [])).catch(() => {}),
+      api.get('/erp/suppliers/all', { params }).then(r => setSuppliers(r.data || [])).catch(() => {}),
+    ])
+  }, [effectiveCompanyId, isSuperAdmin])
+
+  // 切 tab / 换分页时清空 party 过滤，避免不同类型之间的脏数据
+  useEffect(() => { setPartyFilter(null) }, [activeTab])
 
   const handleComplete = async (recId) => {
     try {
@@ -98,11 +138,15 @@ export default function ReconciliationManagement({ user, companies = [] }) {
     const collected = []
     for (let idx = 0; idx < items.length; idx++) {
       const it = items[idx]
-      const qty = getDraftValue(recId, order.orderId, idx, 'qty')
-      const price = getDraftValue(recId, order.orderId, idx, 'price')
+      const orderedQty = Number(it.qty || 0)
+      const remaining = Math.max(0, orderedQty - Number(it.reconciledQty || 0))
+      // 默认值 = 剩余未对账数量；用户清空(dq === null)表示跳过该行
+      const rawQty = getDraftValue(recId, order.orderId, idx, 'qty')
+      const rawPrice = getDraftValue(recId, order.orderId, idx, 'price')
+      const qty = rawQty === undefined ? remaining : rawQty
+      const price = rawPrice === undefined ? (it.unitPrice != null ? Number(it.unitPrice) : 0) : rawPrice
       if (qty == null || qty === '' || qty === 0) continue
       if (price == null || price === '' || price === 0) continue
-      const remaining = Number(it.qty || 0) - Number(it.reconciledQty || 0)
       if (Number(qty) - remaining > 0.0001) {
         message.error(`型号 ${it.model || it.partType} 本次数量 (${qty}) 超过剩余 ${remaining}`)
         return
@@ -185,9 +229,14 @@ export default function ReconciliationManagement({ user, companies = [] }) {
     const reconciledQty = Number(it.reconciledQty || 0)
     const remaining = Math.max(0, orderedQty - reconciledQty)
     const fully = !!it.itemFullyReconciled
+    // 默认本次对账数量 = 剩余未对账数量，用户可手工修改
+    const defaultQty = remaining
+    const defaultPrice = it.unitPrice != null ? Number(it.unitPrice) : null
     const dq = getDraftValue(rec.reconciliation_id, order.orderId, idx, 'qty')
     const dp = getDraftValue(rec.reconciliation_id, order.orderId, idx, 'price')
-    const draftBatchTotal = (dq && dp) ? Number(dq) * Number(dp) : 0
+    const dqVal = dq === undefined ? defaultQty : dq
+    const dpVal = dp === undefined ? defaultPrice : dp
+    const draftBatchTotal = (dqVal && dpVal) ? Number(dqVal) * Number(dpVal) : 0
     return (
       <tr key={idx} style={{ borderBottom: '1px solid #1a1a1a', background: fully ? '#0a1a0a' : 'transparent' }}>
         <td style={{ padding: 4, color: '#666' }}>{idx + 1}</td>
@@ -206,17 +255,17 @@ export default function ReconciliationManagement({ user, companies = [] }) {
           </div>
         </td>
         <td style={{ padding: 4 }}>
-          {isCompleted
-            ? <span style={{ color: '#666' }}>-</span>
+          {isCompleted || fully
+            ? <span style={{ color: '#52c41a' }}>已对完</span>
             : <InputNumber size="small" style={{ width: '100%' }} min={0} max={remaining} placeholder="0"
-                value={dq}
+                value={dqVal}
                 onChange={v => setDraftValue(rec.reconciliation_id, order.orderId, idx, 'qty', v)} />}
         </td>
         <td style={{ padding: 4 }}>
-          {isCompleted
+          {isCompleted || fully
             ? <span style={{ color: '#666' }}>-</span>
             : <InputNumber size="small" style={{ width: '100%' }} min={0} step={0.0001} placeholder="0.0000"
-                value={dp}
+                value={dpVal}
                 onChange={v => setDraftValue(rec.reconciliation_id, order.orderId, idx, 'price', v)} />}
         </td>
         <td style={{ padding: 4, textAlign: 'right', color: draftBatchTotal > 0 ? '#69b1ff' : '#666', fontSize: 11 }}>
@@ -325,82 +374,105 @@ export default function ReconciliationManagement({ user, companies = [] }) {
     )
   }
 
-  const renderExpandedRow = (record) => {
+  // 渲染对账单完整卡片 (header + 物料明细)
+  const renderReconciliationCard = (record) => {
     const detail = expandedDetails[record.reconciliation_id]
-    if (!detail) return <Text type="secondary">加载中...</Text>
-    const refs = detail.references || []
-    const linkedOrders = detail.linkedOrders || []
-    const reconciledSubtotal = Number(detail.reconciledSubtotal || 0)
-    const fully = !!detail.isFullyReconciled
-    const isCompleted = detail.status === 'COMPLETED'
+    const refs = detail?.references || []
+    const linkedOrders = detail?.linkedOrders || []
+    const reconciledSubtotal = Number(detail?.reconciledSubtotal || 0)
+    const fully = !!detail?.isFullyReconciled
+    const isCompleted = record.status === 'COMPLETED'
+    const orderNums = record.orderNumbers || []
+    const linkedNos = activeTab === 'OUTBOUND' ? (record.soNumbers || []) : (record.poNumbers || [])
+    // 客户/供应商名称解析
+    const party = activeTab === 'OUTBOUND'
+      ? (record.customer_id != null
+          ? (customers.find(c => Number(c.customerId) === Number(record.customer_id))?.name || record.customer_id)
+          : '-')
+      : (record.supplier_name || '-')
+    const totalAmount = Number(record.total_amount || 0)
+    const partyLabel = activeTab === 'OUTBOUND' ? '客户' : '供应商'
     return (
-      <div style={{ padding: '12px 24px', background: '#111' }}>
-        <Descriptions bordered size="small" column={3} labelStyle={{ color: '#888' }} contentStyle={{ color: '#ccc' }}>
-          <Descriptions.Item label="对账单号">{detail.rec_number}</Descriptions.Item>
-          <Descriptions.Item label="类型">{detail.rec_type === 'OUTBOUND' ? '出库对账' : '入库对账'}</Descriptions.Item>
-          <Descriptions.Item label="订单总额">¥{Number(detail.total_amount || 0).toFixed(2)}</Descriptions.Item>
-          <Descriptions.Item label="已对账金额">¥{reconciledSubtotal.toFixed(2)}</Descriptions.Item>
-          <Descriptions.Item label="关联订单数">{refs.length} 条</Descriptions.Item>
-          <Descriptions.Item label="对账状态">
+      <div style={{ marginBottom: 12, background: '#0d0d0d', border: `1px solid ${isCompleted ? '#234d23' : (fully ? '#1f3a4d' : '#222')}`, borderRadius: 6, padding: 12 }}>
+        {/* Header: 汇总信息 (原有字段全部在头部展示) */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 16, paddingBottom: 10, borderBottom: '1px dashed #222' }}>
+          <div style={{ minWidth: 180 }}>
+            <div style={{ color: '#888', fontSize: 11 }}>对账单号</div>
+            <div><Text code style={{ color: '#69b1ff', fontSize: 13 }}>{record.rec_number}</Text></div>
+          </div>
+          <div style={{ minWidth: 200 }}>
+            <div style={{ color: '#888', fontSize: 11 }}>{partyLabel}</div>
+            <div style={{ color: '#ccc' }}>{party}</div>
+          </div>
+          <div style={{ minWidth: 220 }}>
+            <div style={{ color: '#888', fontSize: 11 }}>{activeTab === 'OUTBOUND' ? '出库单号 / 销售单号' : '入库单号 / 采购单号'}</div>
+            <div>
+              {orderNums.length > 0 ? orderNums.map((n, i) => <Tag key={'o'+i} color="blue" style={{marginBottom:2}}>{n}</Tag>) : <span style={{ color: '#666' }}>-</span>}
+              {linkedNos.length > 0 && (
+                <span style={{ marginLeft: 4, color: '#666' }}>·</span>
+              )}
+              {linkedNos.map((n, i) => <Tag key={'l'+i} color="geekblue" style={{marginBottom:2, marginLeft: 2}}>{n}</Tag>)}
+            </div>
+          </div>
+          <div style={{ minWidth: 110 }}>
+            <div style={{ color: '#888', fontSize: 11 }}>订单总额</div>
+            <div style={{ color: '#ccc' }}>¥{totalAmount.toLocaleString()}</div>
+          </div>
+          <div style={{ minWidth: 110 }}>
+            <div style={{ color: '#888', fontSize: 11 }}>已对账金额</div>
+            <div style={{ color: '#52c41a' }}>¥{reconciledSubtotal.toFixed(2)}</div>
+          </div>
+          <div style={{ minWidth: 90 }}>
+            <div style={{ color: '#888', fontSize: 11 }}>关联订单</div>
+            <div style={{ color: '#ccc' }}>{refs.length} 条</div>
+          </div>
+          <div style={{ minWidth: 110 }}>
+            <div style={{ color: '#888', fontSize: 11 }}>对账状态</div>
+            <div>
+              {isCompleted
+                ? <Tag color="green" style={{ margin: 0 }}>已完成</Tag>
+                : fully
+                  ? <Tag color="cyan" style={{ margin: 0 }}>可完成</Tag>
+                  : <Tag color="orange" style={{ margin: 0 }}>部分对账</Tag>}
+            </div>
+          </div>
+          <div style={{ minWidth: 130 }}>
+            <div style={{ color: '#888', fontSize: 11 }}>创建时间</div>
+            <div style={{ color: '#ccc', fontSize: 12 }}>{record.created_at ? dayjs(record.created_at).format('YYYY-MM-DD HH:mm') : '-'}</div>
+          </div>
+          <div style={{ minWidth: 130 }}>
+            <div style={{ color: '#888', fontSize: 11 }}>完成时间</div>
+            <div style={{ color: '#ccc', fontSize: 12 }}>{record.completed_at ? dayjs(record.completed_at).format('YYYY-MM-DD HH:mm') : '-'}</div>
+          </div>
+          <div style={{ marginLeft: 'auto' }}>
             {isCompleted
-              ? <Tag color="green">已完成</Tag>
-              : fully
-                ? <Tag color="cyan">全部物料已对账,可点击完成</Tag>
-                : <Tag color="orange"><ExclamationCircleOutlined /> 部分对账,需全部对完才能完成</Tag>}
-          </Descriptions.Item>
-        </Descriptions>
+              ? <Text type="secondary">已完成</Text>
+              : (
+                <Popconfirm title="确认对账完成?" disabled={!fully}
+                  onConfirm={() => handleComplete(record.reconciliation_id)}>
+                  {fully
+                    ? <Button type="primary" size="small" icon={<CheckOutlined />}>对账完成</Button>
+                    : <Tooltip title="请先录入所有物料的对账明细"><Button size="small" icon={<CheckOutlined />} disabled>对账完成</Button></Tooltip>}
+                </Popconfirm>
+              )}
+          </div>
+        </div>
+        {/* Body: 关联订单 + 物料明细 */}
         {linkedOrders.length > 0 ? (
-          <div style={{ marginTop: 16 }}>
-            <div style={{ color: '#888', fontSize: 12, marginBottom: 8, fontWeight: 500 }}>关联订单 · 录入对账明细</div>
+          <div style={{ marginTop: 12 }}>
             {linkedOrders.map(o => renderOrderBlock(detail, o))}
           </div>
+        ) : detail ? (
+          <div style={{ color: '#888', fontSize: 12, padding: 12, textAlign: 'center' }}>暂无关联订单</div>
         ) : (
-          <div style={{ marginTop: 12, color: '#888', fontSize: 12 }}>暂无关联订单</div>
+          <div style={{ color: '#888', fontSize: 12, padding: 12, textAlign: 'center' }}>加载中...</div>
         )}
       </div>
     )
   }
 
   const columns = [
-    { title: '对账单号', dataIndex: 'rec_number', width: 190 },
-    { title: activeTab === 'OUTBOUND' ? '出库单号' : '入库单号', key: 'orderNumbers', width: 180,
-      render: (_, r) => {
-        const nums = r.orderNumbers || []
-        return nums.length > 0 ? nums.map((n, i) => <Tag key={i} style={{marginBottom:2}}>{n}</Tag>) : '-'
-      } },
-    { title: activeTab === 'OUTBOUND' ? '销售单号' : '采购单号', key: 'linkedNos', width: 190,
-      render: (_, r) => {
-        const nums = activeTab === 'OUTBOUND' ? (r.soNumbers || []) : (r.poNumbers || [])
-        return nums.length > 0 ? nums.map((n, i) => <Tag key={i} style={{marginBottom:2}}>{n}</Tag>) : '-'
-      } },
-    { title: '客户/供应商', key: 'party', width: 140,
-      render: (_, r) => activeTab === 'OUTBOUND' ? '-' : (r.supplier_name || '-') },
-    { title: '金额', dataIndex: 'total_amount', width: 120, align: 'right',
-      render: v => v != null ? Number(v).toLocaleString() : '-' },
-    { title: '状态', dataIndex: 'status', width: 90,
-      render: s => s === 'COMPLETED' ? <Tag color="green">已完成</Tag> : <Tag color="orange">待对账</Tag> },
-    { title: '创建时间', dataIndex: 'created_at', width: 160, render: v => v ? dayjs(v).format('MM-DD HH:mm') : '-' },
-    { title: '完成时间', dataIndex: 'completed_at', width: 160, render: v => v ? dayjs(v).format('MM-DD HH:mm') : '-' },
-    { title: '操作', key: 'actions', width: 140, fixed: 'right',
-      render: (_, r) => {
-        if (r.status !== 'PENDING') return <Text type="secondary">已完成</Text>
-        const expanded = expandedDetails[r.reconciliation_id]
-        const fully = expanded ? !!expanded.isFullyReconciled : false
-        const btn = (
-          <Button type="primary" size="small" icon={<CheckOutlined />} disabled={!fully}>
-            对账完成
-          </Button>
-        )
-        return (
-          <Popconfirm
-            title="确认对账完成?"
-            disabled={!fully}
-            onConfirm={() => handleComplete(r.reconciliation_id)}>
-            {fully ? btn : <Tooltip title="请先在展开行录入所有物料的对账明细">{btn}</Tooltip>}
-          </Popconfirm>
-        )
-      }
-    }
+    { key: 'reconciliation_card', render: (_, r) => renderReconciliationCard(r) }
   ]
 
   return (
@@ -414,7 +486,7 @@ export default function ReconciliationManagement({ user, companies = [] }) {
               <Tag color="orange" style={{ marginLeft: 4 }}>{pendingCount} 待对账</Tag> : null}</span> }
           ]} />
 
-        <Space style={{ marginBottom: 16 }}>
+        <Space style={{ marginBottom: 16 }} wrap>
           <Space>
             <Tag.CheckableTag checked={statusFilter === null} onChange={() => { setStatusFilter(null); setPage(1) }}>
               全部
@@ -426,18 +498,56 @@ export default function ReconciliationManagement({ user, companies = [] }) {
               已完成
             </Tag.CheckableTag>
           </Space>
+          {activeTab === 'OUTBOUND' ? (
+            <Select
+              placeholder="选择客户 (留空 = 全部)"
+              allowClear
+              style={{ width: 220 }}
+              value={partyFilter}
+              onChange={v => { setPartyFilter(v || null); setPage(1) }}
+              showSearch
+              optionFilterProp="children"
+              filterOption={(input, option) => (option?.children || '').toString().toLowerCase().includes(input.toLowerCase())}
+            >
+              {customers.map(c => <Select.Option key={c.customerId} value={c.customerId}>{c.name}</Select.Option>)}
+            </Select>
+          ) : (
+            <Select
+              placeholder="选择供应商 (留空 = 全部)"
+              allowClear
+              style={{ width: 220 }}
+              value={partyFilter}
+              onChange={v => { setPartyFilter(v || null); setPage(1) }}
+              showSearch
+              optionFilterProp="children"
+              filterOption={(input, option) => (option?.children || '').toString().toLowerCase().includes(input.toLowerCase())}
+            >
+              {suppliers.map(s => <Select.Option key={s.supplierId || s.name} value={s.name}>{s.name}</Select.Option>)}
+            </Select>
+          )}
           <Button icon={<ReloadOutlined />} onClick={() => { setPage(1); fetchRecords(); fetchPendingCount() }}>刷新</Button>
           <Button icon={<DownloadOutlined />} onClick={openExportModal}>导出</Button>
         </Space>
 
         <Table dataSource={records} columns={columns} rowKey="reconciliation_id" loading={loading}
-          expandable={{
-            expandedRowRender: renderExpandedRow,
-            onExpand: (expanded, record) => { if (expanded) fetchExpandedDetail(record) }
-          }}
-          pagination={{ current: page, pageSize, total, showSizeChanger: true,
-            onChange: (p, ps) => { setPage(p); setPageSize(ps) } }}
+          pagination={false}
+          size="small"
+          showHeader={false}
           locale={{ emptyText: '暂无对账单。出库/入库完成后会自动生成对账单。' }} />
+
+        {total > 0 && (
+          <div style={{ display: 'flex', justifyContent: 'center', marginTop: 16 }}>
+            <Pagination
+              current={page}
+              pageSize={pageSize}
+              total={total}
+              showSizeChanger
+              pageSizeOptions={['10', '20', '50', '100']}
+              onChange={(p, ps) => { setPage(p); setPageSize(ps) }}
+              showTotal={t => `共 ${t} 条`}
+            />
+          </div>
+        )}
 
         <Modal
           title={<span><ExportOutlined /> 导出{activeTab === 'OUTBOUND' ? '出库' : '入库'}对账单</span>}

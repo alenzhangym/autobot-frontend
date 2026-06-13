@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Layout, Table, Button, Modal, Form, Input, InputNumber, Select, AutoComplete, Tag, Space, message, DatePicker, Upload, Descriptions, Popconfirm, Row, Col, Card } from 'antd'
 import { PlusOutlined, CameraOutlined, SendOutlined, ReloadOutlined, EyeOutlined, CheckOutlined, CloseOutlined, TruckOutlined, SearchOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons'
 import api from './auth'
@@ -33,6 +33,18 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
   const [ocrPreview, setOcrPreview] = useState(null)
   const [customers, setCustomers] = useState([])
   const [items, setItems] = useState([emptyItem()])
+  const [itemFilter, setItemFilter] = useState('')
+
+  // 按客户料号 / 型号过滤物料明细 (不区分大小写, 匹配任一即显示)
+  const filteredItems = useMemo(() => {
+    const kw = itemFilter.trim().toLowerCase()
+    if (!kw) return items
+    return items.filter(it => {
+      const cpn = (it.customerPartNo || '').toString().toLowerCase()
+      const mdl = (it.model || '').toString().toLowerCase()
+      return cpn.includes(kw) || mdl.includes(kw)
+    })
+  }, [items, itemFilter])
   const [parts, setParts] = useState([])
   const [custMappings, setCustMappings] = useState([])
   const [selectedCustId, setSelectedCustId] = useState(null)
@@ -174,7 +186,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
     if (!customerId) { setSalesOrders([]); return }
     setSoLoading(true)
     try {
-      const params = { customerId, limit: 50 }
+      const params = { customerId, limit: 100 }
       if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
       const res = await api.get('/erp/sales-orders', { params })
       setSalesOrders(res.data.data || [])
@@ -182,111 +194,138 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
     setSoLoading(false)
   }
 
-  const handleSoSelect = async (soId) => {
-    if (!soId) { setItems([emptyItem()]); return }
+  const fetchSoItems = async (soId) => {
     try {
       const params = {}
       if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
       const res = await api.get(`/erp/sales-orders/${soId}`, { params })
-      const soData = res.data
-      const soItems = soData?.items || []
-
-      const mapped = soItems.map(it => {
-        const partIdRaw = it.part_id ?? it.partId
-        const partIdNum = partIdRaw != null ? Number(partIdRaw) : null
-        const model = it.model || ''
-        const hasModel = model && model.trim().length > 0
-        if (!hasModel && partIdNum != null) {
-          partsByIdCacheRef.current.set(partIdNum, null)
-        } else if (hasModel) {
-          partsByIdCacheRef.current.set(partIdNum, { partId: partIdNum, userPartModel: model, partType: it.partType || null, manufacturer: it.manufacturer || null })
-        }
-        return {
-          key: Date.now() + Math.random(),
-          customerPartNo: it.customer_part_no || it.customerPartNo || '',
-          model,
-          partId: partIdNum,
-          partType: it.partType || null,
-          manufacturer: it.manufacturer || null,
-          inventoryId: null,
-          orderedQty: it.ordered_qty ?? it.orderedQty ?? 0,
-          shippedQty: it.shipped_qty ?? it.shippedQty ?? 0,
-          qty: 0,
-          unitPrice: it.unit_price ?? it.unitPrice ?? 0,
-          currentStock: it.currentStock != null ? Number(it.currentStock) : null,
-          substitutes: it.substitutes || [],
-          substituteCount: it.substituteCount != null ? Number(it.substituteCount) : (it.substitutes ? it.substitutes.length : 0),
-          substituteMaxStock: it.substituteMaxStock != null ? Number(it.substituteMaxStock) : null,
-        }
-      })
-
-      const missing = mapped.filter(it => !it.model && it.partId != null && !partsByIdCacheRef.current.get(it.partId))
-      if (missing.length > 0) {
-        await Promise.all(missing.map(async it => {
-          try {
-            const pParams = {}
-            if (isSuperAdmin && effectiveCompanyId) pParams.companyId = effectiveCompanyId
-            const partRes = await api.get(`/erp/parts/${it.partId}`, { params: pParams })
-            const p = partRes.data
-            if (p && (p.partId != null)) {
-              partsByIdCacheRef.current.set(Number(p.partId), p)
-              it.model = p.userPartModel || p.user_part_model || ''
-              it.partType = it.partType || p.partType || p.part_type || null
-              it.manufacturer = it.manufacturer || p.manufacturer || null
-              try {
-                const stockRes = await api.get('/erp/outbound-orders/stock-info', { params: { models: it.model } })
-                const stockMap = stockRes.data.stockMap || {}
-                it.currentStock = stockMap[it.model] != null ? Number(stockMap[it.model]) : null
-              } catch (e) { /* ignore */ }
-              try {
-                const sParams = { model: it.model }
-                if (isSuperAdmin && effectiveCompanyId) sParams.companyId = effectiveCompanyId
-                const subRes = await api.get('/erp/outbound-orders/substitutes', { params: sParams })
-                const subs = subRes.data?.data || []
-                it.substitutes = subs
-                it.substituteCount = subs.length
-                it.substituteMaxStock = subs.reduce((mx, s) => {
-                  const cs = s.current_stock ?? s.currentStock
-                  return Math.max(mx, cs != null ? Number(cs) : 0)
-                }, 0)
-              } catch (e) { /* ignore */ }
-            }
-          } catch (e) { /* ignore */ }
-        }))
-      }
-
-      const unresolved = mapped.filter(it => !it.model)
-      if (unresolved.length > 0 && typeof window !== 'undefined' && window.console) {
-        console.warn('[OutboundOrder] 销售单物料未能解析到型号, part_id 列表:', unresolved.map(u => u.partId))
-      }
-      const noSub = mapped.filter(it => it.model && (it.substituteCount == null || it.substituteCount === 0))
-      if (noSub.length > 0) {
-        await Promise.all(noSub.map(async it => {
-          try {
-            const sParams = { model: it.model }
-            if (isSuperAdmin && effectiveCompanyId) sParams.companyId = effectiveCompanyId
-            const subRes = await api.get('/erp/outbound-orders/substitutes', { params: sParams })
-            const subs = subRes.data?.data || []
-            it.substitutes = subs
-            it.substituteCount = subs.length
-            it.substituteMaxStock = subs.reduce((mx, s) => {
-              const cs = s.current_stock ?? s.currentStock
-              return Math.max(mx, cs != null ? Number(cs) : 0)
-            }, 0)
-          } catch (e) { /* ignore */ }
-        }))
-      }
-
-      setItems(mapped.length > 0 ? mapped : [emptyItem()])
-    } catch (e) { /* ignore */ }
+      return res.data?.items || []
+    } catch (e) { return [] }
   }
 
-  const handleCustomerChange = (customerId) => {
+  // 单条销售单明细 → 入库物料行（复用原 handleSoSelect 中的解析与补全逻辑）
+  const mapSoItemsToRows = async (soItems) => {
+    const mapped = soItems.map(it => {
+      const partIdRaw = it.part_id ?? it.partId
+      const partIdNum = partIdRaw != null ? Number(partIdRaw) : null
+      const model = it.model || ''
+      const hasModel = model && model.trim().length > 0
+      if (!hasModel && partIdNum != null) {
+        partsByIdCacheRef.current.set(partIdNum, null)
+      } else if (hasModel) {
+        partsByIdCacheRef.current.set(partIdNum, { partId: partIdNum, userPartModel: model, partType: it.partType || null, manufacturer: it.manufacturer || null })
+      }
+      return {
+        key: Date.now() + Math.random(),
+        customerPartNo: it.customer_part_no || it.customerPartNo || '',
+        model,
+        partId: partIdNum,
+        soItemId: it.item_id != null ? Number(it.item_id) : (it.soItemId != null ? Number(it.soItemId) : null),
+        partType: it.partType || null,
+        manufacturer: it.manufacturer || null,
+        inventoryId: null,
+        orderedQty: it.ordered_qty ?? it.orderedQty ?? 0,
+        shippedQty: it.shipped_qty ?? it.shippedQty ?? 0,
+        qty: 0,
+        unitPrice: it.unit_price ?? it.unitPrice ?? 0,
+        currentStock: it.currentStock != null ? Number(it.currentStock) : null,
+        substitutes: it.substitutes || [],
+        substituteCount: it.substituteCount != null ? Number(it.substituteCount) : (it.substitutes ? it.substitutes.length : 0),
+        substituteMaxStock: it.substituteMaxStock != null ? Number(it.substituteMaxStock) : null,
+      }
+    })
+
+    const missing = mapped.filter(it => !it.model && it.partId != null && !partsByIdCacheRef.current.get(it.partId))
+    if (missing.length > 0) {
+      await Promise.all(missing.map(async it => {
+        try {
+          const pParams = {}
+          if (isSuperAdmin && effectiveCompanyId) pParams.companyId = effectiveCompanyId
+          const partRes = await api.get(`/erp/parts/${it.partId}`, { params: pParams })
+          const p = partRes.data
+          if (p && (p.partId != null)) {
+            partsByIdCacheRef.current.set(Number(p.partId), p)
+            it.model = p.userPartModel || p.user_part_model || ''
+            it.partType = it.partType || p.partType || p.part_type || null
+            it.manufacturer = it.manufacturer || p.manufacturer || null
+            try {
+              const stockRes = await api.get('/erp/outbound-orders/stock-info', { params: { models: it.model } })
+              const stockMap = stockRes.data.stockMap || {}
+              it.currentStock = stockMap[it.model] != null ? Number(stockMap[it.model]) : null
+            } catch (e) { /* ignore */ }
+            try {
+              const sParams = { model: it.model }
+              if (isSuperAdmin && effectiveCompanyId) sParams.companyId = effectiveCompanyId
+              const subRes = await api.get('/erp/outbound-orders/substitutes', { params: sParams })
+              const subs = subRes.data?.data || []
+              it.substitutes = subs
+              it.substituteCount = subs.length
+              it.substituteMaxStock = subs.reduce((mx, s) => {
+                const cs = s.current_stock ?? s.currentStock
+                return Math.max(mx, cs != null ? Number(cs) : 0)
+              }, 0)
+            } catch (e) { /* ignore */ }
+          }
+        } catch (e) { /* ignore */ }
+      }))
+    }
+
+    const noSub = mapped.filter(it => it.model && (it.substituteCount == null || it.substituteCount === 0))
+    if (noSub.length > 0) {
+      await Promise.all(noSub.map(async it => {
+        try {
+          const sParams = { model: it.model }
+          if (isSuperAdmin && effectiveCompanyId) sParams.companyId = effectiveCompanyId
+          const subRes = await api.get('/erp/outbound-orders/substitutes', { params: sParams })
+          const subs = subRes.data?.data || []
+          it.substitutes = subs
+          it.substituteCount = subs.length
+          it.substituteMaxStock = subs.reduce((mx, s) => {
+            const cs = s.current_stock ?? s.currentStock
+            return Math.max(mx, cs != null ? Number(cs) : 0)
+          }, 0)
+        } catch (e) { /* ignore */ }
+      }))
+    }
+    return mapped
+  }
+
+  const buildItemsFromSalesOrders = async (soList) => {
+    if (!soList || soList.length === 0) { setItems([emptyItem()]); return }
+    const allRows = []
+    for (const so of soList) {
+      const soItems = await fetchSoItems(so.sales_id)
+      const rows = await mapSoItemsToRows(soItems)
+      for (const r of rows) {
+        allRows.push({
+          ...r,
+          key: Date.now() + Math.random() + allRows.length,
+          soId: so.sales_id,
+          soNumber: so.so_number || '',
+        })
+      }
+    }
+    setItems(allRows.length > 0 ? allRows : [emptyItem()])
+  }
+
+  const handleCustomerChange = async (customerId) => {
     setSelectedCustId(customerId)
-    createForm.setFieldValue('salesOrderId', undefined)
     setItems([emptyItem()])
     setCustMappings([])
-    fetchSalesOrders(customerId)
+    setItemFilter('')
+    setSalesOrders([])
+    if (!customerId) return
+    // 拉取该客户的全部销售单，并自动带入物料明细作为参考
+    setSoLoading(true)
+    try {
+      const params = { customerId, limit: 100 }
+      if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
+      const res = await api.get('/erp/sales-orders', { params })
+      const list = res.data.data || []
+      setSalesOrders(list)
+      await buildItemsFromSalesOrders(list)
+    } catch (e) { /* ignore */ }
+    setSoLoading(false)
   }
 
   const fetchOrders = useCallback(async () => {
@@ -393,7 +432,14 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
   const handleCreate = async () => {
     try {
       const values = await createForm.validateFields()
-      const orderItems = items.filter(it => it.customerPartNo || it.model || it.qty).map(it => ({
+      // 数量校验：所有填写的物料数量必须 > 0
+      const filled = items.filter(it => it.customerPartNo || it.model || it.qty)
+      const invalidQty = filled.filter(it => !it.qty || it.qty <= 0)
+      if (invalidQty.length > 0) {
+        message.error(`有 ${invalidQty.length} 条物料数量为 0 或未填写，本次出库数量必须大于 0`)
+        return
+      }
+      const orderItems = filled.map(it => ({
         customerPartNo: it.customerPartNo,
         model: it.model,
         partId: it.partId || null,
@@ -403,9 +449,11 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
         subtotal: (it.qty || 0) * (it.unitPrice || 0),
         substituted: !!it.substituted,
         originalModel: it.originalModel || null,
+        soId: it.soId || null,
+        soItemId: it.soItemId || null,
       }))
       const body = {
-        salesOrderId: values.salesOrderId,
+        customerId: values.customerId,
         items: orderItems,
       }
       await api.post('/erp/outbound-orders', body)
@@ -693,55 +741,94 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
           title="新建出库单"
           open={showCreateModal}
           onOk={handleCreate}
-          onCancel={() => { setShowCreateModal(false); setItems([emptyItem()]); setSelectedCustId(null); setSalesOrders([]) }}
+          onCancel={() => { setShowCreateModal(false); setItems([emptyItem()]); setSelectedCustId(null); setSalesOrders([]); setItemFilter('') }}
           okText="创建"
           width={900}
           destroyOnClose
         >
           <Form form={createForm} layout="vertical">
             <Row gutter={16}>
-              <Col span={8}><Form.Item label="客户" rules={[{ required: true, message: '请选择客户' }]}>
+              <Col span={24}><Form.Item label="客户" name="customerId" rules={[{ required: true, message: '请选择客户' }]}>
                 <Select showSearch placeholder="选择客户" value={selectedCustId}
                   onChange={handleCustomerChange}
                   filterOption={(input, option) => option?.children?.toLowerCase().includes(input.toLowerCase())}>
                   {customers.map(c => <Select.Option key={c.customerId} value={c.customerId}>{c.name}</Select.Option>)}
                 </Select>
               </Form.Item></Col>
-              <Col span={16}><Form.Item name="salesOrderId" label="销售单" rules={[{ required: true, message: '请选择销售单' }]}>
-                <Select placeholder="先选择客户" loading={soLoading} onChange={handleSoSelect}
-                  notFoundContent={soLoading ? '加载中...' : '该客户暂无销售单'}
-                  options={salesOrders.map(so => ({ value: so.sales_id, label: `${so.so_number} - ${so.customer_po || '无PO'}` }))}
-                />
-              </Form.Item></Col>
             </Row>
           </Form>
+          {/* 参考销售单列表 - 仅供用户参考销售单信息，非必选 */}
+          {salesOrders.length > 0 && (
+            <div style={{ background: '#0d1a26', border: '1px solid #1f3a52', borderRadius: 4, padding: 8, marginBottom: 8 }}>
+              <div style={{ color: '#69b1ff', fontSize: 12, fontWeight: 500, marginBottom: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>📋 该客户的全部销售单（参考信息，共 {salesOrders.length} 单）</span>
+                <span style={{ color: '#666', fontSize: 11, fontWeight: 'normal' }}>下方物料明细已自动带入</span>
+              </div>
+              <div style={{ maxHeight: 80, overflow: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', color: '#ccc', fontSize: 11 }}>
+                  <thead><tr style={{ borderBottom: '1px solid #1f3a52' }}>
+                    <th style={{ padding: 3, textAlign: 'left' }}>销售单号</th>
+                    <th style={{ padding: 3, textAlign: 'left' }}>下单日期</th>
+                    <th style={{ padding: 3, textAlign: 'left' }}>客户PO</th>
+                    <th style={{ padding: 3, textAlign: 'left' }}>状态</th>
+                    <th style={{ padding: 3, textAlign: 'right' }}>金额</th>
+                  </tr></thead>
+                  <tbody>{salesOrders.map(so => (
+                    <tr key={so.sales_id} style={{ borderBottom: '1px solid #162a3a' }}>
+                      <td style={{ padding: 3, color: '#69b1ff' }}>{so.so_number || '-'}</td>
+                      <td style={{ padding: 3 }}>{so.order_date || '-'}</td>
+                      <td style={{ padding: 3 }}>{so.customer_po || '-'}</td>
+                      <td style={{ padding: 3 }}>{so.status || '-'}</td>
+                      <td style={{ padding: 3, textAlign: 'right' }}>{so.total_amount != null ? '¥' + Number(so.total_amount).toFixed(2) : '-'}</td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            </div>
+          )}
+          {soLoading && <div style={{ color: '#888', fontSize: 12, marginBottom: 8 }}>正在加载该客户的销售单...</div>}
           <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ color: '#888', fontSize: 13, fontWeight: 500 }}>物料明细</span>
+            <span style={{ color: '#888', fontSize: 13, fontWeight: 500 }}>
+              物料明细 {itemFilter && <span style={{ color: '#69b1ff' }}>（{filteredItems.length} / {items.length}）</span>}
+            </span>
+            <Input
+              size="small"
+              prefix={<SearchOutlined style={{ color: '#888' }} />}
+              placeholder="按客户料号 / 型号过滤"
+              value={itemFilter}
+              onChange={e => setItemFilter(e.target.value)}
+              allowClear
+              style={{ width: 240 }}
+            />
           </div>
           <div style={{ maxHeight: 280, overflow: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', color: '#ccc', fontSize: 12 }}>
               <thead><tr style={{ borderBottom: '1px solid #333' }}>
                 <th style={{ padding: 4, width: 26 }}>#</th>
-                <th style={{ padding: 4, width: 100 }}>客户料号</th>
-                <th style={{ padding: 4, width: 110 }}>型号</th>
-                <th style={{ padding: 4, width: 60 }}>替代</th>
-                <th style={{ padding: 4, width: 45 }}>原库存</th>
-                    <th style={{ padding: 4, width: 50 }}>替代库存</th>
-                <th style={{ padding: 4, width: 40 }}>订量</th>
-                <th style={{ padding: 4, width: 40 }}>已出</th>
-                <th style={{ padding: 4, width: 60 }}>本次出库</th>
-                <th style={{ padding: 4, width: 60 }}>单价</th>
-                <th style={{ padding: 4, width: 55 }}>小计</th>
+                <th style={{ padding: 4, width: 80 }}>销售单</th>
+                <th style={{ padding: 4, width: 90 }}>客户料号</th>
+                <th style={{ padding: 4, width: 100 }}>型号</th>
+                <th style={{ padding: 4, width: 50 }}>替代</th>
+                <th style={{ padding: 4, width: 40 }}>原库存</th>
+                    <th style={{ padding: 4, width: 45 }}>替代库存</th>
+                <th style={{ padding: 4, width: 35 }}>订量</th>
+                <th style={{ padding: 4, width: 35 }}>已出</th>
+                <th style={{ padding: 4, width: 55 }}>本次出库</th>
+                <th style={{ padding: 4, width: 55 }}>单价</th>
+                <th style={{ padding: 4, width: 50 }}>小计</th>
               </tr></thead>
-              <tbody>{items.map((it, idx) => (
+              <tbody>{filteredItems.map((it) => {
+                const origIdx = items.indexOf(it)
+                return (
                 <tr key={it.key} style={{ borderBottom: '1px solid #1a1a1a' }}>
-                  <td style={{ padding: 2, color: '#666' }}>{idx + 1}</td>
+                  <td style={{ padding: 2, color: '#666' }}>{origIdx + 1}</td>
+                  <td style={{ padding: 2, color: '#69b1ff', fontSize: 11 }}>{it.soNumber || '-'}</td>
                   <td style={{ padding: 2 }}><span style={{ color: '#ccc' }}>{it.customerPartNo || '-'}</span></td>
                   <td style={{ padding: 2 }}><span style={{ color: it.substituted ? '#faad14' : '#ccc' }}>{it.model || '-'}</span></td>
                   <td style={{ padding: 2, textAlign: 'center' }}>
                     {it.substituted
-                      ? <a onClick={() => clearSubstitute(setItems, idx)} style={{ color: '#ff7875', fontSize: 11 }}>还原</a>
-                      : <a onClick={() => openSubstituteSelector({ setter: setItems, index: idx, originalModel: it.model, currentQty: it.qty || 0, currentStock: it.currentStock }, it.model)}
+                      ? <a onClick={() => clearSubstitute(setItems, origIdx)} style={{ color: '#ff7875', fontSize: 11 }}>还原</a>
+                      : <a onClick={() => openSubstituteSelector({ setter: setItems, index: origIdx, originalModel: it.model, currentQty: it.qty || 0, currentStock: it.currentStock }, it.model)}
                            style={{ color: it.substituteCount > 0 ? '#69b1ff' : '#888', fontSize: 11 }}>{it.substituteCount > 0 ? '选择' : '选替'}</a>}
                   </td>
                   <td style={{ padding: 2, textAlign: 'center', color: it.currentStock != null && it.currentStock < (it.qty || 0) ? '#ff4d4f' : '#52c41a' }}>{it.currentStock != null ? it.currentStock : '-'}</td>
@@ -750,17 +837,23 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
                   </td>
                   <td style={{ padding: 2, textAlign: 'center', color: '#e3e3e3' }}>{it.orderedQty || '-'}</td>
                   <td style={{ padding: 2, textAlign: 'center', color: '#e3e3e3' }}>{it.shippedQty || '-'}</td>
-                  <td style={{ padding: 2 }}><InputNumber size="small" style={{ width: '100%' }} placeholder="0" min={0} value={it.qty}
+                  <td style={{ padding: 2 }}><InputNumber size="small" style={{ width: '100%' }} placeholder="0" min={1} precision={0} value={it.qty}
                     onChange={v => updateItem(it.key, 'qty', v)} /></td>
                   <td style={{ padding: 2 }}><InputNumber size="small" style={{ width: '100%' }} placeholder="0.00" min={0} step={0.01} value={it.unitPrice}
                     onChange={v => updateItem(it.key, 'unitPrice', v)} /></td>
                   <td style={{ padding: 2, textAlign: 'right', color: '#888', fontSize: 11 }}>{it.qty && it.unitPrice ? '¥' + (it.qty * it.unitPrice).toFixed(2) : ''}</td>
                 </tr>
-              ))}</tbody>
+                )
+              })}</tbody>
             </table>
+            {filteredItems.length === 0 && items.length > 0 && (
+              <div style={{ color: '#888', fontSize: 12, textAlign: 'center', padding: 20 }}>
+                没有匹配 "{itemFilter}" 的物料明细
+              </div>
+            )}
           </div>
           <div style={{ color: '#888', fontSize: 12, marginTop: 8 }}>
-            选择销售单后自动带入物料明细，录入本次出库数量后立即出库。
+            选择客户后自动列出其全部销售单并带入物料明细，可直接编辑本次出库数量与单价后保存。
           </div>
         </Modal>
 

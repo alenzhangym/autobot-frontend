@@ -124,13 +124,20 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
   const handleSave = async () => {
     try {
       const values = await form.validateFields()
+      // 数量校验：所有 partId 行的数量必须 > 0
+      const rowsWithPart = items.filter(it => it.partId)
+      const invalidQty = rowsWithPart.filter(it => !it.orderedQty || it.orderedQty <= 0)
+      if (invalidQty.length > 0) {
+        message.error(`有 ${invalidQty.length} 条物料数量为 0 或未填写，采购数量必须大于 0`)
+        return
+      }
       const payload = {
         supplierName: values.supplierName,
         expectedDeliveryDate: values.expectedDeliveryDate ? values.expectedDeliveryDate.format('YYYY-MM-DD') : null,
         status: editing ? editing.status : 'DRAFT',
         paymentStatus: values.paymentStatus, notes: values.notes,
         companyId: effectiveCompanyId || user?.companyId || 0,
-        createdBy: user?.id, items: items.filter(it => it.partId && it.orderedQty > 0).map(it => ({
+        createdBy: user?.id, items: rowsWithPart.filter(it => it.orderedQty > 0).map(it => ({
           partId: it.partId, orderedQty: it.orderedQty, estimatedUnitPrice: it.estimatedUnitPrice || 0
         }))
       }

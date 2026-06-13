@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { Layout, Table, Button, Modal, Form, Input, Select, AutoComplete, Tag, Space, message, DatePicker, Upload, Popconfirm, Row, Col, Card, InputNumber, Typography } from 'antd'
 import { PlusOutlined, CameraOutlined, InboxOutlined, ReloadOutlined, CheckOutlined, CloseOutlined, SearchOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons'
 import api from './auth'
@@ -32,6 +32,14 @@ export default function InboundOrderManagement({ user, companies = [] }) {
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [createForm] = Form.useForm()
   const [items, setItems] = useState([emptyItem()])
+  const [itemFilter, setItemFilter] = useState('')
+
+  // 按型号过滤物料明细 (不区分大小写, 包含匹配)
+  const filteredItems = useMemo(() => {
+    const kw = itemFilter.trim().toLowerCase()
+    if (!kw) return items
+    return items.filter(it => (it.model || '').toString().toLowerCase().includes(kw))
+  }, [items, itemFilter])
   const [ocrLoading, setOcrLoading] = useState(false)
   const [ocrPreview, setOcrPreview] = useState(null)
   const [parts, setParts] = useState([])
@@ -147,7 +155,7 @@ export default function InboundOrderManagement({ user, companies = [] }) {
     if (!supplierName) { setPurchaseOrders([]); return }
     setPoLoading(true)
     try {
-      const params = { supplierName, limit: 50 }
+      const params = { supplierName, limit: 100 }
       if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
       const res = await api.get('/erp/purchase-orders', { params })
       setPurchaseOrders(res.data.data || [])
@@ -155,39 +163,59 @@ export default function InboundOrderManagement({ user, companies = [] }) {
     setPoLoading(false)
   }
 
-  const handlePoSelect = async (poId) => {
-    if (!poId) { setItems([emptyItem()]); return }
+  const fetchPoItems = async (poId) => {
     try {
       const params = {}
       if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
       const res = await api.get(`/erp/purchase-orders/${poId}`, { params })
-      const poData = res.data
-      const poItems = poData?.items || []
-      const mapped = poItems.map(it => {
+      return res.data?.items || []
+    } catch (e) { return [] }
+  }
+
+  // 将采购单明细填充为入库单的物料参考行
+  const buildItemsFromPurchaseOrders = async (poList) => {
+    if (!poList || poList.length === 0) { setItems([emptyItem()]); return }
+    const allRows = []
+    for (const po of poList) {
+      const poItems = await fetchPoItems(po.purchase_id)
+      for (const it of poItems) {
         const p = parts.find(x => x.partId === it.part_id)
-        return {
-          key: Date.now() + Math.random(),
+        allRows.push({
+          key: Date.now() + Math.random() + allRows.length,
           partType: p?.partType || '',
           model: p?.userPartModel || '',
           manufacturer: p?.manufacturer || '',
           orderedQty: it.ordered_qty || 0,
           receivedQty: it.received_qty || 0,
           poItemId: it.item_id,
+          poId: po.purchase_id,
+          poNumber: po.po_number || '',
           qty: 0,
           unitPrice: it.estimated_unit_price || 0,
           location: '',
           notes: '',
-        }
-      })
-      setItems(mapped.length > 0 ? mapped : [emptyItem()])
-    } catch (e) { /* ignore */ }
+        })
+      }
+    }
+    setItems(allRows.length > 0 ? allRows : [emptyItem()])
   }
 
-  const handleSupplierChange = (supplierName) => {
-    createForm.setFieldValue('purchaseOrderId', undefined)
+  const handleSupplierChange = async (supplierName) => {
     setItems([emptyItem()])
     setPurchaseOrders([])
-    fetchPurchaseOrders(supplierName)
+    setItemFilter('')
+    if (!supplierName) return
+    // 拉取该供应商全部采购单，并自动带入物料明细作为参考
+    setPoLoading(true)
+    try {
+      const params = { supplierName, limit: 100 }
+      if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
+      const res = await api.get('/erp/purchase-orders', { params })
+      const list = res.data.data || []
+      setPurchaseOrders(list)
+      await buildItemsFromPurchaseOrders(list)
+    } catch (e) { /* ignore */ }
+    setPoLoading(false)
   }
 
   const openCreate = () => {
@@ -197,8 +225,6 @@ export default function InboundOrderManagement({ user, companies = [] }) {
     setModalKey(prev => prev + 1)
     setShowCreateModal(true)
   }
-
-  const addItem = () => setItems(prev => [...prev, emptyItem()])
 
   const removeItem = (key) => {
     if (items.length <= 1) return
@@ -212,16 +238,23 @@ export default function InboundOrderManagement({ user, companies = [] }) {
   const handleCreate = async () => {
     try {
       const values = await createForm.validateFields()
-      const orderItems = items.filter(it => it.model || it.qty).map(it => ({
+      // 数量校验：所有填写的物料数量必须 > 0
+      const filled = items.filter(it => it.model || it.qty)
+      const invalidQty = filled.filter(it => !it.qty || it.qty <= 0)
+      if (invalidQty.length > 0) {
+        message.error(`有 ${invalidQty.length} 条物料数量为 0 或未填写，本次入库数量必须大于 0`)
+        return
+      }
+      const orderItems = filled.map(it => ({
         partType: it.partType, model: it.model, manufacturer: it.manufacturer,
         qty: it.qty || 0, unitPrice: it.unitPrice || 0,
         subtotal: (it.qty || 0) * (it.unitPrice || 0),
         location: it.location, notes: it.notes || '',
         poItemId: it.poItemId || null,
+        poId: it.poId || null,
       }))
       await api.post('/erp/inbound-orders', {
         supplierName: values.supplierName,
-        purchaseOrderId: values.purchaseOrderId,
         items: orderItems,
       })
       message.success(`入库单已到货 (${orderItems.length} 项物料)`)
@@ -375,11 +408,11 @@ export default function InboundOrderManagement({ user, companies = [] }) {
       scroll={{ x: 1000 }} size="small" style={{ background: '#141414' }} />
 
     {/* ── Create Modal with items table ── */}
-    <Modal key={modalKey} title="新建入库单" open={showCreateModal} onOk={handleCreate} onCancel={() => setShowCreateModal(false)}
+    <Modal key={modalKey} title="新建入库单" open={showCreateModal} onOk={handleCreate} onCancel={() => { setShowCreateModal(false); setItemFilter('') }}
       okText="保存" width={1000} destroyOnClose>
       <Form form={createForm} layout="vertical">
         <Row gutter={16}>
-          <Col span={12}><Form.Item name="supplierName" label="供应商" rules={[{ required: true, message: '请选择供应商' }]}>
+          <Col span={24}><Form.Item name="supplierName" label="供应商" rules={[{ required: true, message: '请选择供应商' }]}>
             <Select showSearch placeholder="选择供应商" allowClear
               onChange={handleSupplierChange}
               filterOption={(input, option) => option?.children?.toLowerCase().includes(input.toLowerCase())}
@@ -387,37 +420,73 @@ export default function InboundOrderManagement({ user, companies = [] }) {
               {suppliers.map(s => <Select.Option key={s.supplierId} value={s.name}>{s.name}</Select.Option>)}
             </Select>
           </Form.Item></Col>
-          <Col span={12}><Form.Item name="purchaseOrderId" label="采购单" rules={[{ required: true, message: '请选择采购单' }]}>
-            <Select placeholder="先选择供应商" loading={poLoading} onChange={handlePoSelect}
-              notFoundContent={poLoading ? '加载中...' : '该供应商暂无可用采购单'}
-              options={purchaseOrders.map(po => ({ value: po.purchase_id, label: `${po.po_number} - ${po.supplier_name}` }))}
-            />
-          </Form.Item></Col>
         </Row>
       </Form>
+      {/* 参考采购单列表 - 仅供用户参考采购单信息，非必选 */}
+      {purchaseOrders.length > 0 && (
+        <div style={{ background: '#0d1a26', border: '1px solid #1f3a52', borderRadius: 4, padding: 8, marginBottom: 8 }}>
+          <div style={{ color: '#69b1ff', fontSize: 12, fontWeight: 500, marginBottom: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span>📋 该供应商的全部采购单（参考信息，共 {purchaseOrders.length} 单）</span>
+            <span style={{ color: '#666', fontSize: 11, fontWeight: 'normal' }}>下方物料明细已自动带入</span>
+          </div>
+          <div style={{ maxHeight: 80, overflow: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', color: '#ccc', fontSize: 11 }}>
+              <thead><tr style={{ borderBottom: '1px solid #1f3a52' }}>
+                <th style={{ padding: 3, textAlign: 'left' }}>采购单号</th>
+                <th style={{ padding: 3, textAlign: 'left' }}>采购日期</th>
+                <th style={{ padding: 3, textAlign: 'left' }}>状态</th>
+                <th style={{ padding: 3, textAlign: 'right' }}>金额</th>
+              </tr></thead>
+              <tbody>{purchaseOrders.map(po => (
+                <tr key={po.purchase_id} style={{ borderBottom: '1px solid #162a3a' }}>
+                  <td style={{ padding: 3, color: '#69b1ff' }}>{po.po_number || '-'}</td>
+                  <td style={{ padding: 3 }}>{po.order_date || '-'}</td>
+                  <td style={{ padding: 3 }}>{po.status || '-'}</td>
+                  <td style={{ padding: 3, textAlign: 'right' }}>{po.total_amount != null ? '¥' + Number(po.total_amount).toFixed(2) : '-'}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        </div>
+      )}
+      {poLoading && <div style={{ color: '#888', fontSize: 12, marginBottom: 8 }}>正在加载该供应商的采购单...</div>}
       <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{ color: '#888', fontSize: 13, fontWeight: 500 }}>物料明细</span>
-        <Button size="small" type="dashed" icon={<PlusOutlined />} onClick={addItem}>添加行</Button>
+        <span style={{ color: '#888', fontSize: 13, fontWeight: 500 }}>
+          物料明细 {itemFilter && <span style={{ color: '#69b1ff' }}>（{filteredItems.length} / {items.length}）</span>}
+        </span>
+        <Input
+          size="small"
+          prefix={<SearchOutlined style={{ color: '#888' }} />}
+          placeholder="按型号过滤"
+          value={itemFilter}
+          onChange={e => setItemFilter(e.target.value)}
+          allowClear
+          style={{ width: 200 }}
+        />
       </div>
       <div style={{ maxHeight: 280, overflow: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', color: '#ccc', fontSize: 12 }}>
           <thead><tr style={{ borderBottom: '1px solid #333' }}>
             <th style={{ padding: 4, width: 30 }}>#</th>
-            <th style={{ padding: 4, width: 80 }}>品类</th>
-            <th style={{ padding: 4, width: 160 }}>型号</th>
-            <th style={{ padding: 4, width: 80 }}>厂家</th>
-            <th style={{ padding: 4, width: 50 }}>采购量</th>
-            <th style={{ padding: 4, width: 50 }}>已入库</th>
-            <th style={{ padding: 4, width: 65 }}>本次入库</th>
-            <th style={{ padding: 4, width: 65 }}>单价</th>
-            <th style={{ padding: 4, width: 55 }}>小计</th>
-            <th style={{ padding: 4, width: 65 }}>库位</th>
+            <th style={{ padding: 4, width: 70 }}>采购单</th>
+            <th style={{ padding: 4, width: 70 }}>品类</th>
+            <th style={{ padding: 4, width: 140 }}>型号</th>
+            <th style={{ padding: 4, width: 70 }}>厂家</th>
+            <th style={{ padding: 4, width: 45 }}>采购量</th>
+            <th style={{ padding: 4, width: 45 }}>已入库</th>
+            <th style={{ padding: 4, width: 60 }}>本次入库</th>
+            <th style={{ padding: 4, width: 60 }}>单价</th>
+            <th style={{ padding: 4, width: 50 }}>小计</th>
+            <th style={{ padding: 4, width: 60 }}>库位</th>
             <th style={{ padding: 4 }}>备注</th>
             <th style={{ padding: 4, width: 30 }}></th>
           </tr></thead>
-          <tbody>{items.map((it, idx) => (
+          <tbody>{filteredItems.map((it) => {
+            const origIdx = items.indexOf(it)
+            return (
             <tr key={it.key} style={{ borderBottom: '1px solid #1a1a1a' }}>
-              <td style={{ padding: 2, color: '#666' }}>{idx + 1}</td>
+              <td style={{ padding: 2, color: '#666' }}>{origIdx + 1}</td>
+              <td style={{ padding: 2, color: '#69b1ff', fontSize: 11 }}>{it.poNumber || '-'}</td>
               <td style={{ padding: 2 }}><Select size="small" style={{ width: '100%' }} value={it.partType || undefined} placeholder="品类"
                 onChange={v => { updateItem(it.key, 'partType', v); updateItem(it.key, 'model', '') }} options={partTypes.map(t => ({ value: t, label: t }))} /></td>
               <td style={{ padding: 2 }}><AutoComplete size="small" style={{ width: '100%' }} placeholder="型号" value={it.model}
@@ -429,7 +498,7 @@ export default function InboundOrderManagement({ user, companies = [] }) {
                 onChange={e => updateItem(it.key, 'manufacturer', e.target.value)} /></td>
               <td style={{ padding: 2, textAlign: 'center', color: '#e3e3e3' }}>{it.orderedQty || '-'}</td>
               <td style={{ padding: 2, textAlign: 'center', color: '#e3e3e3' }}>{it.receivedQty || '-'}</td>
-              <td style={{ padding: 2 }}><InputNumber size="small" style={{ width: '100%' }} placeholder="0" min={0} value={it.qty}
+              <td style={{ padding: 2 }}><InputNumber size="small" style={{ width: '100%' }} placeholder="0" min={1} precision={0} value={it.qty}
                 onChange={v => updateItem(it.key, 'qty', v)} /></td>
               <td style={{ padding: 2 }}><InputNumber size="small" style={{ width: '100%' }} placeholder="0.00" min={0} step={0.01} value={it.unitPrice}
                 onChange={v => updateItem(it.key, 'unitPrice', v)} /></td>
@@ -440,11 +509,17 @@ export default function InboundOrderManagement({ user, companies = [] }) {
                 onChange={e => updateItem(it.key, 'notes', e.target.value)} /></td>
               <td style={{ padding: 2 }}><Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={() => removeItem(it.key)} /></td>
             </tr>
-          ))}</tbody>
+            )
+          })}</tbody>
         </table>
+        {filteredItems.length === 0 && items.length > 0 && (
+          <div style={{ color: '#888', fontSize: 12, textAlign: 'center', padding: 20 }}>
+            没有匹配 "{itemFilter}" 的物料明细
+          </div>
+        )}
       </div>
       <div style={{ color: '#888', fontSize: 12, marginTop: 8 }}>
-         创建后自动到货，物料立即同步到库存并更新采购单入库数量。
+         选择供应商后自动列出其全部采购单并带入物料明细，可直接编辑本次入库数量与单价后保存。
       </div>
     </Modal>
 
