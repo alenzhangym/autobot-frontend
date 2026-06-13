@@ -336,7 +336,7 @@ export const extractTrailingStateJson = (content) => {
 
   // Strategy 1: marker-based lookup (fast path, 95%+ of cases)
   const marker = '"__state"';
-  const idx = content.indexOf(marker);
+  const idx = content.lastIndexOf(marker);
   if (idx >= 0) {
     let braceStart = -1;
     for (let i = idx; i >= 0; i -= 1) {

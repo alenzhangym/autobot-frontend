@@ -175,6 +175,8 @@ function StructuredAnalysisView({ data }) {
 function MessageBubble({ msg, onCopy, onRegenerate, onExpand, onDelete, sessionId, index }) {
   const [copied, setCopied] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+  const [injectedHtml, setInjectedHtml] = useState(null);
+  
   const isUser = msg.role === 'user';
   const isPlan = msg.role === 'plan';
 
@@ -223,14 +225,8 @@ function MessageBubble({ msg, onCopy, onRegenerate, onExpand, onDelete, sessionI
     setTimeout(() => setCopied(false), 2000);
   };
 
-  if (isPlan && msg.content && msg.content.plan) {
-    return (
-      <PlanMessage content={msg.content} onDelete={onDelete} msgId={msg.id} />
-    );
-  }
-
+  // Process uiContent - must be before early returns
   const isUiRender = msg.role === 'ui_render' || (msg.content && typeof msg.content === 'object' && msg.content.type === 'ui_render');
-  // When content is already a string (the HTML), use it directly - don't use JSON.stringify which adds quotes!
   let uiContent = null;
   if (isUiRender) {
     if (typeof msg.content === 'string') {
@@ -239,8 +235,8 @@ function MessageBubble({ msg, onCopy, onRegenerate, onExpand, onDelete, sessionI
       uiContent = msg.content.content || msg.content.html || JSON.stringify(msg.content);
     }
   }
-  const [injectedHtml, setInjectedHtml] = useState(null);
 
+  // useEffect for uiContent - must be before early returns
   useEffect(() => {
     if (!uiContent) {
       setInjectedHtml(null);
@@ -297,13 +293,20 @@ function MessageBubble({ msg, onCopy, onRegenerate, onExpand, onDelete, sessionI
     });
   }, [uiContent]);
 
-  // ESC to close fullscreen
+  // useEffect for fullscreen - must be before early returns
   useEffect(() => {
     if (!fullscreen) return;
     const onKey = (e) => { if (e.key === 'Escape') setFullscreen(false); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [fullscreen]);
+
+  // Early returns
+  if (isPlan && msg.content && msg.content.plan) {
+    return (
+      <PlanMessage content={msg.content} onDelete={onDelete} msgId={msg.id} />
+    );
+  }
 
   if (uiContent) {
     const iframeDoc = injectedHtml || uiContent;

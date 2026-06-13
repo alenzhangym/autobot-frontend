@@ -86,7 +86,7 @@ export default function SessionSidebar({
   }));
 
   const scheduledTaskItems = safeScheduledTasks.map(t => ({
-    key: t.id,
+    key: 'sched-' + t.id,
     icon: <span style={{ opacity: 0.6 }}>⏰</span>,
     label: (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
@@ -132,7 +132,7 @@ export default function SessionSidebar({
           Recent
         </div>
         <Menu
-          mode="inline" theme="dark" selectedKeys={activeTab === 'chat' ? [sessionId] : []}
+          mode="inline" theme="dark" selectedKeys={activeTab === 'chat' && !sessionId?.startsWith('sched-') ? [sessionId] : []}
           onSelect={({ key }) => { setActiveTab('chat'); loadSession(key); }}
           items={sidebarItems}
           style={{ background: 'transparent', border: 'none', flexShrink: 0 }}
@@ -142,7 +142,7 @@ export default function SessionSidebar({
           My Scheduled Tasks
         </div>
         <Menu
-          mode="inline" theme="dark" selectedKeys={activeTab === 'chat' ? [sessionId] : []}
+          mode="inline" theme="dark" selectedKeys={activeTab === 'chat' && sessionId?.startsWith('sched-') ? [sessionId] : []}
           onSelect={({ key }) => { setActiveTab('chat'); loadSession(key); }}
           items={scheduledTaskItems}
           style={{ background: 'transparent', border: 'none', flexShrink: 0 }}

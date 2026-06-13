@@ -1683,6 +1683,17 @@ function App() {
     try {
       const res = await api.get('/sessions')
       const loaded = res.data.sessions || []
+      
+      // Debug: Check for duplicate session IDs
+      const idCounts = {}
+      loaded.forEach(s => {
+        idCounts[s.id] = (idCounts[s.id] || 0) + 1
+      })
+      const duplicates = Object.entries(idCounts).filter(([id, count]) => count > 1)
+      if (duplicates.length > 0) {
+        console.error('[App] Duplicate session IDs found:', duplicates)
+      }
+      
       setSessions(loaded)
       const cur = loaded.find(s => s.id === sessionId)
       if (cur?.channel) setCurrentChannel(cur.channel)
@@ -1958,9 +1969,8 @@ function App() {
   const syncWorkspaceTreeSilently = async (dirPath, reason = 'auto') => {
     if (!dirPath) return false
     const syncKey = `${sessionId}:${dirPath}`
-    if (syncedWorkspaceTreesRef.current.has(syncKey)) {
-      return true
-    }
+    // Always sync to ensure backend has the latest snapshot (especially after backend restart)
+    // Removed cache check to prevent stale data issues
 
     try {
       appendLiveLog(`[WorkspaceTree] start path=${dirPath} reason=${reason}\n`)
@@ -2418,19 +2428,10 @@ function App() {
 
       const currentMessage = messages.find(m => m.id === targetMsgId)
       let hasCmd = finalContent.includes('__CMD__{')
-      if (hasCmd) {
-        const previousSignature = extractCommandSignature(currentMessage?.content)
-        const nextSignature = extractCommandSignature(finalContent)
-        if (previousSignature && nextSignature && previousSignature === nextSignature) {
-          appendLiveLog('[CodeAnalysis] 后端重复返回同一组中间态命令，停止自动重放以避免死循环\n')
-          const repeatedState = extractAnalysisState(finalContent)
-          const repeatedWarning = '【Code Analysis】\n\n后端重复返回了与上一轮完全相同的本地读取命令，前端已停止自动重复执行，以避免死循环。\n\n请检查后端 focused/iterative 规划是否没有推进，或根据实时日志继续排查。'
-          finalContent = repeatedState
-            ? replaceTrailingAnalysisState(`${repeatedWarning}\n\n${JSON.stringify(repeatedState)}`, repeatedState)
-            : repeatedWarning
-          hasCmd = false
-        }
-      }
+      // Removed overly-strict loop protection:
+      // In a real execution environment, the backend handles deduplication and tracking
+      // of reads. Blocking it on the frontend side breaks scenarios where identical commands
+      // are legitimately required in the same flow.
 
       setMessages(prev => prev.map(m =>
         m.id === targetMsgId
@@ -2447,6 +2448,11 @@ function App() {
           }
           return { ...m, content: newPlan }
         }))
+      } else {
+        // If it still has commands, we MUST remove it from processedCmdMsgs
+        // so that the main useEffect hook can pick it up again and execute the new commands!
+        const newKey = `${targetMsgId}:${finalContent}`
+        processedCmdMsgs.current.delete(newKey)
       }
     } catch (e) {
       console.warn('Command results send failed:', e)
