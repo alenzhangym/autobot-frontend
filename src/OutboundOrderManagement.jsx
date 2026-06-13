@@ -14,7 +14,7 @@ const STATUS_MAP = {
 
 const STATUS_OPTIONS = Object.entries(STATUS_MAP).map(([k, v]) => ({ value: k, label: v.label }))
 
-const emptyItem = () => ({ key: Date.now(), customerPartNo: '', model: '', orderedQty: 0, shippedQty: 0, qty: null, unitPrice: null })
+const emptyItem = () => ({ key: Date.now(), customerPartNo: '', model: '', orderedQty: 0, shippedQty: 0, qty: null, unitPrice: null, dirty: true })
 
 export default function OutboundOrderManagement({ user, companies = [] }) {
   const isSuperAdmin = user?.role === 'SUPER_ADMIN'
@@ -88,7 +88,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
 
   const addItem = () => setItems(prev => [...prev, emptyItem()])
   const removeItem = (key) => { if (items.length <= 1) return; setItems(prev => prev.filter(it => it.key !== key)) }
-  const updateItem = (key, field, value) => setItems(prev => prev.map(it => it.key === key ? { ...it, [field]: value } : it))
+  const updateItem = (key, field, value) => setItems(prev => prev.map(it => it.key === key ? { ...it, [field]: value, dirty: true } : it))
 
   const openSubstituteSelector = async (target, model) => {
     if (!model) { message.warning('请先选择物料型号'); return }
@@ -126,6 +126,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
       inventoryId: sub.inventory_id || sub.inventoryId || null,
       currentStock: sub.current_stock != null ? Number(sub.current_stock) : (sub.currentStock != null ? sub.currentStock : null),
       unitPrice: sub.unit_price != null ? Number(sub.unit_price) : (sub.unitPrice != null ? sub.unitPrice : it.unitPrice),
+      dirty: true,
     } : it))
     setSubModal({ visible: false, target: null, model: '', subs: [], manual: [], sameType: [], partType: '', loading: false, query: '', freeQuery: '', freeResults: [], freeLoading: false })
     message.success(`已选择替代物料: ${sub.to_model || sub.toModel}`)
@@ -138,6 +139,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
       currentStock: null,
       substituted: false,
       originalModel: undefined,
+      dirty: true,
     } : it))
   }
 
@@ -217,6 +219,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
       }
       return {
         key: Date.now() + Math.random(),
+        dirty: false,
         customerPartNo: it.customer_part_no || it.customerPartNo || '',
         model,
         partId: partIdNum,
@@ -379,8 +382,9 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
       const res = await api.get(`/erp/outbound-orders/${record.orderId}`, { params })
       const detail = res.data
       setEditingReconciled(!!detail.reconciled)
-      const its = (detail.items || []).map(it => ({
+      const its = (detail.items || []).map((it, idx) => ({
         key: Date.now() + Math.random(),
+        originalIndex: idx,
         customerPartNo: it.customerPartNo || '',
         model: it.model || '',
         partId: it.partId || null,
@@ -395,6 +399,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
         substitutes: it.substitutes || [],
         substituteCount: it.substituteCount != null ? it.substituteCount : (it.substitutes ? it.substitutes.length : 0),
         substituteMaxStock: it.substituteMaxStock != null ? it.substituteMaxStock : null,
+        dirty: false,
       }))
       setEditItems(its.length > 0 ? its : [])
       setShowEditModal(true)
@@ -406,7 +411,16 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
   const handleEditSave = async () => {
     if (!editingOrder) return
     try {
-      const orderItems = editItems.filter(it => it.customerPartNo || it.model || it.qty).map(it => ({
+      // 数量校验：所有 dirty 条目的 qty 必须 > 0
+      const dirtyItems = editItems.filter(it => it.dirty)
+      const invalidQty = dirtyItems.filter(it => !it.qty || it.qty <= 0)
+      if (invalidQty.length > 0) {
+        message.error(`有 ${invalidQty.length} 条已修改物料数量为 0，本次出库数量必须大于 0`)
+        return
+      }
+      // 只发送用户实际修改过的条目，未修改的不动
+      const orderItems = dirtyItems.map(it => ({
+        originalIndex: it.originalIndex,
         customerPartNo: it.customerPartNo,
         model: it.model,
         partId: it.partId || null,
@@ -417,8 +431,8 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
         substituted: !!it.substituted,
         originalModel: it.originalModel || null,
       }))
-      await api.put(`/erp/outbound-orders/${editingOrder.orderId}`, { items: orderItems })
-      message.success('已更新')
+      await api.put(`/erp/outbound-orders/${editingOrder.orderId}`, { items: orderItems, partial: true })
+      message.success(`已更新 ${orderItems.length} 条记录`)
       setShowEditModal(false)
       setEditingOrder(null)
       setEditItems([])
@@ -432,14 +446,18 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
   const handleCreate = async () => {
     try {
       const values = await createForm.validateFields()
-      // 数量校验：所有填写的物料数量必须 > 0
-      const filled = items.filter(it => it.customerPartNo || it.model || it.qty)
-      const invalidQty = filled.filter(it => !it.qty || it.qty <= 0)
-      if (invalidQty.length > 0) {
-        message.error(`有 ${invalidQty.length} 条物料数量为 0 或未填写，本次出库数量必须大于 0`)
+      // 只发送用户实际修改过的物料条目，未触碰的（auto-load）不算入本次出库
+      const dirty = items.filter(it => it.dirty)
+      if (dirty.length === 0) {
+        message.warning('请至少修改一条物料（点击数量/单价输入框或选择替代料）以确认本次出库')
         return
       }
-      const orderItems = filled.map(it => ({
+      const invalidQty = dirty.filter(it => !it.qty || it.qty <= 0)
+      if (invalidQty.length > 0) {
+        message.error(`有 ${invalidQty.length} 条已修改物料数量为 0 或未填写，本次出库数量必须大于 0`)
+        return
+      }
+      const orderItems = dirty.map(it => ({
         customerPartNo: it.customerPartNo,
         model: it.model,
         partId: it.partId || null,
@@ -916,10 +934,10 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
                       <td style={{ padding: 2, textAlign: 'center', color: '#e3e3e3' }}>{it.orderedQty || '-'}</td>
                       <td style={{ padding: 2, textAlign: 'center', color: '#e3e3e3' }}>{it.shippedQty || '-'}</td>
                       <td style={{ padding: 2 }}><InputNumber size="small" style={{ width: '100%' }} placeholder="0" min={0} value={it.qty}
-                        onChange={v => setEditItems(prev => prev.map(x => x.key === it.key ? { ...x, qty: v } : x))} /></td>
+                        onChange={v => setEditItems(prev => prev.map(x => x.key === it.key ? { ...x, qty: v, dirty: true } : x))} /></td>
                       <td style={{ padding: 2 }}><InputNumber size="small" style={{ width: '100%' }} placeholder="0.00" min={0} step={0.01} value={it.unitPrice}
                         disabled={editingReconciled}
-                        onChange={v => setEditItems(prev => prev.map(x => x.key === it.key ? { ...x, unitPrice: v } : x))} /></td>
+                        onChange={v => setEditItems(prev => prev.map(x => x.key === it.key ? { ...x, unitPrice: v, dirty: true } : x))} /></td>
                       <td style={{ padding: 2, textAlign: 'right', color: '#888', fontSize: 11 }}>{it.qty && it.unitPrice ? '¥' + (it.qty * it.unitPrice).toFixed(2) : ''}</td>
                     </tr>
                   ))}</tbody>

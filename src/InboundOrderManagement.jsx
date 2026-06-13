@@ -17,7 +17,7 @@ const STATUS_MAP = {
 
 const STATUS_OPTIONS = Object.entries(STATUS_MAP).map(([k, v]) => ({ value: k, label: v.label }))
 
-const emptyItem = () => ({ key: Date.now(), partType: '', model: '', manufacturer: '', orderedQty: 0, receivedQty: 0, qty: null, unitPrice: null, location: '', notes: '' })
+const emptyItem = () => ({ key: Date.now(), partType: '', model: '', manufacturer: '', orderedQty: 0, receivedQty: 0, qty: null, unitPrice: null, location: '', notes: '', dirty: true })
 
 export default function InboundOrderManagement({ user, companies = [] }) {
   const isSuperAdmin = user?.role === 'SUPER_ADMIN'
@@ -111,8 +111,9 @@ export default function InboundOrderManagement({ user, companies = [] }) {
       if (detail.supplierName && !suppliers.some(s => s.name === detail.supplierName)) {
         setSuppliers(prev => [...prev, { supplierId: -Date.now(), name: detail.supplierName }])
       }
-      const its = (detail.items || []).map(it => ({
+      const its = (detail.items || []).map((it, idx) => ({
         key: Date.now() + Math.random(),
+        originalIndex: idx,
         partType: it.partType || '',
         model: it.model || '',
         manufacturer: it.manufacturer || '',
@@ -120,22 +121,32 @@ export default function InboundOrderManagement({ user, companies = [] }) {
         unitPrice: it.unitPrice || null,
         location: it.location || '',
         notes: it.notes || '',
+        dirty: false,
       }))
       setEditItems(its.length > 0 ? its : [emptyItem()])
       setShowEditModal(true)
     } catch (e) { message.error('加载入库单详情失败') }
   }
 
-  const addEditItem = () => setEditItems(prev => [...prev, emptyItem()])
+  const addEditItem = () => setEditItems(prev => [...prev, { ...emptyItem(), dirty: true }])
   const removeEditItem = (key) => { if (editItems.length <= 1) return; setEditItems(prev => prev.filter(it => it.key !== key)) }
   const updateEditItem = (key, field, value) => {
-    setEditItems(prev => prev.map(it => it.key === key ? { ...it, [field]: value } : it))
+    setEditItems(prev => prev.map(it => it.key === key ? { ...it, [field]: value, dirty: true } : it))
   }
 
   const handleEditSave = async () => {
     try {
       const values = await editForm.validateFields()
-      const orderItems = editItems.filter(it => it.partType || it.model || it.qty).map(it => ({
+      // 数量校验：只校验 dirty 行
+      const dirtyItems = editItems.filter(it => it.dirty)
+      const invalidQty = dirtyItems.filter(it => !it.qty || it.qty <= 0)
+      if (invalidQty.length > 0) {
+        message.error(`有 ${invalidQty.length} 条已修改物料数量为 0，本次入库数量必须大于 0`)
+        return
+      }
+      // 只发送被用户实际修改过的条目
+      const orderItems = dirtyItems.map(it => ({
+        originalIndex: it.originalIndex,
         partType: it.partType, model: it.model, manufacturer: it.manufacturer,
         qty: it.qty || 0, unitPrice: it.unitPrice || 0,
         subtotal: (it.qty || 0) * (it.unitPrice || 0),
@@ -145,8 +156,9 @@ export default function InboundOrderManagement({ user, companies = [] }) {
         supplierName: values.supplierName,
         orderDate: values.orderDate?.format('YYYY-MM-DD'),
         items: orderItems,
+        partial: true,
       })
-      message.success('已更新')
+      message.success(`已更新 ${orderItems.length} 条记录`)
       setShowEditModal(false); setEditItems([]); setEditingOrder(null); fetchOrders()
     } catch (e) { if (!e.errorFields) message.error('更新失败: ' + (e.response?.data?.error || e.message)) }
   }
@@ -182,6 +194,7 @@ export default function InboundOrderManagement({ user, companies = [] }) {
         const p = parts.find(x => x.partId === it.part_id)
         allRows.push({
           key: Date.now() + Math.random() + allRows.length,
+          dirty: false,
           partType: p?.partType || '',
           model: p?.userPartModel || '',
           manufacturer: p?.manufacturer || '',
@@ -232,20 +245,24 @@ export default function InboundOrderManagement({ user, companies = [] }) {
   }
 
   const updateItem = (key, field, value) => {
-    setItems(prev => prev.map(it => it.key === key ? { ...it, [field]: value } : it))
+    setItems(prev => prev.map(it => it.key === key ? { ...it, [field]: value, dirty: true } : it))
   }
 
   const handleCreate = async () => {
     try {
       const values = await createForm.validateFields()
-      // 数量校验：所有填写的物料数量必须 > 0
-      const filled = items.filter(it => it.model || it.qty)
-      const invalidQty = filled.filter(it => !it.qty || it.qty <= 0)
-      if (invalidQty.length > 0) {
-        message.error(`有 ${invalidQty.length} 条物料数量为 0 或未填写，本次入库数量必须大于 0`)
+      // 只发送用户实际修改过的物料条目，未触碰的（auto-load）不算入本次入库
+      const dirty = items.filter(it => it.dirty)
+      if (dirty.length === 0) {
+        message.warning('请至少修改一条物料（点击数量/单价输入框）以确认本次入库')
         return
       }
-      const orderItems = filled.map(it => ({
+      const invalidQty = dirty.filter(it => !it.qty || it.qty <= 0)
+      if (invalidQty.length > 0) {
+        message.error(`有 ${invalidQty.length} 条已修改物料数量为 0 或未填写，本次入库数量必须大于 0`)
+        return
+      }
+      const orderItems = dirty.map(it => ({
         partType: it.partType, model: it.model, manufacturer: it.manufacturer,
         qty: it.qty || 0, unitPrice: it.unitPrice || 0,
         subtotal: (it.qty || 0) * (it.unitPrice || 0),
