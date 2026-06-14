@@ -661,6 +661,58 @@ async function executeSingleCommand(cmd, workspaceDir, onLog, sessionId) {
       // git diff is not available on frontend — return hint
       return '(git diff not available via frontend — running on backend)'
     }
+    case 'search_replace': {
+      // 风险 1 修复：search/replace diff 模式
+      // 优先调用后端原子 search/replace 端点（避免 500 行文件整体重写风险）
+      // 若后端未提供该端点，前端兜底为 read → apply → write
+      try {
+        const target = resolveCommandPath(workspaceDir, cmd.path)
+        const searchText = cmd.search_text || ''
+        const replaceText = cmd.replace_text || ''
+        const replaceAll = !!cmd.replace_all
+        if (!searchText) {
+          return `Error: search_replace requires non-empty search_text (path=${cmd.path})`
+        }
+        const res = await localApi.post('/api/local/workspace/search_replace', {
+          path: target,
+          search_text: searchText,
+          replace_text: replaceText,
+          replace_all: replaceAll,
+          backup: cmd.backup !== false, // 默认 true
+        })
+        const r = res.data || {}
+        onLog?.(`[AgentCMD] search_replace ok ${target} (${r.occurrences || 1} occurrence, ${r.new_size || '?'} bytes)\n`)
+        return r.message || `Replaced ${r.occurrences || 1} occurrence(s)`
+      } catch (e) {
+        const detail = e.response?.data?.error || e.message
+        const target = resolveCommandPath(workspaceDir, cmd.path)
+        // 后端端点可能未部署 — 兜底到 read → write
+        if (e.response?.status === 404) {
+          try {
+            onLog?.(`[AgentCMD] search_replace backend missing — falling back to read+write for ${target}\n`)
+            const readRes = await localApi.post('/api/local/workspace/read', { path: target })
+            const original = readRes.data?.content || ''
+            const searchText = cmd.search_text || ''
+            const replaceText = cmd.replace_text || ''
+            if (!original.includes(searchText)) {
+              return `Error: search_text not found in ${cmd.path}`
+            }
+            const newContent = original.split(searchText).join(replaceText)
+            const writeRes = await localApi.post('/api/local/workspace/write', {
+              path: target,
+              content: newContent,
+            })
+            onLog?.(`[AgentCMD] search_replace fallback ok ${target} (${newContent.length} bytes)\n`)
+            return writeRes.data?.message || 'Replaced (fallback)'
+          } catch (fallbackErr) {
+            const fbDetail = fallbackErr.response?.data?.error || fallbackErr.message
+            return `Error search_replace ${cmd.path} (fallback failed): ${fbDetail}`
+          }
+        }
+        onLog?.(`[AgentCMD] search_replace failed ${target}: ${detail}\n`)
+        return `Error search_replace ${cmd.path}: ${detail}`
+      }
+    }
     case 'write': {
       try {
         const target = resolveCommandPath(workspaceDir, cmd.path)
