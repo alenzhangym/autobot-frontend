@@ -699,6 +699,48 @@ export function injectDataStoreData(htmlContent, dataStoreData) {
   return '<html><head>' + dataInjectionScript + '</head><body>' + htmlContent + '</body></html>';
 }
 
+/**
+ * Strip a tagged JSON block (e.g. [IMPL_SPEC]{...} or [IMPL_STATE]{...})
+ * from text. Removes both the marker tag and the JSON object that follows it.
+ * @param {string} text
+ * @param {string} tag - The marker tag, e.g. '[IMPL_SPEC]'
+ * @returns {string}
+ */
+function stripTaggedJsonBlock(text, tag) {
+  if (!text || typeof text !== 'string') return text
+  const idx = text.indexOf(tag)
+  if (idx < 0) return text
+  const afterMarker = idx + tag.length
+  if (afterMarker < text.length && text[afterMarker] === '{') {
+    const jsonBlock = extractTrailingJsonObject(text, afterMarker)
+    if (jsonBlock) {
+      return text.substring(0, idx) + text.substring(afterMarker + jsonBlock.length)
+    }
+  }
+  // No JSON follows — remove just the marker line
+  const nlIdx = text.indexOf('\n', idx)
+  return text.substring(0, idx) + (nlIdx >= 0 ? text.substring(nlIdx + 1) : '')
+}
+
+/**
+ * Extract the JSON object following a `[IMPL_STATE]` marker from text.
+ * Returns the raw JSON string (including braces), or null if not found.
+ * DEF-5 fix: frontend must pass [IMPL_STATE] back to backend so that
+ * ImplementationService can recover auxState without fragile DB search.
+ */
+export const extractImplStateBlock = (text) => {
+  if (!text || typeof text !== 'string') return null
+  const tag = '[IMPL_STATE]'
+  const idx = text.indexOf(tag)
+  if (idx < 0) return null
+  const afterMarker = idx + tag.length
+  // Skip optional whitespace/newline between marker and JSON
+  let jsonStart = afterMarker
+  while (jsonStart < text.length && /\s/.test(text[jsonStart])) jsonStart++
+  if (jsonStart >= text.length || text[jsonStart] !== '{') return null
+  return extractTrailingJsonObject(text, jsonStart)
+}
+
 // ── Markdown renderer ──────────────────────────────────────────────────────
 /**
  * Strip __CMD__{...} blocks from text using depth-tracking JSON extraction.
@@ -736,6 +778,10 @@ export function stripAgentMarkers(content) {
   if (commandResultsIdx >= 0) {
     cleaned = cleaned.substring(0, commandResultsIdx)
   }
+  // D3: Strip [IMPL_SPEC]{...} blocks from user-facing display
+  cleaned = stripTaggedJsonBlock(cleaned, '[IMPL_SPEC]')
+  // S2: Strip hidden [IMPL_STATE]{...} blocks
+  cleaned = stripTaggedJsonBlock(cleaned, '[IMPL_STATE]')
   cleaned = stripTrailingStateJson(cleaned)
   cleaned = cleaned.replace(/\n{3,}/g, '\n\n')
   return cleaned.trim()

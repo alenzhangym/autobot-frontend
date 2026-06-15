@@ -41,6 +41,7 @@ import DocumentPreviewModal from './DocumentPreviewModal'
 import SessionSidebar from './components/SessionSidebar'
 import { executeAgentCommands, appendStreamToken, tryStreamDispatch, resetStreamBuffer } from './components/WorkspacePanel'
 import MessageBubble from './components/MessageBubble'
+import IssuesSidePanel from './components/IssuesSidePanel'
 import { useUserStore } from './store/useUserStore'
 import { useDataStore } from './store/useDataStore'
 import { useConfigStore } from './store/useConfigStore'
@@ -1350,7 +1351,7 @@ function App() {
             if (data.type === 'AGENT_STREAM' && data.token && data.agent !== 'UIAgent') {
               appendLiveLog(data.token)
               // Accumulate tokens for early __CMD__ dispatch
-              appendStreamToken(data.token)
+              appendStreamToken(data.token, sessionId)
               if (workspaceDir && data.token.includes('__CMD__')) {
                 tryStreamDispatch(workspaceDir, (line) => appendLiveLog(line), sessionId)
               }
@@ -2103,7 +2104,7 @@ function App() {
     if ((!text.trim() && !selectedImageBase64 && uploadedDocuments.length === 0) || isLoading) return
 
     // Reset the streaming __CMD__ buffer for the new response
-    resetStreamBuffer()
+    resetStreamBuffer(sessionId)
 
     // ── Block chat if workspace is invalid for code sessions ──
     const currentSession = sessions.find(s => s.id === sessionId)
@@ -2295,7 +2296,7 @@ function App() {
     if (!lastMsg.content || !lastMsg.content.includes('__CMD__{')) return
     if (!lastMsg.id) return
 
-    const commandExecutionKey = `${lastMsg.id}:${lastMsg.content}`
+    const commandExecutionKey = `${sessionId}:${lastMsg.id}:${lastMsg.content}`
     if (processedCmdMsgs.current.has(commandExecutionKey)) return
     if (processingCmdMsgs.current.has(commandExecutionKey)) return
 
@@ -2451,7 +2452,7 @@ function App() {
       } else {
         // If it still has commands, we MUST remove it from processedCmdMsgs
         // so that the main useEffect hook can pick it up again and execute the new commands!
-        const newKey = `${targetMsgId}:${finalContent}`
+        const newKey = `${sessionId}:${targetMsgId}:${finalContent}`
         processedCmdMsgs.current.delete(newKey)
       }
     } catch (e) {
@@ -3153,6 +3154,34 @@ const handleDeleteSession = (id) => {
                 </div>
               )}
             </Content>
+
+            {/* Right-hand issues panel — only for code sessions. The panel
+                reuses the existing session to fetch /api/code-analysis/{id}/issues
+                and lets the user mark items fixed/ignored. Strikes through
+                issues whose status === 'fixed' | 'ignored' so the user can
+                see at a glance which items remain. */}
+            {activeTab === 'chat' && (sessions.find(s => s.id === sessionId)?.channel === 'code' || (!sessions.find(s => s.id === sessionId)?.channel && currentChannel === 'code')) && (
+              <div style={{
+                width: 360, flexShrink: 0,
+                borderLeft: '1px solid #1f1f1f',
+                background: '#0d0d0d'
+              }}>
+                <IssuesSidePanel
+                  sessionId={sessionId}
+                  workspaceDir={workspaceDir}
+                  onJumpToFile={(filePath, line) => {
+                    // The chat UI does not own the WorkspacePanel; just
+                    // show the path in a transient notification so the
+                    // user knows what to open. A future iteration can
+                    // mount WorkspacePanel here and call jumpToFile().
+                    message.info(
+                      line ? `${filePath}:${line}` : (filePath || 'No file path'),
+                      2
+                    )
+                  }}
+                />
+              </div>
+            )}
 
             {/* Log Panel */}
             {showLogs && liveLogActive && (

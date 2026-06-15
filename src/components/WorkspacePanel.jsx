@@ -1,12 +1,12 @@
-import React, { useState, useCallback, useEffect } from 'react'
+import React, { useState, useCallback, useEffect, useRef, useImperativeHandle, forwardRef } from 'react'
 import { Layout, Input, Button, Tree, Space, Typography, message, Spin, Modal, List } from 'antd'
 import { FolderOpenOutlined, FileOutlined, ReloadOutlined, SaveOutlined, EditOutlined, HomeOutlined } from '@ant-design/icons'
 import api, { getBackendHost, getLocalAgentBaseUrl } from '../auth'
 import axios from 'axios'
 import { shouldRequireConfirmation, formatCommandSummary, addTrustedPattern, patternFromCommand } from './agentCommandSafety'
-import { extractTrailingStateJson } from '../utils/helpers.jsx'
+import { extractTrailingStateJson, extractImplStateBlock } from '../utils/helpers.jsx'
 
-const localApi = axios.create({ baseURL: getLocalAgentBaseUrl() })
+const localApi = axios.create({ baseURL: getLocalAgentBaseUrl(), timeout: 600000 })
 
 const { Text } = Typography
 const { TextArea } = Input
@@ -48,7 +48,7 @@ const getInitialBrowsePath = () => {
   return '/'
 }
 
-export default function WorkspacePanel({ workspaceDir, onDirChange, sessionId }) {
+export default forwardRef(function WorkspacePanel({ workspaceDir, onDirChange, sessionId }, ref) {
   const defaultValue = workspaceDir || getDefaultWorkspaceDir()
   const [dirInput, setDirInput] = useState(defaultValue)
   const [files, setFiles] = useState([])
@@ -62,6 +62,35 @@ export default function WorkspacePanel({ workspaceDir, onDirChange, sessionId })
   const [browsePath, setBrowsePath] = useState(defaultValue)
   const [browseEntries, setBrowseEntries] = useState([])
   const [browseLoading, setBrowseLoading] = useState(false)
+  const [targetLine, setTargetLine] = useState(null)  // 1-based; non-null after jumpToFile
+  const viewerRef = useRef(null)  // scrollable <pre> container
+
+  // Imperative API for parent components (e.g. the right-hand issue panel
+  // jumping to a file when the user clicks an issue). Resolves the path
+  // against the current workspace if a relative path is supplied, then
+  // reads the file and scrolls to the requested line.
+  useImperativeHandle(ref, () => ({
+    jumpToFile: async (filePath, lineNumber) => {
+      if (!filePath) return
+      let resolved = filePath
+      if (workspaceDir && !filePath.match(/^[a-zA-Z]:[\\/]/) && !filePath.startsWith('/')) {
+        const sep = workspaceDir.includes('\\') ? '\\' : '/'
+        resolved = workspaceDir.replace(/[\\/]+$/, '') + sep + filePath.replace(/^[\\/]+/, '')
+      }
+      setTargetLine(lineNumber && lineNumber > 0 ? lineNumber : null)
+      await readFile(resolved)
+      // Scroll after content is rendered. readFile is async; the state
+      // update from setFileContent will trigger a re-render in the next
+      // tick, so we schedule the scroll on a microtask.
+      Promise.resolve().then(() => {
+        const container = viewerRef.current
+        if (!container) return
+        const lineHeight = 16  // matches monospace 11px * 1.5 line-height
+        const idx = (lineNumber && lineNumber > 0 ? lineNumber : 1) - 1
+        container.scrollTop = Math.max(0, idx * lineHeight - container.clientHeight / 3)
+      })
+    }
+  }), [workspaceDir])
   const driveEntries = isWindows()
     ? browseEntries.filter(entry => entry?.isDir && /^[A-Za-z]:$/.test(entry.name))
     : []
@@ -278,7 +307,7 @@ export default function WorkspacePanel({ workspaceDir, onDirChange, sessionId })
               }}
             />
           ) : (
-            <pre style={{
+            <pre ref={viewerRef} style={{
               color: '#ccc', fontSize: 11, fontFamily: 'monospace',
               whiteSpace: 'pre-wrap', wordBreak: 'break-all',
               margin: 0, lineHeight: 1.5
@@ -354,13 +383,17 @@ export default function WorkspacePanel({ workspaceDir, onDirChange, sessionId })
       </Modal>
     </div>
   )
-}
+})
 
 function extractTrailingAnalysisStateJson(content) {
-  // Delegate to the shared depth-tracking utility in helpers.jsx.
-  // Avoids the previous `lastIndexOf('{"__state"')` heuristic which
-  // could match the wrong occurrence on nested content.
-  return extractTrailingStateJson(content) || ''
+  // DEF-5 fix: include both __state and [IMPL_STATE] blocks so backend
+  // can recover ImplementationService auxState without fragile DB search.
+  const parts = []
+  const stateJson = extractTrailingStateJson(content)
+  if (stateJson) parts.push(stateJson)
+  const implStateJson = extractImplStateBlock(content)
+  if (implStateJson) parts.push('\n[IMPL_STATE]\n' + implStateJson + '\n')
+  return parts.join('')
 }
 
 // ── Streaming __CMD__ pre-dispatch ───
@@ -369,19 +402,21 @@ function extractTrailingAnalysisStateJson(content) {
 // HTTP response arrives.  Results are cached per command-id; the regular
 // executeAgentCommands path reuses them to avoid double execution.
 
+/** Shared set of read-only action types (same as in executeAgentCommands). */
+const READ_ACTIONS = new Set(['read', 'scan', 'tree_sync', 'ls', 'diff'])
+
 /** Shared cache: commandId → result string. Populated by the stream dispatcher. */
 export const streamedCmdResults = new Map()
 
-let streamBuffer = ''
+const streamBuffers = new Map()
 
 /**
  * Scan a streaming text buffer for complete {@code __CMD__{...}} blocks.
  * Dispatches read-only commands immediately; stores results in
  * {@link #streamedCmdResults}.  Returns the number of commands dispatched.
- * Thread-safe enough for single-session use (one WS stream).
  */
 export function tryStreamDispatch(workspaceDir, onLog, sessionId) {
-  const text = streamBuffer
+  const text = streamBuffers.get(sessionId) ?? ''
   if (!text.includes('__CMD__')) return 0
 
   let dispatched = 0
@@ -407,9 +442,15 @@ export function tryStreamDispatch(workspaceDir, onLog, sessionId) {
           const json = text.substring(braceStart, i + 1)
           let cmd
           try { cmd = JSON.parse(json) } catch { i++; continue }
-          if (cmd && cmd.action && !streamedCmdResults.has(cmd.id)) {
-            // Fire-and-forget: dispatch read-only commands immediately
-            executeSingleCommand(cmd, workspaceDir, onLog, sessionId).then(r => {
+          // Only pre-dispatch read-only commands during streaming.
+          // Mutation commands (write, delete, run, etc.) must wait
+          // for executeAgentCommands so they run sequentially.
+          if (cmd && cmd.action && !streamedCmdResults.has(cmd.id) && READ_ACTIONS.has(cmd.action)) {
+            // D1 fix: store the pending Promise so resolveCachedResult
+            // can await it, preventing double execution.
+            const promise = executeSingleCommand(cmd, workspaceDir, onLog, sessionId)
+            streamedCmdResults.set(cmd.id, promise)
+            promise.then(r => {
               streamedCmdResults.set(cmd.id, r)
             })
             dispatched++
@@ -426,13 +467,41 @@ export function tryStreamDispatch(workspaceDir, onLog, sessionId) {
 }
 
 /** Append streaming tokens to the buffer. Call from WebSocket AGENT_STREAM handler. */
-export function appendStreamToken(token) {
-  streamBuffer += token
+export function appendStreamToken(token, sessionId) {
+  if (!streamBuffers.has(sessionId)) streamBuffers.set(sessionId, '')
+  streamBuffers.set(sessionId, streamBuffers.get(sessionId) + token)
 }
 
 /** Reset the streaming buffer (new message). */
-export function resetStreamBuffer() {
-  streamBuffer = ''
+export function resetStreamBuffer(sessionId) {
+  streamBuffers.set(sessionId, '')
+}
+
+/**
+ * Resolve a cached command result — if the cached value is a pending Promise
+ * (i.e., the streaming pre-dispatch hasn't finished yet), await it.
+ * Otherwise return the cached string or the fallback.
+ * @param {string} cmdId
+ * @param {string} [fallback]
+ * @returns {Promise<string|undefined>}
+ */
+async function resolveCachedResult(cmdId, fallback) {
+  const cached = streamedCmdResults.get(cmdId)
+  if (cached instanceof Promise) {
+    const resolved = await cached
+    streamedCmdResults.set(cmdId, resolved)
+    return resolved
+  }
+  return cached !== undefined ? cached : fallback
+}
+
+/**
+ * Clear all cached streaming command results for a session.
+ * Call when starting a new agent response to prevent stale results
+ * from a previous message being reused.
+ */
+export function clearStreamedCmdCache() {
+  streamedCmdResults.clear()
 }
 
 // ── Full-response command executor ───
@@ -508,28 +577,27 @@ export async function executeAgentCommands(text, workspaceDir, onLog, sessionId)
   const readResults = await Promise.all(readCmds.map(c => executeSingleCommand(c, workspaceDir, onLog, sessionId)))
   for (let i = 0; i < readCmds.length; i++) {
     const cmd = readCmds[i]
-    let r = streamedCmdResults.get(cmd.id)
-    if (r !== undefined) {
-      onLog?.(`[AgentCMD] Reusing streamed ${cmd.action} id=${cmd.id || '(none)'}\n`)
-    } else {
-      r = readResults[i]
+    let r = await resolveCachedResult(cmd.id, readResults[i])
+    if (r === readResults[i]) {
       streamedCmdResults.set(cmd.id, r)
+    } else {
+      onLog?.(`[AgentCMD] Reusing streamed ${cmd.action} id=${cmd.id || '(none)'}\n`)
     }
     results.push(`[RESULT:${cmd.id}]\n${r}`)
   }
 
   for (const cmd of mutCmds) {
-    let r = streamedCmdResults.get(cmd.id)
-    if (r !== undefined) {
-      onLog?.(`[AgentCMD] Reusing streamed ${cmd.action} id=${cmd.id || '(none)'}\n`)
-    } else {
+    let r = await resolveCachedResult(cmd.id)
+    if (r === undefined) {
       const targetPath = cmd.path || workspaceDir || '(empty)'
       onLog?.(
         `[AgentCMD] Running ${cmd.action} id=${cmd.id || '(none)'} path=${targetPath}${formatCommandLogMeta(cmd)}\n`
       )
       r = await executeSingleCommand(cmd, workspaceDir, onLog, sessionId)
-        streamedCmdResults.set(cmd.id, r)
-      }
+      streamedCmdResults.set(cmd.id, r)
+    } else {
+      onLog?.(`[AgentCMD] Reusing streamed ${cmd.action} id=${cmd.id || '(none)'}\n`)
+    }
     results.push(`[RESULT:${cmd.id}]\n${r}`)
   }
 
@@ -698,9 +766,14 @@ async function executeSingleCommand(cmd, workspaceDir, onLog, sessionId) {
               return `Error: search_text not found in ${cmd.path}`
             }
             const newContent = original.split(searchText).join(replaceText)
+            // DEF-10 fix: create .bak backup in fallback path so rollback can
+            // restore the file. Matches the primary search_replace and write
+            // command behavior (both create .CodeAgent.bak by default).
+            const backupPath = cmd.backup !== false ? target + '.CodeAgent.bak' : null
             const writeRes = await localApi.post('/api/local/workspace/write', {
               path: target,
               content: newContent,
+              backup_path: backupPath,
             })
             onLog?.(`[AgentCMD] search_replace fallback ok ${target} (${newContent.length} bytes)\n`)
             return writeRes.data?.message || 'Replaced (fallback)'
