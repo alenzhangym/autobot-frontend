@@ -13,8 +13,12 @@ import { MonitorService } from './MonitorService.js';
 
 export async function startMonitor({ repoRoot, storePath, autoRestart = false, logger = console } = {}) {
   const logsDir = path.join(repoRoot, 'java-backend', 'logs');
-  if (!fs.existsSync(path.dirname(storePath))) {
-    fs.mkdirSync(path.dirname(storePath), { recursive: true });
+  // A1 fix: storePath is a directory (contract). Previously the code did
+  // path.dirname(storePath), which made the *parent* of storePath instead of
+  // storePath itself, leading to EEXIST / EACCES / wrong-tree directory
+  // creation. Use storePath directly with recursive: true so it's idempotent.
+  if (!fs.existsSync(storePath)) {
+    fs.mkdirSync(storePath, { recursive: true });
   }
   const service = new MonitorService({
     repoRoot,

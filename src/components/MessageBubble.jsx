@@ -28,10 +28,18 @@ const PRIORITY_TAG_COLOR = {
  * as a monospaced path tag plus a green confirmation tag when present.
  */
 function EvidenceTag({ text }) {
-  if (!text) return null;
-  const m = String(text).match(/^(.*?)(\s*\[(已证实|confirmed|✓)\])?$/i);
-  const path = m ? m[1].trim() : String(text).trim();
-  const confirmed = m && m[3];
+  // C1 fix: cache the regex parse. EvidenceTag is a leaf used in long
+  // conversation lists; without useMemo the regex re-runs on every parent
+  // re-render even when `text` is unchanged.
+  const parsed = React.useMemo(() => {
+    if (!text) return null;
+    const m = String(text).match(/^(.*?)(\s*\[(已证实|confirmed|✓)\])?$/i);
+    const path = m ? m[1].trim() : String(text).trim();
+    const confirmed = !!(m && m[3]);
+    return { path, confirmed };
+  }, [text]);
+  if (!parsed) return null;
+  const { path, confirmed } = parsed;
   return (
     <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
       <code style={{

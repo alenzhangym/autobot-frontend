@@ -2,8 +2,56 @@ import axios from 'axios';
 import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
+import net from 'net';
 
 const BACKEND_BASE = process.env.BACKEND_BASE_URL || 'http://localhost:8000';
+
+/**
+ * Parse the port number out of BACKEND_BASE (e.g. http://localhost:8000 → 8000).
+ * Falls back to 8000 if the URL is malformed.
+ */
+function backendPort() {
+  try {
+    const u = new URL(BACKEND_BASE);
+    return u.port ? Number(u.port) : (u.protocol === 'https:' ? 443 : 80);
+  } catch {
+    return 8000;
+  }
+}
+
+/**
+ * Probe whether a TCP port is free by attempting to bind it. Returns when
+ * the bind succeeds or when the deadline elapses. Used to detect OS-level
+ * port release (TIME_WAIT) after a backend has stopped responding to HTTP.
+ */
+function waitForPortFree(port, maxMs = 5000, tickMs = 200, logger = null) {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const tryOnce = () => {
+      const tester = net.createServer();
+      tester.once('error', () => {
+        tester.removeAllListeners();
+        if (Date.now() - start >= maxMs) {
+          logger?.warn?.(`[RestartService] port ${port} still busy after ${maxMs}ms`);
+          resolve(false);
+        } else {
+          setTimeout(tryOnce, tickMs);
+        }
+      });
+      tester.once('listening', () => {
+        tester.close(() => resolve(true));
+      });
+      try {
+        tester.listen(port, '0.0.0.0');
+      } catch {
+        // listen() can throw synchronously on some platforms; treat as busy.
+        if (Date.now() - start >= maxMs) resolve(false);
+        else setTimeout(tryOnce, tickMs);
+      }
+    };
+    tryOnce();
+  });
+}
 
 /**
  * Declarative state machine for the backend restart flow.
@@ -108,7 +156,15 @@ export class RestartService {
     if (!down) {
       return { ok: false, error: 'backend did not go down within timeout' };
     }
-    await new Promise(r => setTimeout(r, 1500));
+    // A2 fix: replace the hard-coded setTimeout(1500) with a port-bindable
+    // probe. The HTTP server may have stopped responding (waitForBackendDown
+    // returned true) but the OS may still be holding the port (TIME_WAIT or
+    // zombie child). Wait up to 5s on a 200ms tick; on success the bind
+    // closes immediately so the total wait is usually <200ms.
+    const portFree = await waitForPortFree(backendPort(), 5000, 200, this.logger);
+    if (!portFree) {
+      return { ok: false, error: `backend port ${backendPort()} not released within 5s` };
+    }
     return this.startBackend();
   }
 }

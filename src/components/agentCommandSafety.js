@@ -96,6 +96,147 @@ const FORBIDDEN_TOP_LEVEL_COMMANDS = new Set([
 ])
 
 /**
+ * Explicit safe command shapes — a defense-in-depth whitelist.
+ *
+ * <p>A {@code run} command is considered safe (and skips the confirmation
+ * dialog) ONLY if all three checks pass:</p>
+ * <ol>
+ *   <li>{@code cmd.id} matches one of the shape's {@code idPattern}s.</li>
+ *   <li>{@code cmd.command} is in the shape's allowed {@code commands}.</li>
+ *   <li>{@code cmd.args} starts (in order, exact-match per slot) with the
+ *       shape's {@code argsPrefix}. The actual args array may have
+ *       <em>additional</em> tokens after the prefix; the prefix is the
+ *       minimum safe shape.</li>
+ * </ol>
+ *
+ * <p>These shapes mirror what the backend emits via
+ * {@code CommandSpec.trustedRun(...)} in the various {@code *LanguageAdapter}
+ * classes. The id is constructed by the backend as
+ * {@code "cmd-verify-quick:" + toolName} (or similar), so matching
+ * {@code /^cmd-verify-quick:/} covers all of {mvn, mvnw, ./mvnw, mvnw.cmd}.
+ * The command+args shape is re-validated here to defend against a
+ * corrupted / hostile payload that just sets a whitelisted id.</p>
+ *
+ * <p>Adding a new shape: add an entry below AND make sure the backend
+ * adapter that emits the corresponding {@code trustedRun} call is also
+ * updated. The two stay in lock-step on purpose.</p>
+ */
+export const EXPLICIT_SAFE_SHAPES = [
+  // ── Java (Maven) ────────────────────────────────────────────────────
+  // cmd-verify-quick:<tool>  →  <tool> -q -B compile -DskipTests -Dsurefire.skip=true
+  {
+    idPattern: /^cmd-verify-quick:/,
+    commands: ['mvn', 'mvnw', './mvnw', 'mvnw.cmd'],
+    argsPrefix: ['-q', '-B', 'compile', '-DskipTests'],
+  },
+  // cmd-verify-compile:<tool>  (mvn flavour)
+  {
+    idPattern: /^cmd-verify-compile:/,
+    commands: ['mvn', 'mvnw', './mvnw', 'mvnw.cmd'],
+    argsPrefix: ['-q', '-B', 'compile', '-DskipTests'],
+  },
+  // cmd-verify-test:<tool>  (mvn flavour)
+  {
+    idPattern: /^cmd-verify-test:/,
+    commands: ['mvn', 'mvnw', './mvnw', 'mvnw.cmd'],
+    argsPrefix: ['-q', '-DskipITs', '-Dsurefire.failIfNoSpecifiedTests=false', '-B', 'test'],
+  },
+
+  // ── Java/Other (Gradle) ─────────────────────────────────────────────
+  // cmd-verify-compile:<tool>  (gradle flavour)
+  {
+    idPattern: /^cmd-verify-compile:/,
+    commands: ['gradle', 'gradlew', './gradlew', 'gradlew.bat'],
+    argsPrefix: ['--no-daemon', '-q', 'compileJava', 'compileTestJava'],
+  },
+  // cmd-verify-test:<tool>  (gradle flavour)
+  {
+    idPattern: /^cmd-verify-test:/,
+    commands: ['gradle', 'gradlew', './gradlew', 'gradlew.bat'],
+    argsPrefix: ['--no-daemon', '-q', 'test'],
+  },
+
+  // ── Go ──────────────────────────────────────────────────────────────
+  // cmd-verify:go-build  →  go build ./...
+  {
+    idPattern: /^cmd-verify:go-build$/,
+    commands: ['go'],
+    argsPrefix: ['build', './...'],
+  },
+  // cmd-verify:go-test  →  go test ./...
+  {
+    idPattern: /^cmd-verify:go-test$/,
+    commands: ['go'],
+    argsPrefix: ['test', './...'],
+  },
+
+  // ── TypeScript ──────────────────────────────────────────────────────
+  // cmd-verify:tsc  →  npx --no-install tsc --noEmit
+  {
+    idPattern: /^cmd-verify:tsc$/,
+    commands: ['npx'],
+    argsPrefix: ['--no-install', 'tsc', '--noEmit'],
+  },
+  // cmd-verify:<framework>  →  npx --no-install <framework> [...]
+  // frameworks: vitest | jest | mocha | vitest? (fallback)
+  {
+    idPattern: /^cmd-verify:(vitest|jest|mocha|vitest\?)$/,
+    commands: ['npx'],
+    argsPrefix: ['--no-install'],
+  },
+
+  // ── Node ────────────────────────────────────────────────────────────
+  // cmd-verify:npm-test  →  npm test --silent
+  {
+    idPattern: /^cmd-verify:npm-test$/,
+    commands: ['npm'],
+    argsPrefix: ['test', '--silent'],
+  },
+
+  // ── Python ──────────────────────────────────────────────────────────
+  // cmd-verify:pytest  →  pytest -q --tb=short
+  {
+    idPattern: /^cmd-verify:pytest$/,
+    commands: ['pytest'],
+    argsPrefix: ['-q', '--tb=short'],
+  },
+]
+
+/**
+ * Test whether a {@code run} command matches the explicit-safe whitelist.
+ * Returns {@code true} if and only if id + command + args-prefix all line
+ * up with one of the {@link EXPLICIT_SAFE_SHAPES}.
+ *
+ * <p>Defence layers in order of decreasing trust:</p>
+ * <ol>
+ *   <li>This whitelist (most specific; narrow contract)</li>
+ *   <li>Backend {@code requires_confirmation} flag (set per-call by the
+ *       language adapter)</li>
+ *   <li>User session trust list (opt-in during a previous confirmation)</li>
+ *   <li>Blacklist regex scan (last-resort fuzzy match)</li>
+ * </ol>
+ */
+export function isExplicitlySafe(cmd) {
+  if (!cmd || cmd.action !== 'run') return false
+  const id = String(cmd.id || '')
+  const command = String(cmd.command || '').trim()
+  const args = Array.isArray(cmd.args) ? cmd.args.map((a) => String(a)) : []
+  if (!id || !command) return false
+
+  for (const shape of EXPLICIT_SAFE_SHAPES) {
+    if (!shape.idPattern.test(id)) continue
+    if (!shape.commands.includes(command)) continue
+    if (args.length < shape.argsPrefix.length) continue
+    let prefixOk = true
+    for (let i = 0; i < shape.argsPrefix.length; i++) {
+      if (args[i] !== shape.argsPrefix[i]) { prefixOk = false; break }
+    }
+    if (prefixOk) return true
+  }
+  return false
+}
+
+/**
  * Detect whether a {@code run} command should require user confirmation
  * before execution. Returns a human-readable reason, or {@code null} if
  * the command looks safe.
@@ -112,9 +253,19 @@ export function shouldRequireConfirmation(cmd, options = {}) {
   const args = Array.isArray(cmd.args) ? cmd.args.map(String) : []
   const fullCommandLine = [command, ...args].join(' ')
 
-  // 0) Trust list (session-scoped, localStorage backed). The user can opt
-  // into a pattern during a previous confirmation dialog ("trust for the
-  // rest of this session"). When a pattern matches, skip the prompt.
+  // 0a) Explicit whitelist — narrow contract: id + command + args-prefix
+  //     must line up with one of the EXPLICIT_SAFE_SHAPES entries. This is
+  //     the most specific signal and short-circuits the prompt for known
+  //     toolchain invocations (mvn test, go build, tsc, pytest, ...).
+  //     Defense-in-depth: even if the backend forgets to set
+  //     requires_confirmation=false, the shape re-check still applies.
+  if (isExplicitlySafe(cmd)) {
+    return null
+  }
+
+  // 0b) Trust list (session-scoped, localStorage backed). The user can opt
+  //     into a pattern during a previous confirmation dialog ("trust for the
+  //     rest of this session"). When a pattern matches, skip the prompt.
   const trusted = options.trustedPatterns || loadTrustedPatterns()
   if (trusted && trusted.length > 0) {
     for (const pattern of trusted) {
