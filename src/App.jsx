@@ -3179,6 +3179,20 @@ const handleDeleteSession = (id) => {
                       2
                     )
                   }}
+                  onInjectAssistantMessage={(content) => {
+                    // Inject a synthetic assistant message containing
+                    // __CMD__ into the chat flow so the auto-execution
+                    // useEffect picks it up and continues the multi-round
+                    // __CMD__ → [COMMAND_RESULTS] interaction.
+                    const id = `fix-cmd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+                    setMessages(prev => [...prev, {
+                      id,
+                      role: 'assistant',
+                      content,
+                      createdAt: new Date().toISOString(),
+                      _isComplete: false
+                    }])
+                  }}
                 />
               </div>
             )}
