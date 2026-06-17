@@ -5,7 +5,7 @@ import {
   FileTextOutlined, ReloadOutlined, FolderOpenOutlined, ToolOutlined,
   LoadingOutlined, StopOutlined, QuestionCircleOutlined
 } from '@ant-design/icons'
-import api, { getBackendHost } from '../auth'
+import api, { getBackendHost, getWsBaseUrl } from '../auth'
 
 const { Text } = Typography
 
@@ -71,9 +71,13 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
   }, [sessionId, issues, refresh])
 
   // ─────────────────────────────────────────────────────────────────
-  // Fix-task polling — fetch status + pending confirmations for any
-  // task we know about. As soon as a fresh confirmation appears and
-  // we haven't shown it yet, surface a modal.
+  // Fix-task polling — fetch PENDING CONFIRMATIONS only. Terminal
+  // state (COMPLETED/FAILED) is now delivered over the WebSocket
+  // subscription below; the poller used to GET /fix-task/{id} on
+  // every tick, but that work is fully covered by the WS push, so
+  // the only thing the poller still needs is to surface new
+  // confirmations to the modal — confirmations aren't yet pushed
+  // over the bus, so we still poll /pending-confirmations.
   // ─────────────────────────────────────────────────────────────────
   const pollTaskStates = useCallback(async () => {
     const entries = Object.entries(tasks)
@@ -81,18 +85,25 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
     for (const [issueId, t] of entries) {
       if (!t || !t.taskId) continue
       try {
-        const r = await api.get(
+        const pendingRes = await api.get(
           `/api/code-analysis/${sessionId}/fix-task/${t.taskId}/pending-confirmations`,
           { baseURL: getBackendHost() }
-        )
-        const data = r.data || {}
-        const pending = Array.isArray(data.confirmations) ? data.confirmations : []
-        // Update task cache
-        setTasks(prev => ({
+        ).catch(err => ({ data: { confirmations: [] }, _err: err }))
+        const pending = (pendingRes.data && Array.isArray(pendingRes.data.confirmations))
+          ? pendingRes.data.confirmations : []
+        // Refresh the cache's pending list only. status/phase
+        // come from the WebSocket; if the WS connection is broken
+        // the parent 2s `refresh()` will eventually re-read the
+        // issue from IssueStore and the "修复中" tag will clear
+        // on its own.
+        setTasks(prev => prev[issueId] ? {
           ...prev,
           [issueId]: { ...prev[issueId], pending, lastChecked: Date.now() }
-        }))
-        // Show the first unseen confirmation
+        } : prev)
+        // AWAITING_CONFIRMATION is not strictly "terminal" — the
+        // user can still reply and the task can transition to
+        // COMPLETED. Surface the modal if we haven't shown this
+        // confirmation yet.
         if (pending.length > 0 && !activeConfirm) {
           const c = pending[0]
           if (!seenConfirmRef.current.has(c.confirmation_id)) {
@@ -119,6 +130,119 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
     return () => clearInterval(id)
   }, [Object.keys(tasks).length, pollTaskStates])  // eslint-disable-line
 
+  // ─────────────────────────────────────────────────────────────────
+  // Fix-task WebSocket subscription — primary path for terminal
+  // status. The backend's FixTaskEventBus publishes one
+  // JSON envelope per phase transition over
+  //   ws://host/ws/fix-task/{taskId}
+  // and pushes a one-shot snapshot on connect so a tab that
+  // opens mid-flight sees the correct state immediately.
+  //
+  // For each active taskId we open one socket, parse each
+  // fix-task.phase / fix-task.snapshot message, update the task
+  // cache, and on terminal (COMPLETED/FAILED) mirror the state
+  // onto the issue. The poller above is intentionally kept as a
+  // defense-in-depth: if the WS handshake fails (corporate proxy
+  // stripping the Upgrade header, brief network blip) the next
+  // 2s `refresh()` tick will still observe the right issue
+  // status from IssueStore.
+  // ─────────────────────────────────────────────────────────────────
+  const wsRef = useRef(new Map())  // taskId → WebSocket
+  // Mirror the latest `tasks` snapshot so the WS message handler
+  // can map taskId → issueId without depending on the effect's
+  // `tasks` closure (which is captured at effect run time and
+  // would otherwise see a stale view).
+  const tasksRef = useRef(tasks)
+  useEffect(() => { tasksRef.current = tasks }, [tasks])
+
+  useEffect(() => {
+    const currentTaskIds = new Set()
+    for (const t of Object.values(tasks)) {
+      if (t && t.taskId) currentTaskIds.add(t.taskId)
+    }
+    // Close sockets for taskIds that are no longer active (task
+    // was cleaned up after reaching a terminal state, or the user
+    // closed the issue).
+    for (const [taskId, ws] of Array.from(wsRef.current.entries())) {
+      if (!currentTaskIds.has(taskId)) {
+        try { ws.close() } catch (_) { /* idempotent */ }
+        wsRef.current.delete(taskId)
+      }
+    }
+    // Open sockets for new taskIds. We do not auto-reconnect on
+    // close — keeps the implementation simple per AGENTS.md and
+    // matches the "poller is the safety net" design.
+    for (const taskId of currentTaskIds) {
+      if (wsRef.current.has(taskId)) continue
+      const token = encodeURIComponent(localStorage.getItem('token') || '')
+      const url = `${getWsBaseUrl()}/ws/fix-task/${taskId}?token=${token}`
+      let ws
+      try {
+        ws = new WebSocket(url)
+      } catch (e) {
+        // Browser refused to open the socket (e.g. invalid URL,
+        // mixed-content block). The poller above still covers
+        // this task.
+        continue
+      }
+      wsRef.current.set(taskId, ws)
+      ws.onmessage = (ev) => {
+        let data
+        try { data = JSON.parse(ev.data) } catch (_) { return }
+        if (!data || (data.type !== 'fix-task.phase'
+            && data.type !== 'fix-task.snapshot')) return
+        const status = (data.status || '').toLowerCase()
+        const phase = (data.phase || '').toLowerCase()
+        // Map taskId → issueId via the latest tasks snapshot.
+        let issueId = null
+        for (const [iid, tt] of Object.entries(tasksRef.current)) {
+          if (tt && tt.taskId === taskId) { issueId = iid; break }
+        }
+        if (!issueId) return
+        setTasks(prev => prev[issueId] ? {
+          ...prev,
+          [issueId]: {
+            ...prev[issueId],
+            status, phase, lastChecked: Date.now()
+          }
+        } : prev)
+        if (status === 'completed') {
+          message.success('修复任务已完成，代码已通过校验')
+          setIssues(prev => prev.map(i =>
+            i.issueId === issueId ? { ...i, status: 'fixed' } : i))
+          cleanupTask(issueId)
+          try { ws.close() } catch (_) {}
+          wsRef.current.delete(taskId)
+        } else if (status === 'failed') {
+          message.warning('修复任务校验未通过，已回到待处理')
+          setIssues(prev => prev.map(i =>
+            i.issueId === issueId ? { ...i, status: 'open' } : i))
+          cleanupTask(issueId)
+          try { ws.close() } catch (_) {}
+          wsRef.current.delete(taskId)
+        }
+      }
+      ws.onclose = () => {
+        // Drop the dead socket. If the task is still active the
+        // parent 2s `refresh()` will re-read the issue from
+        // IssueStore and the poller will keep an eye on pending
+        // confirmations.
+        wsRef.current.delete(taskId)
+      }
+      ws.onerror = () => { /* onclose will follow */ }
+    }
+  }, [tasks])
+
+  // Close all sockets when the component unmounts.
+  useEffect(() => {
+    return () => {
+      for (const ws of wsRef.current.values()) {
+        try { ws.close() } catch (_) {}
+      }
+      wsRef.current.clear()
+    }
+  }, [])
+
   const updateStatus = async (issue, nextStatus) => {
     setBusyId(issue.issueId)
     try {
@@ -138,19 +262,33 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
   }
 
   /**
-   * Dispatch a fix task to the code agent. Backend:
+   * Dispatch a fix task to the code agent. Backend (async path):
    *   1. marks the issue IN_PROGRESS
-   *   2. injects a structured user message into the chat session
-   *   3. runs the code agent end-to-end (read → plan → apply → verify)
-   *   4. scans the agent's final reply for [FIX_VERIFIED: <id>] /
-   *      [FIX_FAILED: <id>] markers and transitions the issue.
+   *   2. opens a FixTask row and returns its task_id
+   *   3. returns immediately (status: "started") — the actual
+   *      driver + chat-fallback runs on a background thread on
+   *      the server, so the browser no longer blocks on a long-
+   *      lived POST.
    *
-   * If neither marker is found, the issue stays in IN_PROGRESS and the
-   * user can mark it manually via the "标记已修复" / "取消" buttons.
+   * The terminal outcome (COMPLETED → fixed, FAILED → open) is
+   * observed by the WebSocket subscription declared above — the
+   * backend's FixTaskEventBus pushes a fix-task.phase event the
+   * moment the driver reaches COMPLETED|FAILED, so the UI updates
+   * within ~100ms of the actual transition (no more waiting for
+   * a 2s poll tick). The confirmation modal is still surfaced by
+   * the poller since confirmations aren't yet published on the
+   * bus.
+   *
+   * The synchronous error paths (issue not found, server down)
+   * are handled by the catch block.
    */
   const startFix = async (issue) => {
     setBusyId(issue.issueId)
-    // Optimistic transition: open → in_progress immediately.
+    // Optimistic transition: open → in_progress immediately so
+    // the UI doesn't flicker while the synchronous POST is in
+    // flight. The WebSocket subscription above will overwrite
+    // this with fixed/open the moment the backend's driver
+    // reaches COMPLETED|FAILED.
     setIssues(prev => prev.map(i =>
       i.issueId === issue.issueId ? { ...i, status: 'in_progress' } : i))
     try {
@@ -162,55 +300,29 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
       const data = res.data || {}
       const taskId = data.task_id || null
       if (taskId) {
-        // Register the task so we start polling for confirmations.
+        // Register the task so the poller starts watching it.
+        // status: 'running' is the post-FixTaskStore.createTask
+        // value; the next poll tick will overwrite it with the
+        // current task.status (also 'running' until the driver
+        // reaches a terminal phase).
         setTasks(prev => ({
           ...prev,
           [issue.issueId]: { taskId, status: data.task?.status || 'running', pending: [] }
         }))
       }
-      if (data.status === 'verified') {
-        message.success('修复任务已完成，代码已通过校验')
-        setIssues(prev => prev.map(i =>
-          i.issueId === issue.issueId ? { ...i, status: 'fixed' } : i))
-        if (taskId) cleanupTask(issue.issueId)
-      } else if (data.status === 'failed') {
-        message.warning('修复任务校验未通过，已回到待处理')
-        setIssues(prev => prev.map(i =>
-          i.issueId === issue.issueId ? { ...i, status: 'open' } : i))
-        if (taskId) cleanupTask(issue.issueId)
-      } else if (data.status === 'awaiting_confirmation') {
-        // The agent emitted <CONFIRM_REQUEST>. If the response already
-        // includes pending_confirmations, open the modal right away.
-        const pc = Array.isArray(data.pending_confirmations) ? data.pending_confirmations : []
-        if (pc.length > 0) {
-          const c = pc[0]
-          if (!seenConfirmRef.current.has(c.confirmation_id)) {
-            seenConfirmRef.current.add(c.confirmation_id)
-            setActiveConfirm({ ...c, issueId: issue.issueId })
-          }
-        }
-        message.info('CodeAgent 需要您确认一项选择，请查看弹窗')
-      } else if (data.status === 'dispatch_error') {
+      // After the async refactor, the synchronous response only
+      // contains status=started (or one of the synchronous error
+      // values below). Verified/Failed/Executing/Awaiting are no
+      // longer possible in the HTTP body — the poller picks them
+      // up on the next tick.
+      if (data.status === 'dispatch_error') {
         message.error('派发修复任务失败: ' + (data.message || '未知错误'))
         if (taskId) cleanupTask(issue.issueId)
-      } else if (data.status === 'executing') {
-        // CodeAgent returned __CMD__ — it needs the frontend to
-        // execute commands (read files, run tests, etc.) and send
-        // back [COMMAND_RESULTS]. Inject the response into the chat
-        // message flow so App.jsx's auto __CMD__ execution loop
-        // picks it up and continues the multi-round interaction.
-        const chatData = data.chat || {}
-        const responseText = chatData.response || ''
-        if (responseText && onInjectAssistantMessage) {
-          onInjectAssistantMessage(responseText)
-          message.info('CodeAgent 正在执行修复，请查看聊天面板中的命令执行进度')
-        } else {
-          message.info('修复任务已派发，CodeAgent 正在执行，可点击刷新查看进度')
-        }
+        // Roll back the optimistic in_progress.
+        setIssues(prev => prev.map(i =>
+          i.issueId === issue.issueId ? { ...i, status: 'open' } : i))
       } else {
-        // awaiting_verification: agent did not emit a marker. Leave
-        // the issue in IN_PROGRESS; user can poll or mark manually.
-        message.info('修复任务已派发，CodeAgent 正在执行，可点击刷新查看进度')
+        message.info('修复任务已派发，CodeAgent 正在执行，可在任务列表中查看进度')
       }
     } catch (e) {
       message.error('启动修复任务失败: ' + (e.response?.data?.message || e.message))
