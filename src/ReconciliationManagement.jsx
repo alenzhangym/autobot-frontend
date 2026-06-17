@@ -224,6 +224,46 @@ export default function ReconciliationManagement({ user, companies = [] }) {
     } finally { setExporting(false) }
   }
 
+  const handleExportFile = async (format) => {
+    try {
+      const values = await exportForm.validateFields()
+      if (!values.dateRange || values.dateRange.length !== 2) {
+        message.error('请选择日期范围')
+        return
+      }
+      setExporting(true)
+      const params = {
+        recType: activeTab,
+        dateFrom: values.dateRange[0].format('YYYY-MM-DD'),
+        dateTo: values.dateRange[1].format('YYYY-MM-DD'),
+        format,
+      }
+      if (effectiveCompanyId) params.companyId = effectiveCompanyId
+      if (activeTab === 'OUTBOUND' && values.customerName) params.customerName = values.customerName
+      if (activeTab === 'INBOUND' && values.supplierName) params.supplierName = values.supplierName
+      const res = await api.get('/erp/reconciliations/export/file', {
+        params,
+        responseType: 'blob',
+      })
+      const disposition = res.headers?.['content-disposition'] || ''
+      const match = disposition.match(/filename\*=UTF-8''([^;]+)/)
+      const filename = match ? decodeURIComponent(match[1]) : `reconciliations.${format}`
+      const url = window.URL.createObjectURL(new Blob([res.data]))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      window.URL.revokeObjectURL(url)
+      message.success(`已下载 ${format.toUpperCase()} 文件`)
+    } catch (e) {
+      if (e?.errorFields) return
+      const msg = e?.response?.data?.error || e.message
+      message.error('下载失败: ' + (e.response?.data instanceof Blob ? '服务器错误' : msg))
+    } finally { setExporting(false) }
+  }
+
   const renderItemRow = (rec, order, it, idx, isCompleted) => {
     const orderedQty = Number(it.qty || 0)
     const reconciledQty = Number(it.reconciledQty || 0)
@@ -553,10 +593,14 @@ export default function ReconciliationManagement({ user, companies = [] }) {
           title={<span><ExportOutlined /> 导出{activeTab === 'OUTBOUND' ? '出库' : '入库'}对账单</span>}
           open={exportOpen}
           onCancel={() => setExportOpen(false)}
-          onOk={handleExport}
-          okText="导出"
-          cancelText="取消"
-          confirmLoading={exporting}
+          footer={[
+            <Button key="cancel" onClick={() => setExportOpen(false)}>取消</Button>,
+            <Button key="csv" icon={<DownloadOutlined />} loading={exporting}
+              onClick={() => handleExportFile('csv')}>下载 CSV</Button>,
+            <Button key="xlsx" type="primary" icon={<DownloadOutlined />} loading={exporting}
+              onClick={() => handleExportFile('xlsx')}>下载 Excel</Button>,
+            <Button key="preview" loading={exporting} onClick={handleExport}>窗口中预览</Button>,
+          ]}
           width={520}
           destroyOnClose
         >
