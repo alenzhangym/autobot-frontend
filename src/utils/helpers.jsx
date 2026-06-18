@@ -789,7 +789,7 @@ export function stripAgentMarkers(content) {
 
 export function MarkdownContent({ content }) {
   return (
-    <div className="markdown-content" style={{ color: '#e3e3e3', fontSize: 14, lineHeight: 1.6 }}>
+    <div className="markdown-content" style={{ color: '#e3e3e3', fontSize: 14, lineHeight: 1.6, wordBreak: 'break-all', overflowWrap: 'anywhere' }}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
@@ -818,13 +818,20 @@ export function MarkdownContent({ content }) {
 
             if (!inline && match) {
               return (
-                <SyntaxHighlighter style={oneDark} language={match[1]} PreTag="div" {...props}>
+                <SyntaxHighlighter
+                  style={oneDark}
+                  language={match[1]}
+                  PreTag="div"
+                  wrapLongLines={true}
+                  customStyle={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', overflowWrap: 'anywhere', borderRadius: 8, margin: '8px 0' }}
+                  {...props}
+                >
                   {codeStr}
                 </SyntaxHighlighter>
               );
             }
             return (
-              <code style={{ background: '#222', padding: '2px 6px', borderRadius: 4, fontSize: 13 }} {...props}>
+              <code style={{ background: '#222', padding: '2px 6px', borderRadius: 4, fontSize: 13, wordBreak: 'break-all', overflowWrap: 'anywhere' }} {...props}>
                 {children}
               </code>
             );
@@ -883,7 +890,10 @@ export function MarkdownContent({ content }) {
             return <ul style={{ paddingLeft: 20, margin: '8px 0' }} {...props} />;
           },
           li({ node, ...props }) {
-            return <li style={{ margin: '4px 0' }} {...props} />;
+            return <li style={{ margin: '4px 0', overflowWrap: 'anywhere' }} {...props} />;
+          },
+          pre({ node, ...props }) {
+            return <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', overflowWrap: 'anywhere', background: '#1e1e1e', padding: 12, borderRadius: 8, margin: '8px 0', fontSize: 12 }} {...props} />;
           }
         }}
       >

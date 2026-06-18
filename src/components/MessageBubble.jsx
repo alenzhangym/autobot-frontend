@@ -24,6 +24,39 @@ const PRIORITY_TAG_COLOR = {
 };
 
 /**
+ * Normalise a message's timestamp into a short display string.
+ *
+ * Accepts any of:
+ *   - `msg.timestamp`  — string ISO, millis, or seconds
+ *   - `msg.createdAt`  — string ISO (Jackson default for `LocalDateTime`)
+ *   - `msg.created_at` — snake_case variant
+ *
+ * Returns "HH:MM" for today, "MM-DD HH:MM" for older messages,
+ * or `null` if no parseable timestamp is present.
+ */
+function formatMessageTime(msg) {
+  if (!msg) return null
+  const raw = msg.timestamp ?? msg.createdAt ?? msg.created_at
+  if (raw == null || raw === '') return null
+  let d
+  if (typeof raw === 'number') {
+    // Heuristic: > 1e12 means millis, otherwise seconds
+    d = new Date(raw > 1e12 ? raw : raw * 1000)
+  } else {
+    d = new Date(raw)
+  }
+  if (isNaN(d.getTime())) return null
+  const pad = (n) => String(n).padStart(2, '0')
+  const hh = pad(d.getHours())
+  const mm = pad(d.getMinutes())
+  const now = new Date()
+  const sameDay = d.getFullYear() === now.getFullYear()
+    && d.getMonth() === now.getMonth()
+    && d.getDate() === now.getDate()
+  return sameDay ? `${hh}:${mm}` : `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${hh}:${mm}`
+}
+
+/**
  * Renders the trailing "java-backend/.../X.java [已证实]" style evidence
  * as a monospaced path tag plus a green confirmation tag when present.
  */
@@ -312,7 +345,7 @@ function MessageBubble({ msg, onCopy, onRegenerate, onExpand, onDelete, sessionI
   // Early returns
   if (isPlan && msg.content && msg.content.plan) {
     return (
-      <PlanMessage content={msg.content} onDelete={onDelete} msgId={msg.id} />
+      <PlanMessage content={msg.content} onDelete={onDelete} msgId={msg.id} msg={msg} />
     );
   }
 
@@ -325,6 +358,9 @@ function MessageBubble({ msg, onCopy, onRegenerate, onExpand, onDelete, sessionI
           <div style={{ flex: 1, maxWidth: 'calc(100% - 50px)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
               <span style={{ color: '#888', fontSize: 12 }}>AutoBot</span>
+              {formatMessageTime(msg) && (
+                <span style={{ color: '#555', fontSize: 11 }}>{formatMessageTime(msg)}</span>
+              )}
               <Tag color="purple" style={{ fontSize: 10 }}>UI Render</Tag>
               <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
                 {onDelete && msg.id && (
@@ -378,10 +414,12 @@ function MessageBubble({ msg, onCopy, onRegenerate, onExpand, onDelete, sessionI
   return (
     <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexDirection: isUser ? 'row-reverse' : 'row' }}>
       <Avatar icon={isUser ? <UserOutlined /> : <RobotOutlined />} size={32} style={{ background: isUser ? '#555' : '#1677ff', flexShrink: 0 }} />
-      <div style={{ maxWidth: 'calc(100% - 50px)', flex: 1 }}>
+      <div style={{ maxWidth: 'calc(100% - 50px)', flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
           <span style={{ color: '#888', fontSize: 12 }}>{isUser ? 'You' : 'AutoBot'}</span>
-          {msg.timestamp && <span style={{ color: '#555', fontSize: 11 }}>{msg.timestamp}</span>}
+          {formatMessageTime(msg) && (
+            <span style={{ color: '#555', fontSize: 11 }}>{formatMessageTime(msg)}</span>
+          )}
           {!isUser && msg.model && <Tag style={{ fontSize: 10, margin: 0 }}>{msg.model}</Tag>}
           {!isUser && msg.__cmd?._parseErrors && (
             <Tooltip
@@ -403,7 +441,9 @@ function MessageBubble({ msg, onCopy, onRegenerate, onExpand, onDelete, sessionI
           background: isUser ? '#1a1a1a' : '#111', 
           borderRadius: 12, 
           padding: isUser ? '12px 16px' : '4px 0',
-          border: isUser ? '1px solid #2a2a2a' : 'none'
+          border: isUser ? '1px solid #2a2a2a' : 'none',
+          minWidth: 0,
+          overflow: 'hidden'
         }}>
           {msg.code && msg.code !== msg.content ? (
             <div style={{ marginBottom: 8 }}>
@@ -417,7 +457,7 @@ function MessageBubble({ msg, onCopy, onRegenerate, onExpand, onDelete, sessionI
           {msg.content && typeof msg.content === 'object' && !msg.content.plan && (
             msg.content.type === 'provenance_context'
               ? <ProvenanceContextView units={msg.content.units} />
-              : <div style={{ color: '#e3e3e3', fontSize: 14, whiteSpace: 'pre-wrap' }}>
+              : <div style={{ color: '#e3e3e3', fontSize: 14, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
                   {JSON.stringify(msg.content, null, 2)}
                 </div>
           )}
@@ -460,7 +500,7 @@ function MessageBubble({ msg, onCopy, onRegenerate, onExpand, onDelete, sessionI
   );
 }
 
-function PlanMessage({ content, onDelete, msgId }) {
+function PlanMessage({ content, onDelete, msgId, msg }) {
   const [expandedSteps, setExpandedSteps] = useState({});
   const plan = content.plan || [];
   const status = content.status;
@@ -510,11 +550,14 @@ function PlanMessage({ content, onDelete, msgId }) {
   };
 
   return (
-    <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
+    <div style={{ display: 'flex', gap: 10, marginBottom: 20, minWidth: 0 }}>
       <Avatar icon={<RobotOutlined />} size={32} style={{ background: '#1677ff', flexShrink: 0 }} />
-      <div style={{ flex: 1 }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
           <span style={{ color: '#888', fontSize: 12 }}>AutoBot</span>
+          {formatMessageTime(msg) && (
+            <span style={{ color: '#555', fontSize: 11 }}>{formatMessageTime(msg)}</span>
+          )}
           <Tag color={status === 'executed' || status === 'completed' ? 'green' : status === 'running' ? 'blue' : 'default'}>
             {status === 'executed' ? 'Completed' : status === 'running' ? 'Executing' : status}
           </Tag>
@@ -566,7 +609,7 @@ function PlanMessage({ content, onDelete, msgId }) {
             Plan Execution ({plan.length} steps)
           </span>
           
-          <Collapse ghost>
+          <Collapse ghost style={{ minWidth: 0 }}>
             {plan.map((step, idx) => {
               const stepKey = `step-${idx}`;
               const isExpanded = expandedSteps[stepKey];
@@ -575,22 +618,32 @@ function PlanMessage({ content, onDelete, msgId }) {
                 <Collapse.Panel
                   key={stepKey}
                   header={
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                      {getStatusIcon(step.status)}
-                      <span style={{ color: getStatusColor(step.status), fontWeight: 500 }}>
-                        Step {step.step || idx + 1}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, flexWrap: 'wrap' }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                        {getStatusIcon(step.status)}
+                        <span style={{ color: getStatusColor(step.status), fontWeight: 500 }}>
+                          Step {step.step || idx + 1}
+                        </span>
                       </span>
-                      <Tag style={{ fontSize: 10 }}>{step.agent}</Tag>
-                      <span style={{ color: '#888', fontSize: 12, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <Tag style={{ fontSize: 10, flexShrink: 0, margin: 0 }}>{step.agent}</Tag>
+                      <span style={{
+                        color: '#888',
+                        fontSize: 12,
+                        flex: '1 1 100%',
+                        minWidth: 0,
+                        wordBreak: 'break-all',
+                        overflowWrap: 'anywhere',
+                        display: 'block'
+                      }}>
                         {step.goal}
                       </span>
                     </div>
                   }
                 >
-                  <div style={{ padding: '8px 0' }}>
-                    <div style={{ marginBottom: 12 }}>
+                  <div style={{ padding: '8px 0', minWidth: 0, overflow: 'hidden' }}>
+                    <div style={{ marginBottom: 12, minWidth: 0 }}>
                       <span style={{ color: '#888', fontSize: 11, fontWeight: 600 }}>Goal</span>
-                      <div style={{ color: '#e3e3e3', fontSize: 13 }}>{step.goal}</div>
+                      <div style={{ color: '#e3e3e3', fontSize: 13, wordBreak: 'break-all', overflowWrap: 'anywhere', whiteSpace: 'pre-wrap', maxWidth: '100%' }}>{step.goal}</div>
                     </div>
                     
                     {step.args && Object.keys(step.args).length > 0 && (
@@ -612,9 +665,9 @@ function PlanMessage({ content, onDelete, msgId }) {
                     )}
                     
                     {step.thought && (
-                      <div style={{ marginBottom: 12 }}>
+                      <div style={{ marginBottom: 12, minWidth: 0 }}>
                         <span style={{ color: '#888', fontSize: 11, fontWeight: 600 }}>Thought</span>
-                        <div style={{ color: '#aaa', fontSize: 12, fontStyle: 'italic', whiteSpace: 'pre-wrap' }}>
+                        <div style={{ color: '#aaa', fontSize: 12, fontStyle: 'italic', whiteSpace: 'pre-wrap', wordBreak: 'break-all', overflowWrap: 'anywhere' }}>
                           {step.thought}
                         </div>
                       </div>
