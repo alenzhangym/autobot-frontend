@@ -718,10 +718,10 @@ function ExportResultView({ data }) {
                       <th style={{ padding: 6, textAlign: 'left' }}>型号</th>
                       <th style={{ padding: 6, textAlign: 'left', width: 100 }}>客户料号</th>
                       <th style={{ padding: 6, textAlign: 'left', width: 100 }}>厂家</th>
-                      <th style={{ padding: 6, textAlign: 'left', width: 80 }}>仓位</th>
-                      <th style={{ padding: 6, textAlign: 'right', width: 80 }}>数量</th>
-                      <th style={{ padding: 6, textAlign: 'right', width: 90 }}>单价</th>
+                      <th style={{ padding: 6, textAlign: 'right', width: 80 }}>对账数量</th>
+                      <th style={{ padding: 6, textAlign: 'right', width: 90 }}>对账单价</th>
                       <th style={{ padding: 6, textAlign: 'right', width: 100 }}>小计</th>
+                      <th style={{ padding: 6, textAlign: 'left', width: 150 }}>对账时间</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -732,10 +732,10 @@ function ExportResultView({ data }) {
                         <td style={{ padding: 6, fontFamily: 'monospace' }}>{it.model || '-'}</td>
                         <td style={{ padding: 6 }}>{it.customerPartNo || '-'}</td>
                         <td style={{ padding: 6 }}>{it.manufacturer || '-'}</td>
-                        <td style={{ padding: 6 }}>{it.location || '-'}</td>
                         <td style={{ padding: 6, textAlign: 'right' }}>{fmtQty(it.qty)}</td>
                         <td style={{ padding: 6, textAlign: 'right' }}>¥{Number(it.unitPrice).toFixed(4)}</td>
                         <td style={{ padding: 6, textAlign: 'right' }}>{fmtMoney(it.subtotal)}</td>
+                        <td style={{ padding: 6, color: '#9aa0a6' }}>{it.reconciledAt ? dayjs(it.reconciledAt).format('YYYY-MM-DD HH:mm:ss') : '-'}</td>
                       </tr>
                     ))}
                   </tbody>
