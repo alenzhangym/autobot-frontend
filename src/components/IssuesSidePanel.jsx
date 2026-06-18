@@ -1,12 +1,14 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react'
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { Card, List, Tag, Space, Typography, Button, Empty, Spin, Tooltip, message, Segmented, Modal, Radio } from 'antd'
 import {
   CheckCircleOutlined, CloseCircleOutlined, MinusCircleOutlined,
   FileTextOutlined, ReloadOutlined, FolderOpenOutlined, ToolOutlined,
-  LoadingOutlined, StopOutlined, QuestionCircleOutlined
+  LoadingOutlined, StopOutlined, QuestionCircleOutlined,
+  BranchesOutlined
 } from '@ant-design/icons'
 import api, { getBackendHost, getWsBaseUrl } from '../auth'
 import FixSummaryCard from './FixSummaryCard'
+import FixTaskStateMachine from './FixTaskStateMachine'
 
 const { Text } = Typography
 
@@ -60,6 +62,41 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
   // fixed issue row keeps a "查看修复结果" link that re-opens
   // it. Entries stay in here until the panel unmounts.
   const [summaries, setSummaries] = useState({})  // issueId -> summary obj
+  // Accumulated fix-task phase events per issueId, fed by the
+  // WebSocket subscription above. Each entry is
+  //   { phase, status, ts, note }
+  // keyed off the same issueId as `tasks`. The FixTaskStateMachine
+  // component renders this as a timeline. We keep it in React
+  // state (not the in-memory `tasks` map) so that
+  // IssueItem-spawned modals see the full trajectory without
+  // having to lift the data up to the parent.
+  //
+  // Reset semantics:
+  //   - `fix-task.phase` events append (no dedup; backend ts
+  //     + phase pair is unique per transition).
+  //   - `fix-task.snapshot` seeds with a single entry ONLY if
+  //     the array is empty (i.e. a tab that connects mid-flight
+  //     and missed the earlier events). If we already have
+  //     accumulated events, the snapshot is a no-op (preserves
+  //     history across WS reconnects).
+  //
+  // On a hard page reload the phases for already-completed tasks
+  // are lost (the WS reconnect only sends the current snapshot,
+  // not the past events). This is a known limitation; for
+  // in-progress tasks it is irrelevant.
+  const [phaseLogs, setPhaseLogs] = useState({})  // issueId -> [{phase, status, ts, note}]
+  // The currently-shown state-machine timeline modal. One at a
+  // time. The shape is:
+  //   {
+  //     issueId, sessionId, taskId,  // for backend fetch
+  //     backendPhases: [...],         // source-of-truth from GET
+  //     loading: bool,                // true while fetch in flight
+  //   }
+  // The displayed phases are computed by merging backendPhases
+  // (canonical) with phaseLogs[issueId] (live WS tail) so a tab
+  // that's open during the task sees the full picture and the
+  // user can keep the modal open while more events stream in.
+  const [stateMachineModal, setStateMachineModal] = useState(null)
 
   const refresh = useCallback(async () => {
     if (!sessionId) {
@@ -143,6 +180,95 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
       }
     }
   }, [sessionId, tasks, activeConfirm])
+
+  // Fetch the state-machine timeline from the backend whenever
+  // the modal opens for a fresh issueId. The backend is the
+  // source of truth — the WS events we accumulated in
+  // phaseLogs are lossy on reconnect. The merge in render
+  // combines backend (canonical) with phaseLogs (live tail).
+  //
+  // We key the effect on stateMachineModal.issueId rather than
+  // the whole object so re-renders triggered by setLoading or
+  // setBackendPhases don't re-fetch. We use a ref-equivalent
+  // guard to discard the result if the user has already
+  // closed the modal by the time the fetch resolves (avoids
+  // a setState on a closed modal — a benign no-op but still
+  // noise on the console).
+  useEffect(() => {
+    if (!stateMachineModal) return
+    const { issueId, sessionId: smSessionId, taskId } = stateMachineModal
+    if (!smSessionId || !taskId) {
+      setStateMachineModal(sm => sm
+        ? { ...sm, loading: false, backendPhases: [] } : sm)
+      return
+    }
+    let cancelled = false
+    setStateMachineModal(sm => sm
+      ? { ...sm, loading: true, backendPhases: [] } : sm)
+    api.get(`/api/code-analysis/${smSessionId}/fix-task/${taskId}`)
+      .then(res => {
+        if (cancelled) return
+        const timeline = res?.data?.task?.state_machine_timeline
+        if (!Array.isArray(timeline)) {
+          setStateMachineModal(sm => sm
+            ? { ...sm, loading: false, backendPhases: [] } : sm)
+          return
+        }
+        // Normalise the backend payload into the same shape
+        // as phaseLogs entries:
+        //   { phase (upper-case), status, ts (epoch ms), note }
+        // The backend ships ts as ISO-8601 (consistent with
+        // the other created_at/updated_at fields on the same
+        // payload); phaseLogs uses epoch ms. FixTaskStateMachine
+        // only knows the latter, so we parse on the way in.
+        // status is not per-transition in the store; we
+        // synthesise it from the task's current status (the
+        // last entry inherits the terminal status, everything
+        // else is "RUNNING"). The store's per-task status
+        // lives at res.data.task.status.
+        const taskStatus = (res?.data?.task?.status || '').toUpperCase()
+        const normalised = timeline.map((e, i) => {
+          const isLast = i === timeline.length - 1
+          return {
+            phase: (e.phase || '').toUpperCase(),
+            status: isLast && taskStatus ? taskStatus : 'RUNNING',
+            ts: e.ts ? new Date(e.ts).getTime() : Date.now(),
+            note: e.note || ''
+          }
+        })
+        setStateMachineModal(sm => sm
+          ? { ...sm, loading: false, backendPhases: normalised } : sm)
+      })
+      .catch(() => {
+        // Fetch failure is non-fatal — the modal still
+        // renders the live phaseLogs we accumulated via WS.
+        if (cancelled) return
+        setStateMachineModal(sm => sm
+          ? { ...sm, loading: false, backendPhases: [] } : sm)
+      })
+    return () => { cancelled = true }
+  }, [stateMachineModal && stateMachineModal.issueId])
+
+  // Merge the backend timeline (canonical, fetched on modal
+  // open) with the live phaseLogs (WS tail appended while the
+  // modal stays open). Hoisted out of the JSX IIFE to keep
+  // useMemo's hook order stable. See the modal body for the
+  // merge rules.
+  const mergedTimeline = useMemo(() => {
+    if (!stateMachineModal) return []
+    const { issueId, backendPhases, loading } = stateMachineModal
+    const live = phaseLogs[issueId] || []
+    if (loading && (!backendPhases || backendPhases.length === 0)) {
+      return live
+    }
+    if (!backendPhases || backendPhases.length === 0) {
+      return live
+    }
+    if (live.length === 0) return backendPhases
+    const lastBackendTs = backendPhases[backendPhases.length - 1].ts
+    const newLive = live.filter(p => p.ts > lastBackendTs)
+    return [...backendPhases, ...newLive]
+  }, [stateMachineModal, phaseLogs])
 
   useEffect(() => {
     if (Object.keys(tasks).length === 0) return
@@ -233,6 +359,45 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
             && data.type !== 'fix-task.snapshot') return
         const status = (data.status || '').toLowerCase()
         const phase = (data.phase || '').toLowerCase()
+        // Append to the state-machine trajectory log. We do
+        // this for BOTH `phase` and `snapshot` events so a tab
+        // that connects mid-flight at least sees the current
+        // phase (snapshot seed). The snapshot is a no-op when
+        // the log is non-empty (preserves history across WS
+        // reconnects).
+        //
+        // The backend serialises phase/status as upper-case
+        // ("ANALYZING", "RUNNING"). The existing `phase` and
+        // `status` variables here are lower-cased for the
+        // `tasks` state; for the trajectory we keep the
+        // upper-case form to match FixTaskStateMachine's color
+        // table and the user's expectations (which come from
+        // the same names on the backend).
+        const phaseUpper = (data.phase || '').toUpperCase()
+        const statusUpper = (data.status || '').toUpperCase()
+        setPhaseLogs(prev => {
+          const cur = prev[issueId] || []
+          if (data.type === 'fix-task.snapshot') {
+            // Tab connected mid-flight: only seed if we have
+            // nothing yet. The snapshot carries the current
+            // phase as a single entry.
+            if (cur.length > 0) return prev
+            return { ...prev,
+              [issueId]: [{ phase: phaseUpper, status: statusUpper,
+                ts: data.ts || Date.now(),
+                note: data.note || '(snapshot)' }] }
+          }
+          // `fix-task.phase`: append. Backend never re-sends the
+          // same (ts, phase) pair for the same task, so we don't
+          // need to dedup. Use a functional setState form to
+          // avoid races between two events arriving in quick
+          // succession.
+          return { ...prev,
+            [issueId]: [...cur,
+              { phase: phaseUpper, status: statusUpper,
+                ts: data.ts || Date.now(),
+                note: data.note || '' }] }
+        })
         setTasks(prev => prev[issueId] ? {
           ...prev,
           [issueId]: {
@@ -494,6 +659,32 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
                   ? () => setSummaryModal({ issueId: issue.issueId,
                       summary: summaries[issue.issueId] })
                   : null}
+                // State-machine timeline. We surface the button
+                // for both in_progress (live trajectory) and
+                // fixed (post-mortem) issues, as long as we have
+                // at least one phase event to show. For a
+                // task that completed before this tab connected
+                // (no events accumulated), the button is hidden
+                // — the trajectory is gone in that case.
+                //
+                // We always pass sessionId + taskId so the modal
+                // can refetch the canonical timeline from the
+                // backend; the WS-accumulated phaseLogs only
+                // covers events the current tab observed.
+                onViewStateMachine={
+                  ((phaseLogs[issue.issueId] || []).length > 0
+                   || (tasks[issue.issueId] || {}).taskId
+                   || (summaries[issue.issueId] || {}).taskId)
+                    ? () => setStateMachineModal({
+                        issueId: issue.issueId,
+                        sessionId,
+                        taskId: (tasks[issue.issueId] || {}).taskId
+                             || (summaries[issue.issueId] || {}).taskId
+                             || null,
+                        backendPhases: [],
+                        loading: true
+                      })
+                    : null}
               />
             )}
           />
@@ -528,6 +719,51 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
           />
         )}
       </Modal>
+      {/* Fix-task state-machine timeline. The displayed phases
+          are a merge of two sources:
+            1. backendPhases — fetched from
+               GET /api/code-analysis/{sessionId}/fix-task/{taskId}.
+               This is the canonical, server-side record; it
+               survives page reloads, contains the original ISO
+               timestamps from the driver, and is the only
+               place REPLAN reasons from a previous tab session
+               are visible.
+            2. phaseLogs[issueId] — events streamed live to this
+               tab via the WebSocket. These are the most recent
+               transitions; anything with a ts strictly newer
+               than the backend's last entry is appended.
+          On fetch failure (or for a task with no backend
+          history yet), we fall back to the live phaseLogs
+          alone. */}
+      <Modal
+        open={!!stateMachineModal}
+        onCancel={() => setStateMachineModal(null)}
+        footer={null}
+        width={680}
+        destroyOnClose
+        title={
+          stateMachineModal && (
+            <Space>
+              <span>状态机轨迹</span>
+              {stateMachineModal.taskId && (
+                <Text type="secondary" style={{ fontSize: 12 }} copyable>
+                  {stateMachineModal.taskId}
+                </Text>
+              )}
+              {stateMachineModal.loading && (
+                <Spin size="small" />
+              )}
+            </Space>
+          )
+        }
+      >
+        {stateMachineModal && (
+          <FixTaskStateMachine
+            phases={mergedTimeline}
+            loading={stateMachineModal.loading && mergedTimeline.length === 0}
+          />
+        )}
+      </Modal>
     </div>
   )
 }
@@ -540,7 +776,7 @@ function emptyDescription(filter, counts) {
   return '该筛选下没有问题'
 }
 
-function IssueItem({ issue, busy, onJump, onStartFix, onMarkFixed, onMarkIgnored, onReopen, onViewSummary }) {
+function IssueItem({ issue, busy, onJump, onStartFix, onMarkFixed, onMarkIgnored, onReopen, onViewSummary, onViewStateMachine }) {
   const status = issue.status || 'open'
   const tag = STATUS_TAG[status] || STATUS_TAG.open
   const isResolved = status === 'fixed' || status === 'ignored'
@@ -621,10 +857,16 @@ function IssueItem({ issue, busy, onJump, onStartFix, onMarkFixed, onMarkIgnored
               loading={busy} onClick={onMarkFixed}>标记已修复</Button>
             <Button size="small" icon={<StopOutlined />}
               loading={busy} onClick={onReopen}>取消</Button>
+            {onViewStateMachine && (
+              <Tooltip title="查看状态机轨迹（含 REPLAN 回退）">
+                <Button size="small" icon={<BranchesOutlined />}
+                  onClick={onViewStateMachine}>状态机</Button>
+              </Tooltip>
+            )}
           </>
         )}
 
-        {/* fixed / ignored → 重新打开 + 可选的查看修复结果 */}
+        {/* fixed / ignored → 重新打开 + 可选的查看修复结果 / 状态机 */}
         {isResolved && (
           <>
             <Button size="small" loading={busy} onClick={busy ? undefined : onReopen}>
@@ -634,6 +876,12 @@ function IssueItem({ issue, busy, onJump, onStartFix, onMarkFixed, onMarkIgnored
               <Button size="small" type="link" onClick={onViewSummary}>
                 查看修复结果
               </Button>
+            )}
+            {onViewStateMachine && (
+              <Tooltip title="查看状态机轨迹（含 REPLAN 回退）">
+                <Button size="small" icon={<BranchesOutlined />}
+                  onClick={onViewStateMachine}>状态机</Button>
+              </Tooltip>
             )}
           </>
         )}
