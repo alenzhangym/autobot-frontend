@@ -6,6 +6,7 @@ import {
   LoadingOutlined, StopOutlined, QuestionCircleOutlined
 } from '@ant-design/icons'
 import api, { getBackendHost, getWsBaseUrl } from '../auth'
+import FixSummaryCard from './FixSummaryCard'
 
 const { Text } = Typography
 
@@ -40,6 +41,25 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
   // Tracks the highest confirmation id we've already shown for a task so
   // we don't pop the same modal twice.
   const seenConfirmRef = useRef(new Set())
+  // Latest `fix-task.completed` summary per issueId. The
+  // WebSocket subscription below stores the most recent one
+  // here when the backend's FixTaskEventBus publishes
+  // `fix-task.completed`. We open a Modal so the user can see
+  // the diff and verification result as a single card — this
+  // is the only place the actual machine-verified outcome is
+  // surfaced (the `fix-task.phase` events only carry phase
+  // names like "COMPLETED" without the diff body).
+  const [summaryModal, setSummaryModal] = useState(null)  // { issueId, summary }
+  // Tracks issueIds we've already shown the summary modal for
+  // in this session so the same card doesn't auto-pop twice
+  // if the WS reconnects. The user can still re-open it via
+  // the "查看修复结果" button on the fixed issue.
+  const seenSummaryRef = useRef(new Set())
+  // Persistent cache of the latest summary per issueId, so
+  // that dismissing the modal does not lose the data — the
+  // fixed issue row keeps a "查看修复结果" link that re-opens
+  // it. Entries stay in here until the panel unmounts.
+  const [summaries, setSummaries] = useState({})  // issueId -> summary obj
 
   const refresh = useCallback(async () => {
     if (!sessionId) {
@@ -189,16 +209,30 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
       ws.onmessage = (ev) => {
         let data
         try { data = JSON.parse(ev.data) } catch (_) { return }
-        if (!data || (data.type !== 'fix-task.phase'
-            && data.type !== 'fix-task.snapshot')) return
-        const status = (data.status || '').toLowerCase()
-        const phase = (data.phase || '').toLowerCase()
+        if (!data) return
         // Map taskId → issueId via the latest tasks snapshot.
         let issueId = null
         for (const [iid, tt] of Object.entries(tasksRef.current)) {
           if (tt && tt.taskId === taskId) { issueId = iid; break }
         }
         if (!issueId) return
+        if (data.type === 'fix-task.completed') {
+          // Heavyweight summary: contains diffs and verification.
+          // Stash it per-issueId and pop the modal. We dedupe by
+          // taskId+ts so a WS reconnect (which re-sends the
+          // snapshot but not the completed event — yet, the
+          // server could replay it) doesn't double-show.
+          const key = `${taskId}:${data.ts || 0}`
+          if (seenSummaryRef.current.has(key)) return
+          seenSummaryRef.current.add(key)
+          setSummaries(prev => ({ ...prev, [issueId]: data }))
+          setSummaryModal({ issueId, summary: data })
+          return
+        }
+        if (data.type !== 'fix-task.phase'
+            && data.type !== 'fix-task.snapshot') return
+        const status = (data.status || '').toLowerCase()
+        const phase = (data.phase || '').toLowerCase()
         setTasks(prev => prev[issueId] ? {
           ...prev,
           [issueId]: {
@@ -456,6 +490,10 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
                 onMarkFixed={() => updateStatus(issue, 'fixed')}
                 onMarkIgnored={() => updateStatus(issue, 'ignored')}
                 onReopen={() => updateStatus(issue, 'open')}
+                onViewSummary={summaries[issue.issueId]
+                  ? () => setSummaryModal({ issueId: issue.issueId,
+                      summary: summaries[issue.issueId] })
+                  : null}
               />
             )}
           />
@@ -470,6 +508,26 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
         onConfirm={(choiceId) => submitConfirmation(activeConfirm, choiceId)}
         busy={!!activeConfirm && busyId === activeConfirm.issueId}
       />
+      {/* Fix-task completed summary. The backend's
+          FixTaskEventBus pushes one `fix-task.completed` event
+          per task (carrying the diffs + verification result).
+          We surface it as a modal so the user can see exactly
+          what changed and whether the build passed. */}
+      <Modal
+        open={!!summaryModal}
+        onCancel={() => setSummaryModal(null)}
+        footer={null}
+        width={760}
+        title={null}
+        destroyOnClose
+      >
+        {summaryModal && (
+          <FixSummaryCard
+            summary={summaryModal.summary}
+            onClose={() => setSummaryModal(null)}
+          />
+        )}
+      </Modal>
     </div>
   )
 }
@@ -482,7 +540,7 @@ function emptyDescription(filter, counts) {
   return '该筛选下没有问题'
 }
 
-function IssueItem({ issue, busy, onJump, onStartFix, onMarkFixed, onMarkIgnored, onReopen }) {
+function IssueItem({ issue, busy, onJump, onStartFix, onMarkFixed, onMarkIgnored, onReopen, onViewSummary }) {
   const status = issue.status || 'open'
   const tag = STATUS_TAG[status] || STATUS_TAG.open
   const isResolved = status === 'fixed' || status === 'ignored'
@@ -566,11 +624,18 @@ function IssueItem({ issue, busy, onJump, onStartFix, onMarkFixed, onMarkIgnored
           </>
         )}
 
-        {/* fixed / ignored → 重新打开 */}
+        {/* fixed / ignored → 重新打开 + 可选的查看修复结果 */}
         {isResolved && (
-          <Button size="small" loading={busy} onClick={busy ? undefined : onReopen}>
-            重新打开
-          </Button>
+          <>
+            <Button size="small" loading={busy} onClick={busy ? undefined : onReopen}>
+              重新打开
+            </Button>
+            {onViewSummary && (
+              <Button size="small" type="link" onClick={onViewSummary}>
+                查看修复结果
+              </Button>
+            )}
+          </>
         )}
       </div>
     </Card>
