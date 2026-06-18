@@ -170,7 +170,7 @@ export default function InboundOrderManagement({ user, companies = [] }) {
       const params = { supplierName, limit: 100 }
       if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
       const res = await api.get('/erp/purchase-orders', { params })
-      setPurchaseOrders(res.data.data || [])
+      setPurchaseOrders((res.data.data || []).filter(po => po.status !== 'RECEIVED'))
     } catch (e) { /* ignore */ }
     setPoLoading(false)
   }
@@ -224,7 +224,7 @@ export default function InboundOrderManagement({ user, companies = [] }) {
       const params = { supplierName, limit: 100 }
       if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
       const res = await api.get('/erp/purchase-orders', { params })
-      const list = res.data.data || []
+      const list = (res.data.data || []).filter(po => po.status !== 'RECEIVED')
       setPurchaseOrders(list)
       await buildItemsFromPurchaseOrders(list)
     } catch (e) { /* ignore */ }

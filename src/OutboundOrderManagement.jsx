@@ -191,7 +191,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
       const params = { customerId, limit: 100 }
       if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
       const res = await api.get('/erp/sales-orders', { params })
-      setSalesOrders(res.data.data || [])
+      setSalesOrders((res.data.data || []).filter(so => so.status !== 'SHIPPED'))
     } catch (e) { /* ignore */ }
     setSoLoading(false)
   }
@@ -324,7 +324,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
       const params = { customerId, limit: 100 }
       if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
       const res = await api.get('/erp/sales-orders', { params })
-      const list = res.data.data || []
+      const list = (res.data.data || []).filter(so => so.status !== 'SHIPPED')
       setSalesOrders(list)
       await buildItemsFromSalesOrders(list)
     } catch (e) { /* ignore */ }

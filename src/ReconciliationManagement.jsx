@@ -17,7 +17,7 @@ export default function ReconciliationManagement({ user, companies = [] }) {
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
   const [loading, setLoading] = useState(false)
-  const [statusFilter, setStatusFilter] = useState(null)
+  const [statusFilter, setStatusFilter] = useState('PENDING')
   const [pendingCount, setPendingCount] = useState(0)
   const [expandedDetails, setExpandedDetails] = useState({})
   const [batchDraft, setBatchDraft] = useState({})
@@ -618,11 +618,23 @@ export default function ReconciliationManagement({ user, companies = [] }) {
             </Form.Item>
             {activeTab === 'OUTBOUND' ? (
               <Form.Item name="customerName" label="客户 (可选)">
-                <Input placeholder="如: 华强电子 (留空 = 全部客户)" allowClear />
+                <Select
+                  allowClear
+                  showSearch
+                  placeholder="请选择客户 (留空 = 全部客户)"
+                  optionFilterProp="label"
+                  options={customers.map(c => ({ value: c.name, label: c.name }))}
+                />
               </Form.Item>
             ) : (
               <Form.Item name="supplierName" label="供应商 (可选)">
-                <Input placeholder="如: 岑科科技 (留空 = 全部供应商)" allowClear />
+                <Select
+                  allowClear
+                  showSearch
+                  placeholder="请选择供应商 (留空 = 全部供应商)"
+                  optionFilterProp="label"
+                  options={suppliers.map(s => ({ value: s.name, label: s.name }))}
+                />
               </Form.Item>
             )}
             <div style={{ color: '#888', fontSize: 12 }}>
@@ -666,66 +678,76 @@ function ExportResultView({ data }) {
     <div>
       <div style={{ marginBottom: 16, padding: '10px 12px', background: '#1a1a2e', borderRadius: 8, color: '#ccc' }}>
         📊 合计: <b style={{ color: '#69b1ff' }}>{data.totalReconciliations}</b> 个对账单,
-        <b style={{ color: '#69b1ff' }}> {data.totalBatches}</b> 个对账批次,
-        <b style={{ color: '#69b1ff' }}> {data.totalItems}</b> 条对账明细,
+        <b style={{ color: '#69b1ff' }}> {data.totalItems}</b> 条录入批次明细,
         总金额 <b style={{ color: '#52c41a' }}>{fmtMoney(data.grandTotal)}</b>
       </div>
-      {recs.map(rec => (
-        <div key={rec.reconciliationId} style={{ marginBottom: 18, background: '#0d0d0d', border: '1px solid #222', borderRadius: 6, padding: 12 }}>
-          <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 10, color: '#ccc', fontSize: 13 }}>
-            <Text code style={{ color: '#69b1ff' }}>{rec.recNumber}</Text>
-            <Tag color={rec.status === 'COMPLETED' ? 'green' : 'orange'}>{rec.status}</Tag>
-            {rec.customerName && <span>客户: {rec.customerName}</span>}
-            {rec.supplierName && <span>供应商: {rec.supplierName}</span>}
-            <span>对账单金额: {fmtMoney(rec.totalAmount)}</span>
-            <span style={{ color: '#888' }}>创建: {rec.createdAt ? dayjs(rec.createdAt).format('YYYY-MM-DD HH:mm') : '-'}</span>
-            {rec.completedAt && <span style={{ color: '#888' }}>完成: {dayjs(rec.completedAt).format('YYYY-MM-DD HH:mm')}</span>}
-          </div>
-          {(rec.orders || []).map(order => {
-            const items = order.reconciliationItems || []
-            if (items.length === 0) return null
-            return (
-              <div key={order.orderId} style={{ marginBottom: 10 }}>
+      {recs.map(rec => {
+        const rows = rec.itemRows || []
+        // 按订单分组,便于在预览里分块显示
+        const grouped = {}
+        rows.forEach(r => {
+          const key = r.orderId || '-'
+          if (!grouped[key]) grouped[key] = { order: r, items: [] }
+          grouped[key].items.push(r)
+        })
+        const groups = Object.values(grouped)
+        return (
+          <div key={rec.reconciliationId} style={{ marginBottom: 18, background: '#0d0d0d', border: '1px solid #222', borderRadius: 6, padding: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 10, color: '#ccc', fontSize: 13 }}>
+              <Text code style={{ color: '#69b1ff' }}>{rec.recNumber}</Text>
+              <Tag color={rec.status === 'COMPLETED' ? 'green' : 'orange'}>{rec.status}</Tag>
+              {rec.customerName && <span>客户: {rec.customerName}</span>}
+              {rec.supplierName && <span>供应商: {rec.supplierName}</span>}
+              <span>对账单金额: {fmtMoney(rec.totalAmount)}</span>
+              <span style={{ color: '#888' }}>创建: {rec.createdAt ? dayjs(rec.createdAt).format('YYYY-MM-DD HH:mm') : '-'}</span>
+              {rec.completedAt && <span style={{ color: '#888' }}>完成: {dayjs(rec.completedAt).format('YYYY-MM-DD HH:mm')}</span>}
+            </div>
+            {groups.map(g => (
+              <div key={g.order.orderId} style={{ marginBottom: 10 }}>
                 <div style={{ color: '#888', fontSize: 11, marginBottom: 4 }}>
-                  单号: <Text code style={{ color: '#69b1ff' }}>{order.orderNumber}</Text>
-                  {order.orderDate && <span> · 订单日期: {order.orderDate}</span>}
-                  {order.shipDate && <span> · 发货日期: {order.shipDate}</span>}
-                  {order.receivedDate && <span> · 收货日期: {order.receivedDate}</span>}
+                  单号: <Text code style={{ color: '#69b1ff' }}>{g.order.orderNumber}</Text>
+                  {g.order.orderDate && <span> · 订单日期: {g.order.orderDate}</span>}
+                  {g.order.shipDate && <span> · 发货日期: {g.order.shipDate}</span>}
+                  {g.order.receivedDate && <span> · 收货日期: {g.order.receivedDate}</span>}
                 </div>
                 <table style={{ width: '100%', borderCollapse: 'collapse', color: '#ccc', fontSize: 12 }}>
                   <thead>
                     <tr style={{ background: '#141414', color: '#9aa0a6' }}>
-                      <th style={{ padding: 6, textAlign: 'left', width: 50 }}>批次</th>
+                      <th style={{ padding: 6, textAlign: 'left', width: 60 }}>批次</th>
                       <th style={{ padding: 6, textAlign: 'left', width: 80 }}>品类</th>
                       <th style={{ padding: 6, textAlign: 'left' }}>型号</th>
+                      <th style={{ padding: 6, textAlign: 'left', width: 100 }}>客户料号</th>
                       <th style={{ padding: 6, textAlign: 'left', width: 100 }}>厂家</th>
-                      <th style={{ padding: 6, textAlign: 'right', width: 90 }}>对账数量</th>
-                      <th style={{ padding: 6, textAlign: 'right', width: 90 }}>对账单价</th>
+                      <th style={{ padding: 6, textAlign: 'left', width: 80 }}>仓位</th>
+                      <th style={{ padding: 6, textAlign: 'right', width: 80 }}>数量</th>
+                      <th style={{ padding: 6, textAlign: 'right', width: 90 }}>单价</th>
                       <th style={{ padding: 6, textAlign: 'right', width: 100 }}>小计</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {items.map(it => (
-                      <tr key={it.itemId} style={{ borderBottom: '1px solid #1a1a1a' }}>
-                        <td style={{ padding: 6, color: '#69b1ff' }}>#{it.batchIndex}</td>
+                    {g.items.map((it, idx) => (
+                      <tr key={idx} style={{ borderBottom: '1px solid #1a1a1a' }}>
+                        <td style={{ padding: 6, color: '#69b1ff' }}>#{it.itemIndex}</td>
                         <td style={{ padding: 6 }}>{it.partType || '-'}</td>
                         <td style={{ padding: 6, fontFamily: 'monospace' }}>{it.model || '-'}</td>
+                        <td style={{ padding: 6 }}>{it.customerPartNo || '-'}</td>
                         <td style={{ padding: 6 }}>{it.manufacturer || '-'}</td>
-                        <td style={{ padding: 6, textAlign: 'right' }}>{fmtQty(it.reconciledQty)}</td>
-                        <td style={{ padding: 6, textAlign: 'right' }}>¥{Number(it.reconciledUnitPrice).toFixed(4)}</td>
-                        <td style={{ padding: 6, textAlign: 'right' }}>{fmtMoney(it.reconciledSubtotal)}</td>
+                        <td style={{ padding: 6 }}>{it.location || '-'}</td>
+                        <td style={{ padding: 6, textAlign: 'right' }}>{fmtQty(it.qty)}</td>
+                        <td style={{ padding: 6, textAlign: 'right' }}>¥{Number(it.unitPrice).toFixed(4)}</td>
+                        <td style={{ padding: 6, textAlign: 'right' }}>{fmtMoney(it.subtotal)}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
-            )
-          })}
-          {(!rec.orders || rec.orders.length === 0) && (
-            <div style={{ color: '#888', fontSize: 12, padding: 8 }}>无关联订单</div>
-          )}
-        </div>
-      ))}
+            ))}
+            {groups.length === 0 && (
+              <div style={{ color: '#888', fontSize: 12, padding: 8 }}>无关联订单</div>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }
