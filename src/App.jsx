@@ -3193,6 +3193,23 @@ const handleDeleteSession = (id) => {
                       _isComplete: false
                     }])
                   }}
+                  onFixIssueMessageUpdated={() => {
+                    // The IssuesSidePanel just received a
+                    // `fix-task.completed` WS event. The backend
+                    // has already updated the placeholder
+                    // message in place (createFixIssueMessage →
+                    // updateFixIssueMessage), but the chat UI
+                    // doesn't poll messages on its own. Re-fetch
+                    // the session history so the user sees the
+                    // terminal summary (verdict + diff) instead
+                    // of the stale "🔧 已开始修复…" placeholder.
+                    // `instantSwitch=false` preserves the current
+                    // scroll position and avoids a full-screen
+                    // loading flash.
+                    if (sessionId) {
+                      loadSession(sessionId, false)
+                    }
+                  }}
                 />
               </div>
             )}

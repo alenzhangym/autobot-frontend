@@ -25,7 +25,7 @@ const STATUS_TAG = {
   ignored:     { color: 'warning', icon: <CloseCircleOutlined />, label: '已忽略' }
 }
 
-export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile, onInjectAssistantMessage }) {
+export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile, onInjectAssistantMessage, onFixIssueMessageUpdated }) {
   const [filter, setFilter] = useState('open')   // 'open' | 'in_progress' | 'all' | 'fixed' | 'ignored'
   const [issues, setIssues] = useState([])
   const [loading, setLoading] = useState(false)
@@ -353,6 +353,16 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
           seenSummaryRef.current.add(key)
           setSummaries(prev => ({ ...prev, [issueId]: data }))
           setSummaryModal({ issueId, summary: data })
+          // The backend has just updated the chat-stream's
+          // placeholder message in place (createFixIssueMessage
+          // → updateFixIssueMessage). The chat UI does NOT poll
+          // messages on its own, so we have to nudge App.jsx to
+          // re-fetch the session history; otherwise the bubble
+          // stays stuck on "🔧 已开始修复…" and the user sees
+          // the placeholder instead of the verdict + diff.
+          if (typeof onFixIssueMessageUpdated === 'function') {
+            try { onFixIssueMessageUpdated(issueId) } catch (_) {}
+          }
           return
         }
         if (data.type !== 'fix-task.phase'
