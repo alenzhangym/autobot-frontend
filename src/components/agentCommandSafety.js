@@ -200,6 +200,26 @@ export const EXPLICIT_SAFE_SHAPES = [
     commands: ['pytest'],
     argsPrefix: ['-q', '--tb=short'],
   },
+
+  // ── Git (autobot-managed rollback/stage/commit) ───────────────────
+  // cmd-stage:git-add:<path>  →  git add <path>
+  {
+    idPattern: /^cmd-stage:git-add:/,
+    commands: ['git'],
+    argsPrefix: ['add'],
+  },
+  // cmd-rollback:git-restore:<path>  →  git restore <path>
+  {
+    idPattern: /^cmd-rollback:git-restore:/,
+    commands: ['git'],
+    argsPrefix: ['restore'],
+  },
+  // cmd-commit:git-reset:<path>  →  git reset HEAD <path>
+  {
+    idPattern: /^cmd-commit:git-reset:/,
+    commands: ['git'],
+    argsPrefix: ['reset', 'HEAD'],
+  },
 ]
 
 /**
