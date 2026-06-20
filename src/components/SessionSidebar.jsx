@@ -11,7 +11,7 @@ const ALL_CHANNELS = [
   { key: 'code', label: '代码任务', desc: '代码分析/生成/审查', icon: '💻', antIcon: <CodeOutlined /> },
   { key: 'document_generation', label: '文档生成', desc: '创建文档/报告', icon: '📄', antIcon: <FileSearchOutlined /> },
   { key: 'erp', label: 'ERP 进销存', desc: '库存/订单/客户管理', icon: '🏭', antIcon: <ShopOutlined /> },
-  { key: 'database_analysis', label: '数据库分析', desc: '查询公司数据库', icon: '🗄️', antIcon: <CodeOutlined /> },
+  { key: 'database_analysis', label: '数据库分析', desc: '查询公司数据库', icon: '🗄️', antIcon: <DatabaseOutlined /> },
 ];
 
 function getChannelIcon(channel) {

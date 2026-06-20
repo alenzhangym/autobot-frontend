@@ -13,7 +13,7 @@ import {
   StopOutlined, LoadingOutlined, ThunderboltOutlined, UserOutlined, TeamOutlined,
   DownOutlined, RightOutlined, CheckOutlined, EditOutlined, ClockCircleOutlined,
   FileTextOutlined, PaperClipOutlined, AudioOutlined, CloseOutlined, FileImageOutlined, DownloadOutlined, DatabaseOutlined, GlobalOutlined,
-  FolderOpenOutlined, HomeOutlined
+  FolderOpenOutlined, HomeOutlined, SearchOutlined, ShopOutlined
 } from '@ant-design/icons'
 import api, { logout, isAuthenticated, getCurrentUser, fetchMe, getWsBaseUrl, getLocalAgentBaseUrl, getBackendHost } from './auth'
 import Login from './Login'
@@ -274,12 +274,12 @@ function UsersManagementModal({ open, onClose, users, companies, onAddUser, onDe
 
 // ── Settings Modal ─────────────────────────────────────────────────────────
 const CHANNELS = [
-  { key: 'general', label: '普通会话', desc: '通用AI助手' },
-  { key: 'document_qa', label: '文档问答', desc: '基于知识库的文档检索问答' },
-  { key: 'code', label: '代码任务', desc: '代码分析/生成/审查' },
-  { key: 'document_generation', label: '文档生成', desc: '创建文档/报告' },
-  { key: 'erp', label: 'ERP 进销存', desc: '库存/订单/客户管理' },
-  { key: 'database_analysis', label: '数据库分析', desc: '查询公司数据库' },
+  { key: 'general', label: '普通会话', desc: '通用AI助手', icon: <MessageOutlined /> },
+  { key: 'document_qa', label: '文档问答', desc: '基于知识库的文档检索问答', icon: <SearchOutlined /> },
+  { key: 'code', label: '代码任务', desc: '代码分析/生成/审查', icon: <CodeOutlined /> },
+  { key: 'document_generation', label: '文档生成', desc: '创建文档/报告', icon: <FileTextOutlined /> },
+  { key: 'erp', label: 'ERP 进销存', desc: '库存/订单/客户管理', icon: <ShopOutlined /> },
+  { key: 'database_analysis', label: '数据库分析', desc: '查询公司数据库', icon: <DatabaseOutlined /> },
 ]
 
 function SettingsModal({ open, onClose, user, dbConfigs, onDeleteDbConfig, onAddDbConfig, onUpdateDbConfig, skills, onToggleSkill, companies, onAddCompany, onUpdateCompany, onDeleteCompany, users, onAddUser, onDeleteUser, onUpdateUser }) {
@@ -2850,9 +2850,24 @@ const handleDeleteSession = (id) => {
               <Button type="text" icon={siderCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
                 onClick={() => setSiderCollapsed(!siderCollapsed)}
                 style={{ color: '#888' }} />
-              <Text style={{ color: '#888', fontSize: 14 }}>
-                {activeTab === 'documents' ? t('nav.companyDocuments') : activeTab === 'sales_orders' ? '销售单管理' : activeTab === 'purchase_orders' ? '采购单管理' : activeTab === 'reconciliations' ? '对账单管理' : activeTab === 'erp' ? t('erp.dataManagement') : activeTab === 'outbound_orders' ? t('erp.outboundOrders') : activeTab === 'inbound_orders' ? t('erp.inboundOrders') : activeTab === 'parts' ? t('erp.parts') : activeTab === 'customers' ? t('erp.customers') : activeTab === 'suppliers' ? t('erp.suppliers') : activeTab === 'customer_part_mappings' ? '客户料号映射' : activeTab === 'import_product_relation' ? '导入产品关系' : activeTab === 'dashboard' ? t('erp.dashboard') : activeTab === 'databases' ? t('nav.databases') : activeTab === 'monitor' ? 'autobot-monitor' : (sessions.find(s => s.id === sessionId)?.title || t('nav.newChat'))}
-              </Text>
+              {activeTab === 'chat' ? (() => {
+                const curSess = sessions.find(s => s.id === sessionId)
+                const chKey = curSess?.channel || currentChannel
+                const chDef = CHANNELS.find(c => c.key === chKey)
+                return (
+                  <>
+                    {chDef?.icon && <span style={{ color: '#1677ff', fontSize: 15, display: 'inline-flex', alignItems: 'center' }}>{chDef.icon}</span>}
+                    <Text style={{ color: '#e3e3e3', fontSize: 14, fontWeight: 500 }}>
+                      {curSess?.title || t('nav.newChat')}
+                    </Text>
+                    {chDef && <Tag style={{ fontSize: 11, marginInlineEnd: 0, color: '#888', borderColor: '#333', background: '#1a1a1a' }}>({chDef.label})</Tag>}
+                  </>
+                )
+              })() : (
+                <Text style={{ color: '#888', fontSize: 14 }}>
+                  {activeTab === 'documents' ? t('nav.companyDocuments') : activeTab === 'sales_orders' ? '销售单管理' : activeTab === 'purchase_orders' ? '采购单管理' : activeTab === 'reconciliations' ? '对账单管理' : activeTab === 'erp' ? t('erp.dataManagement') : activeTab === 'outbound_orders' ? t('erp.outboundOrders') : activeTab === 'inbound_orders' ? t('erp.inboundOrders') : activeTab === 'parts' ? t('erp.parts') : activeTab === 'customers' ? t('erp.customers') : activeTab === 'suppliers' ? t('erp.suppliers') : activeTab === 'customer_part_mappings' ? '客户料号映射' : activeTab === 'import_product_relation' ? '导入产品关系' : activeTab === 'dashboard' ? t('erp.dashboard') : activeTab === 'databases' ? t('nav.databases') : activeTab === 'monitor' ? 'autobot-monitor' : (sessions.find(s => s.id === sessionId)?.title || t('nav.newChat'))}
+                </Text>
+              )}
               {activeTab === 'chat' && (sessions.find(s => s.id === sessionId)?.channel === 'code' || (!sessions.find(s => s.id === sessionId)?.channel && currentChannel === 'code')) && workspaceDir && (
                 <Tag 
                   icon={<FolderOpenOutlined />} 
