@@ -8,6 +8,7 @@ import { RobotOutlined, UserOutlined, CopyOutlined, CheckOutlined, CloseOutlined
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { extractDataStoreIds, isValidDataStoreResponse, fetchMissingDataFromServer, injectDataStoreData, decodeHtmlEntities, cleanScriptSrc, wrapUiHtml, isHtmlContent, MarkdownContent, extractTrailingStateJson, stripAgentMarkers, extractAnalysisState, tryParseAnalysisResult, decodeStateStringList } from '../utils/helpers.jsx';
 import { formatAnalysisPhase, CodeAnalysisProgress } from '../hooks/useAnalysisProgress.jsx';
+import FixIssueCard from './FixIssueCard';
 
 const PRIORITY_COLOR = {
   P0: { color: '#ff4d4f', bg: 'rgba(255,77,79,0.10)' },
@@ -346,6 +347,42 @@ function MessageBubble({ msg, onCopy, onRegenerate, onExpand, onDelete, sessionI
   if (isPlan && msg.content && msg.content.plan) {
     return (
       <PlanMessage content={msg.content} onDelete={onDelete} msgId={msg.id} msg={msg} />
+    );
+  }
+
+  // Fix-issue inline card. The backend inserts a placeholder
+  // message with meta.type="fix_issue" when the user clicks
+  // "开始修复" and overwrites the same row (meta.type=
+  // "fix_summary") once the driver reaches COMPLETED/FAILED.
+  // Render as a dedicated card so the placeholder ("正在修
+  // 复…") and the terminal verdict (file list + diff) look
+  // continuous as the row updates, instead of the user
+  // seeing two unrelated text blobs.
+  if (msg && typeof msg.meta === 'string'
+      && (msg.meta.includes('"fix_issue"') || msg.meta.includes('"fix_summary"'))) {
+    return (
+      <div data-msg-id={msg.id} data-msg-role={msg.role}
+        data-msg-meta-fix={msg.meta.includes('"fix_issue"') ? 'fix_issue' : 'fix_summary'}
+        style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
+        <Avatar icon={<RobotOutlined />} size={32} style={{ background: '#1677ff', flexShrink: 0 }} />
+        <div style={{ flex: 1, maxWidth: 'calc(100% - 50px)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+            <span style={{ color: '#888', fontSize: 12 }}>AutoBot</span>
+            {formatMessageTime(msg) && (
+              <span style={{ color: '#555', fontSize: 11 }}>{formatMessageTime(msg)}</span>
+            )}
+            <Tag color="purple" style={{ fontSize: 10 }}>Fix</Tag>
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+              {onDelete && msg.id && (
+                <Tooltip title="Delete">
+                  <Button type="text" icon={<DeleteOutlined />} size="small" onClick={onDelete} style={{ color: '#666' }} />
+                </Tooltip>
+              )}
+            </div>
+          </div>
+          <FixIssueCard msg={msg} />
+        </div>
+      </div>
     );
   }
 

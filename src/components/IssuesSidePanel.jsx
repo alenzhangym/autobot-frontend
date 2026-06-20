@@ -332,6 +332,26 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
         continue
       }
       wsRef.current.set(taskId, ws)
+      // eslint-disable-next-line no-console
+      console.log('[FixTask-WS] opening', taskId, '— HMR-v2')
+      ws.onopen = () => {
+        // eslint-disable-next-line no-console
+        console.log('[FixTask-WS] open', taskId)
+      }
+      ws.onerror = (e) => {
+        // eslint-disable-next-line no-console
+        console.warn('[FixTask-WS] error', taskId, e)
+      }
+      ws.onclose = (ev) => {
+        // eslint-disable-next-line no-console
+        console.log('[FixTask-WS] close', taskId, 'code=', ev.code,
+          'reason=', ev.reason)
+        wsRef.current.delete(taskId)
+        // Drop the dead socket. If the task is still active the
+        // parent 2s `refresh()` will re-read the issue from
+        // IssueStore and the poller will keep an eye on pending
+        // confirmations.
+      }
       ws.onmessage = (ev) => {
         let data
         try { data = JSON.parse(ev.data) } catch (_) { return }
@@ -341,6 +361,9 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
         for (const [iid, tt] of Object.entries(tasksRef.current)) {
           if (tt && tt.taskId === taskId) { issueId = iid; break }
         }
+        // eslint-disable-next-line no-console
+        console.log('[FixTask-WS] recv', data.type, 'taskId=', taskId,
+          'issueId=', issueId, 'dataKeys=', Object.keys(data).join(','))
         if (!issueId) return
         if (data.type === 'fix-task.completed') {
           // Heavyweight summary: contains diffs and verification.
@@ -419,26 +442,32 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
           message.success('修复任务已完成，代码已通过校验')
           setIssues(prev => prev.map(i =>
             i.issueId === issueId ? { ...i, status: 'fixed' } : i))
-          cleanupTask(issueId)
-          try { ws.close() } catch (_) {}
-          wsRef.current.delete(taskId)
+          // NOTE: do NOT close the WS or call cleanupTask here.
+          // The fix-task.phase event with status=completed is
+          // sent by FixPhaseDriver *before* the controller's
+          // background thread finishes, and the controller's
+          // follow-up `fix-task.completed` event (which is what
+          // actually opens the summary modal) is published a
+          // few ms later. If we close the WS now, the bus has
+          // already removed this session from its subscriber
+          // set by the time publishCompleted fires — the
+          // completed event is silently dropped, the chat
+          // history is never reloaded, and the placeholder
+          // message stays stuck on "🔧 已开始修复…".
+          // The modal that opens on fix-task.completed owns
+          // the WS teardown (see the onCancel / onClose
+          // handler further down).
         } else if (status === 'failed') {
           message.warning('修复任务校验未通过，已回到待处理')
           setIssues(prev => prev.map(i =>
             i.issueId === issueId ? { ...i, status: 'open' } : i))
-          cleanupTask(issueId)
-          try { ws.close() } catch (_) {}
-          wsRef.current.delete(taskId)
+          // Same reasoning as the 'completed' branch above —
+          // keep the WS alive so the fix-task.completed event
+          // that the controller publishes a few ms later can
+          // actually reach this session. The modal teardown
+          // closes the WS.
         }
       }
-      ws.onclose = () => {
-        // Drop the dead socket. If the task is still active the
-        // parent 2s `refresh()` will re-read the issue from
-        // IssueStore and the poller will keep an eye on pending
-        // confirmations.
-        wsRef.current.delete(taskId)
-      }
-      ws.onerror = () => { /* onclose will follow */ }
     }
   }, [tasks])
 
@@ -532,6 +561,23 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
           i.issueId === issue.issueId ? { ...i, status: 'open' } : i))
       } else {
         message.info('修复任务已派发，CodeAgent 正在执行，可在任务列表中查看进度')
+        // The synchronous POST just (a) created the fix task in
+        // FixTaskStore and (b) inserted a new chat-stream row
+        // via `createFixIssueMessage` with meta.type=fix_issue
+        // (the "🔧 已开始修复…" placeholder). The chat UI does
+        // NOT poll messages on its own — it only reloads on a
+        // `fix-task.completed` WS event (see
+        // `onFixIssueMessageUpdated` below). If we don't nudge
+        // App.jsx to re-fetch the session history RIGHT NOW,
+        // the placeholder row never shows up in the chat flow
+        // and the user has no feedback that the fix has started
+        // at all. Calling the same callback we use for the
+        // terminal event reuses a single, well-tested reload
+        // path and keeps the contract: "this callback means a
+        // fix-related message row was just added or updated".
+        if (typeof onFixIssueMessageUpdated === 'function') {
+          try { onFixIssueMessageUpdated(issue.issueId) } catch (_) {}
+        }
       }
     } catch (e) {
       message.error('启动修复任务失败: ' + (e.response?.data?.message || e.message))
@@ -549,6 +595,26 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
       delete cp[issueId]
       return cp
     })
+  }
+
+  // Close the summary modal AND tear down the WS for that task.
+  // The modal is the only place we know the fix-task.completed
+  // event has been fully processed, so this is the only safe
+  // moment to release the socket — closing earlier (e.g. on
+  // the fix-task.phase event) drops the very event the modal
+  // exists to display.
+  const closeSummaryModal = () => {
+    if (summaryModal) {
+      const iid = summaryModal.issueId
+      const t = tasksRef.current[iid]
+      if (t && t.taskId) {
+        const w = wsRef.current.get(t.taskId)
+        if (w) { try { w.close() } catch (_) {} }
+        wsRef.current.delete(t.taskId)
+      }
+      cleanupTask(iid)
+    }
+    setSummaryModal(null)
   }
 
   /**
@@ -716,7 +782,7 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
           what changed and whether the build passed. */}
       <Modal
         open={!!summaryModal}
-        onCancel={() => setSummaryModal(null)}
+        onCancel={closeSummaryModal}
         footer={null}
         width={760}
         title={null}
@@ -725,7 +791,7 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
         {summaryModal && (
           <FixSummaryCard
             summary={summaryModal.summary}
-            onClose={() => setSummaryModal(null)}
+            onClose={closeSummaryModal}
           />
         )}
       </Modal>

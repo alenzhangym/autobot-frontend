@@ -1747,6 +1747,12 @@ function App() {
     const cached = sessionCacheRef.current.get(id)
     if (cached) {
       if (!isSameSession) setSessionId(id)
+      // eslint-disable-next-line no-console
+      console.log('[loadSession] CACHE HIT for', id, '— replaying',
+        cached.length, 'messages; last id=',
+        cached[cached.length - 1]?.id,
+        'last meta=',
+        (cached[cached.length - 1]?.meta || '').slice(0, 100))
       setMessages(cached)
       setIsLoading(false)
       return
@@ -1857,8 +1863,20 @@ function App() {
           setIsParsingHistory(false)
           worker.terminate()
         }
+        // eslint-disable-next-line no-console
+        console.log('[loadSession] sending', history.length,
+          'messages to worker; last id=',
+          history[history.length - 1]?.id,
+          'last meta=',
+          (history[history.length - 1]?.meta || '').slice(0, 100))
         worker.postMessage({ messages: history })
       } else {
+        // eslint-disable-next-line no-console
+        console.log('[loadSession] setMessages (small history); count=',
+          history.length, 'last id=',
+          history[history.length - 1]?.id,
+          'last meta=',
+          (history[history.length - 1]?.meta || '').slice(0, 100))
         setMessages(history.map(normalizeMessage))
       }
     } catch (e) {
@@ -3194,19 +3212,30 @@ const handleDeleteSession = (id) => {
                     }])
                   }}
                   onFixIssueMessageUpdated={() => {
-                    // The IssuesSidePanel just received a
-                    // `fix-task.completed` WS event. The backend
-                    // has already updated the placeholder
-                    // message in place (createFixIssueMessage →
-                    // updateFixIssueMessage), but the chat UI
-                    // doesn't poll messages on its own. Re-fetch
-                    // the session history so the user sees the
-                    // terminal summary (verdict + diff) instead
-                    // of the stale "🔧 已开始修复…" placeholder.
-                    // `instantSwitch=false` preserves the current
-                    // scroll position and avoids a full-screen
-                    // loading flash.
+                    // The IssuesSidePanel just (a) inserted a
+                    // brand-new placeholder message row via
+                    // `createFixIssueMessage` (startFix just
+                    // returned successfully) OR (b) updated the
+                    // same row in place via
+                    // `updateFixIssueMessage` (driver reached
+                    // COMPLETED/FAILED). Either way the chat
+                    // history on the server has changed. The
+                    // chat UI does not poll messages on its own.
+                    // Re-fetch the session history so the user
+                    // sees the new / updated row.
+                    //
+                    // IMPORTANT: the cached history for this
+                    // session is stale (it predates the change),
+                    // so we MUST drop the cache entry before
+                    // calling loadSession — otherwise the
+                    // `if (cached) return` short-circuit in
+                    // loadSession will re-mount the old array
+                    // and the placeholder row never appears in
+                    // the chat flow. `instantSwitch=false`
+                    // preserves scroll position and avoids a
+                    // full-screen loading flash.
                     if (sessionId) {
+                      sessionCacheRef.current.delete(sessionId)
                       loadSession(sessionId, false)
                     }
                   }}
