@@ -205,7 +205,7 @@ const agentCategories = [
 ]
 
 // 登录表单组件
-function LoginForm({ onLoginSuccess }) {
+function LoginForm({ onLoginSuccess, onBackToHome }) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
@@ -329,7 +329,7 @@ function LoginForm({ onLoginSuccess }) {
 
           <div style={{ textAlign: 'center', marginTop: 16 }}>
             <Text 
-              onClick={() => onLoginSuccess && onLoginSuccess({ showHome: true })}
+              onClick={onBackToHome || (() => onLoginSuccess && onLoginSuccess({ showHome: true }))}
               style={{ color: '#1677ff', cursor: 'pointer' }}
             >
               ← 返回主页
@@ -642,7 +642,7 @@ export default function HomeWrapper({ onLoginSuccess }) {
 
   // 如果显示登录表单
   if (showLogin) {
-    return <LoginForm onLoginSuccess={onLoginSuccess} />
+    return <LoginForm onLoginSuccess={onLoginSuccess} onBackToHome={() => setShowLogin(false)} />
   }
 
   // 默认显示主页内容
