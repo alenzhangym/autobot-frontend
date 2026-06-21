@@ -17,6 +17,7 @@ import {
 } from '@ant-design/icons'
 import api, { logout, isAuthenticated, getCurrentUser, fetchMe, getWsBaseUrl, getLocalAgentBaseUrl, getBackendHost } from './auth'
 import Login from './Login'
+import Home from './Home'
 import LogPanel from './LogPanel'
 import PlanView from './PlanView'
 import MonitorPanel from './components/MonitorPanel'
@@ -2600,7 +2601,7 @@ function App() {
     }
   }
 
-  if (!user) return <Login onLoginSuccess={handleLoginSuccess} />
+  if (!user) return <Home onLoginSuccess={handleLoginSuccess} />
 
   const deleteScheduledTask = async (e, id) => {
     e.stopPropagation()
