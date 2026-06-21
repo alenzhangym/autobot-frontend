@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Card, Typography, Button, Row, Col, Divider, Tag, Space, List, Avatar, Spin, Alert } from 'antd'
+import { Card, Typography, Button, Row, Col, Divider, Tag, Space, List, Avatar, Spin, Alert, message } from 'antd'
+import api, { isAuthenticated } from './auth'
 import {
   RobotOutlined,
   CodeOutlined,
@@ -18,9 +19,10 @@ import {
   ProfileOutlined,
   ClusterOutlined,
   SyncOutlined,
-  MessageOutlined
+  MessageOutlined,
+  UserOutlined,
+  LockOutlined
 } from '@ant-design/icons'
-import api, { isAuthenticated } from './auth'
 
 const { Title, Text, Paragraph } = Typography
 
@@ -98,59 +100,59 @@ const agentCategories = [
     agents: [
       {
         name: 'DocumentAgent',
-        desc: '多格式文档解析（PDF/Word/Excel）',
-        features: ['文本提取', '图片识别', '表格转换']
+        desc: '文档解析与内容提取，支持多种格式',
+        features: ['PDF 解析', 'Office 文档', '文本提取']
       },
       {
         name: 'KnowledgeExtractorAgent',
-        desc: '从文档中提取结构化知识与实体',
-        features: ['实体识别', '关系抽取', '知识图谱']
+        desc: '知识图谱构建与三元组提取',
+        features: ['实体识别', '关系抽取', '图谱存储']
       },
       {
         name: 'DocumentArchitectAgent',
-        desc: '文档架构设计与模板生成',
-        features: ['架构规划', '模板创建', '内容组织']
+        desc: '文档架构设计与蓝图生成',
+        features: ['结构规划', '章节设计', '依赖分析']
       }
     ]
   },
   {
     id: 'debug',
     title: '调试与诊断 Agent',
-    description: '问题定位、日志分析与错误修复',
-    icon: <BugOutlined style={{ fontSize: 32, color: '#ff4d4f' }} />,
+    description: '智能错误定位与问题修复',
+    icon: <BugOutlined style={{ fontSize: 32, color: '#eb2f96' }} />,
     agents: [
       {
         name: 'DebugAgent',
-        desc: '运行时调试与问题诊断',
-        features: ['日志分析', '堆栈追踪', '断点调试']
+        desc: '调试信息收集与异常分析',
+        features: ['日志分析', '堆栈追踪', '断点管理']
       },
       {
         name: 'ReflectionAgent',
-        desc: '自我反思与策略优化',
+        desc: '自我反思与执行优化',
         features: ['结果评估', '策略调整', '经验积累']
       },
       {
         name: 'CriticAgent',
-        desc: '代码与方案审查，发现潜在问题',
-        features: ['质量检查', '安全审计', '性能评估']
+        desc: '代码与方案质量评审',
+        features: ['一致性检查', '事实验证', '逻辑评估']
       }
     ]
   },
   {
     id: 'visual',
     title: '可视化与 UI 生成 Agent',
-    description: '数据可视化图表与交互式界面生成',
-    icon: <LineChartOutlined style={{ fontSize: 32, color: '#eb2f96' }} />,
+    description: '数据可视化与界面自动生成',
+    icon: <LineChartOutlined style={{ fontSize: 32, color: '#faad14' }} />,
     agents: [
       {
         name: 'UIAgent',
-        desc: '生成数据可视化 HTML 仪表板',
-        features: ['图表渲染', '仪表盘布局', '交互组件']
+        desc: 'HTML/CSS界面生成与渲染',
+        features: ['页面布局', '样式设计', '交互实现']
       },
       {
         name: 'VisualAgent',
-        desc: '视觉内容分析与图像理解',
-        features: ['图像识别', '场景分析', 'OCR 文字提取']
+        desc: '图表与可视化元素生成',
+        features: ['Mermaid 图表', '数据可视化', '流程图']
       }
     ]
   },
@@ -158,40 +160,40 @@ const agentCategories = [
     id: 'reasoning',
     title: '推理与规划 Agent',
     description: '复杂任务分解与多步推理',
-    icon: <MessageOutlined style={{ fontSize: 32, color: '#13c2c2' }} />,
+    icon: <RobotOutlined style={{ fontSize: 32, color: '#1677ff' }} />,
     agents: [
       {
         name: 'PlannerAgent',
-        desc: '任务规划与步骤分解',
-        features: ['目标分析', '步骤规划', '依赖管理']
+        desc: '任务分解与执行计划生成',
+        features: ['意图识别', '步骤规划', '依赖分析']
       },
       {
         name: 'ReasoningAgent',
-        desc: '多步逻辑推理与决策',
-        features: ['逻辑推导', '方案比较', '最优选择']
+        desc: '多步推理与问题求解',
+        features: ['逻辑推理', '工具调用', '自纠错']
       },
       {
         name: 'SummaryAgent',
-        desc: '信息汇总与报告生成',
-        features: ['内容摘要', '要点提炼', '格式输出']
+        desc: '结果汇总与报告生成',
+        features: ['信息整合', '要点提炼', '格式输出']
       }
     ]
   },
   {
     id: 'sync',
     title: '同步与集成 Agent',
-    description: '数据同步、ERP 集成与自动化任务',
-    icon: <SyncOutlined style={{ fontSize: 32, color: '#fa8c16' }} />,
+    description: '外部系统集成与数据同步',
+    icon: <SyncOutlined style={{ fontSize: 32, color: '#52c41a' }} />,
     agents: [
       {
         name: 'ERPOrchestrator',
-        desc: 'ERP 系统协调与订单处理',
-        features: ['订单管理', '库存同步', '财务对账']
+        desc: 'ERP 系统流程编排与执行',
+        features: ['订单处理', '库存管理', '财务对账']
       },
       {
         name: 'ScheduledTaskAgent',
         desc: '定时任务调度与执行',
-        features: ['任务排期', '自动触发', '状态监控']
+        features: ['任务编排', '时间触发', '状态监控']
       },
       {
         name: 'MemoryAgent',
@@ -202,31 +204,161 @@ const agentCategories = [
   }
 ]
 
-export default function Home({ onLoginSuccess }) {
-  const { t } = useTranslation()
+// 登录表单组件
+function LoginForm({ onLoginSuccess }) {
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
-  const [agentsData, setAgentsData] = useState(null)
 
-  useEffect(() => {
-    // Check if user is already logged in
-    if (isAuthenticated()) {
-      onLoginSuccess()
+  const handleLogin = async (e) => {
+    e.preventDefault()
+    if (!username || !password) {
+      message.error('请输入用户名和密码')
+      return
     }
-  }, [])
 
-  const fetchAgentsInfo = async () => {
     setLoading(true)
     try {
-      const res = await api.get('/skills')
-      setAgentsData(res.data?.skills || [])
-    } catch (e) {
-      console.log('Failed to fetch agents info')
+      const response = await api.post('/auth/login', {
+        username,
+        password
+      })
+
+      if (response.data && response.data.token) {
+        message.success('登录成功！')
+        if (onLoginSuccess) {
+          onLoginSuccess(response.data)
+        }
+        setUsername('')
+        setPassword('')
+      } else {
+        message.error('登录失败：未收到有效响应')
+      }
+    } catch (error) {
+      console.error('Login error:', error)
+      message.error('登录失败：' + (error.response?.data?.message || error.message || '请检查网络连接'))
     } finally {
       setLoading(false)
     }
   }
 
+  return (
+    <div style={{
+      minHeight: '100vh',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)'
+    }}>
+      <Card style={{
+        width: 400,
+        padding: 40,
+        background: 'rgba(30, 30, 50, 0.9)',
+        border: '1px solid rgba(22, 119, 255, 0.3)',
+        borderRadius: 16
+      }}>
+        <div style={{ textAlign: 'center', marginBottom: 32 }}>
+          <RobotOutlined style={{ fontSize: 48, color: '#1677ff', marginBottom: 16 }} />
+          <Title level={2} style={{ color: '#fff', marginBottom: 8 }}>
+            AutoBot 登录
+          </Title>
+          <Text style={{ color: '#888' }}>请输入您的账号密码</Text>
+        </div>
+
+        <form onSubmit={(e) => { 
+          e.preventDefault && e.preventDefault();
+          handleLogin(e);
+        }} style={{ display: 'flex', flexDirection: 'column' }}>
+          <div style={{ marginBottom: 24 }}>
+            <label style={{ color: '#fff', fontWeight: 500, display: 'block', marginBottom: 8, fontSize: '14px' }}>
+              用户名
+            </label>
+            <input
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="请输入用户名"
+              style={{ 
+                padding: '12px 16px',
+                fontSize: '16px',
+                borderRadius: 8,
+                border: '1px solid rgba(22, 119, 255, 0.3)',
+                backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                color: '#fff',
+                outline: 'none'
+              }}
+            />
+          </div>
+
+          <div style={{ marginBottom: 32 }}>
+            <label style={{ color: '#fff', fontWeight: 500, display: 'block', marginBottom: 8, fontSize: '14px' }}>
+              密码
+            </label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="请输入密码"
+              style={{ 
+                padding: '12px 16px',
+                fontSize: '16px',
+                borderRadius: 8,
+                border: '1px solid rgba(22, 119, 255, 0.3)',
+                backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                color: '#fff',
+                outline: 'none'
+              }}
+            />
+          </div>
+
+          <Button
+            type="primary"
+            htmlType="submit"
+            loading={loading}
+            size="large"
+            style={{
+              width: '100%',
+              fontSize: '16px',
+              borderRadius: 8,
+              background: '#1677ff',
+              border: 'none'
+            }}
+          >
+            登录
+          </Button>
+
+          <div style={{ textAlign: 'center', marginTop: 16 }}>
+            <Text 
+              onClick={() => onLoginSuccess && onLoginSuccess({ showHome: true })}
+              style={{ color: '#1677ff', cursor: 'pointer' }}
+            >
+              ← 返回主页
+            </Text>
+          </div>
+        </form>
+      </Card>
+    </div>
+  )
+}
+
+// 主页内容组件
+function HomeContent({ onLoginClick }) {
+  const { t } = useTranslation()
+  const [loading, setLoading] = useState(false)
+  const [agentsData, setAgentsData] = useState(null)
+
   useEffect(() => {
+    const fetchAgentsInfo = async () => {
+      setLoading(true)
+      try {
+        const res = await api.get('/skills')
+        setAgentsData(res.data?.skills || [])
+      } catch (e) {
+        console.log('Failed to fetch agents info')
+      } finally {
+        setLoading(false)
+      }
+    }
     fetchAgentsInfo()
   }, [])
 
@@ -247,104 +379,77 @@ export default function Home({ onLoginSuccess }) {
           <Title level={1} style={{
             color: '#fff',
             fontSize: '48px',
-            fontWeight: 700,
-            marginBottom: 16,
-            letterSpacing: 2
+            marginBottom: 16
           }}>
-            AutoBot 智能代理系统
+            AutoBot - 智能多 Agent 协作平台
           </Title>
           <Paragraph style={{
             color: '#888',
             fontSize: '18px',
             lineHeight: 1.8,
-            marginBottom: 32,
-            maxWidth: 600,
-            marginLeft: 'auto',
-            marginRight: 'auto'
+            marginBottom: 40
           }}>
-            基于大语言模型的多 Agent 协作平台，支持代码开发、数据分析、Web 交互、文档处理等八大领域任务
+            基于大语言模型的多 Agent 系统，实现代码开发、数据分析、文档处理等任务的自动化执行
           </Paragraph>
-          <Space size="large">
-            <Button
-              type="primary"
-              size="large"
-              icon={<LoginOutlined />}
-              onClick={() => onLoginSuccess()}
-              style={{
-                fontSize: '16px',
-                padding: '12px 40px',
-                borderRadius: 8,
-                background: '#1677ff',
-                border: 'none'
-              }}
-            >
-              立即登录
-            </Button>
-            <Button
-              size="large"
-              icon={<AppstoreOutlined />}
-              style={{
-                fontSize: '16px',
-                padding: '12px 40px',
-                borderRadius: 8,
-                background: 'transparent',
-                border: '1px solid #2a2a2a',
-                color: '#fff'
-              }}
-              onClick={() => window.scrollTo({ top: 800, behavior: 'smooth' })}
-            >
-              了解更多
-            </Button>
-          </Space>
+          <Button
+            type="primary"
+            size="large"
+            icon={<LoginOutlined />}
+            onClick={onLoginClick}
+            style={{
+              fontSize: '18px',
+              padding: '16px 64px',
+              borderRadius: 8,
+              background: '#1677ff',
+              border: 'none'
+            }}
+          >
+            立即登录
+          </Button>
         </div>
       </div>
 
-      {/* Features Grid */}
-      <div style={{ maxWidth: 1200, margin: '0 auto', padding: '40px 20px' }}>
+      {/* Agent Categories */}
+      <div style={{ maxWidth: 1200, margin: '0 auto', padding: '60px 20px' }}>
         <Title level={2} style={{
           color: '#fff',
           textAlign: 'center',
           marginBottom: 48,
           fontSize: '32px'
         }}>
-          核心功能领域
+          核心功能模块
         </Title>
 
         {loading ? (
-          <div style={{ textAlign: 'center', padding: '60px 0' }}>
-            <Spin size="large" tip="加载中..." />
+          <div style={{ textAlign: 'center', padding: '60px' }}>
+            <Spin size="large" />
           </div>
         ) : (
           <Row gutter={[32, 32]}>
             {agentCategories.map((category) => (
               <Col xs={24} md={12} lg={8} key={category.id}>
-                <Card
-                  hoverable
-                  style={{
-                    height: '100%',
-                    background: 'rgba(26, 26, 46, 0.8)',
-                    border: '1px solid #2a2a2a',
-                    borderRadius: 12,
-                    transition: 'all 0.3s ease'
-                  }}
-                  bodyStyle={{ padding: '24px' }}
-                >
-                  <div style={{ marginBottom: 20 }}>
-                    {category.icon}
-                    <Title level={4} style={{
-                      color: '#fff',
-                      fontSize: '18px',
-                      marginTop: 12,
-                      marginBottom: 8
-                    }}>
-                      {category.title}
-                    </Title>
-                    <Text style={{ color: '#888', fontSize: '13px', lineHeight: 1.6 }}>
+                <Card style={{
+                  background: 'rgba(30, 30, 50, 0.5)',
+                  border: '1px solid #2a2a2a',
+                  borderRadius: 12,
+                  height: '100%'
+                }}>
+                  <div style={{ marginBottom: 24 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12 }}>
+                      {category.icon}
+                      <Title level={4} style={{
+                        color: '#fff',
+                        fontSize: '18px',
+                        marginLeft: 12,
+                        marginBottom: 0
+                      }}>
+                        {category.title}
+                      </Title>
+                    </div>
+                    <Text style={{ color: '#888', fontSize: '14px' }}>
                       {category.description}
                     </Text>
                   </div>
-
-                  <Divider style={{ borderColor: '#2a2a2a', margin: '16px 0' }} />
 
                   <List
                     size="small"
@@ -504,7 +609,7 @@ export default function Home({ onLoginSuccess }) {
           type="primary"
           size="large"
           icon={<LoginOutlined />}
-          onClick={() => onLoginSuccess()}
+          onClick={onLoginClick}
           style={{
             fontSize: '16px',
             padding: '12px 48px',
@@ -529,4 +634,17 @@ export default function Home({ onLoginSuccess }) {
       </div>
     </div>
   )
+}
+
+// 主组件导出
+export default function HomeWrapper({ onLoginSuccess }) {
+  const [showLogin, setShowLogin] = useState(false)
+
+  // 如果显示登录表单
+  if (showLogin) {
+    return <LoginForm onLoginSuccess={onLoginSuccess} />
+  }
+
+  // 默认显示主页内容
+  return <HomeContent onLoginClick={() => setShowLogin(true)} />
 }

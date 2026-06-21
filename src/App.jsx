@@ -17,7 +17,7 @@ import {
 } from '@ant-design/icons'
 import api, { logout, isAuthenticated, getCurrentUser, fetchMe, getWsBaseUrl, getLocalAgentBaseUrl, getBackendHost } from './auth'
 import Login from './Login'
-import Home from './Home'
+import HomeWrapper from './Home'
 import LogPanel from './LogPanel'
 import PlanView from './PlanView'
 import MonitorPanel from './components/MonitorPanel'
@@ -1098,9 +1098,22 @@ function App() {
     }
   }, [activeTab])
 
-  const handleLoginSuccess = () => {
-    const currentUser = getCurrentUser()
+  const handleLoginSuccess = (loginData) => {
+    // Save token to localStorage if not already saved
+    if (loginData && loginData.token && !localStorage.getItem('token')) {
+      localStorage.setItem('token', loginData.token)
+      if (loginData.user) {
+        localStorage.setItem('user', JSON.stringify(loginData.user))
+      }
+    }
+    
+    // Get user data directly from localStorage
+    const currentUser = JSON.parse(localStorage.getItem('user') || '{}')
+    
+    // Set user directly in Zustand store
     setUser(currentUser)
+    
+    // Initialize sessions immediately
     initSessions()
   }
 
@@ -1111,11 +1124,11 @@ function App() {
       const loaded = res.data.sessions || []
       setSessions(loaded)
       if (loaded.length > 0) loadSession(loaded[0].id)
-      else startNewSession()
+      // Don't create new session by default - wait for user to click "New Chat"
     } catch (e) {
       if (e.response?.status === 401) { logout(); return }
       setSessions([])
-      startNewSession()
+      // Don't create new session by default - wait for user to click "New Chat"
     }
   }
 
@@ -1919,6 +1932,15 @@ function App() {
     createSessionDirect(ch)
   }
 
+  // Handle workspace selection without creating new session
+  const handleWorkspaceSelect = (newDir) => {
+    if (!newDir || newDir === workspaceDir) return
+    setWorkspaceDir(newDir)
+    setWsInvalid(false)
+    // Don't create new session, just update workspace for current session
+    syncWorkspaceTreeSilently(newDir, 'workspace-change')
+  }
+
   const loadWsBrowse = async (path) => {
     setWsBrowsePath(path || (isWindows() ? '磁盘根目录' : '/'))
     setWsBrowseLoading(true)
@@ -2601,7 +2623,7 @@ function App() {
     }
   }
 
-  if (!user) return <Home onLoginSuccess={handleLoginSuccess} />
+  if (!user) return <HomeWrapper onLoginSuccess={handleLoginSuccess} />
 
   const deleteScheduledTask = async (e, id) => {
     e.stopPropagation()
@@ -3279,7 +3301,8 @@ const handleDeleteSession = (id) => {
             if (isChangingWorkspace) {
               changeWorkspaceDir(wsBrowsePath)
             } else {
-              createSessionDirect(wsPickerChannel, wsBrowsePath)
+              // For initial workspace selection, just update workspace without creating new session
+              handleWorkspaceSelect(wsBrowsePath)
             }
             setShowWsPicker(false)
             setIsChangingWorkspace(false)
