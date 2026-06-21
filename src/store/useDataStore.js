@@ -12,4 +12,7 @@ export const useDataStore = create((set) => ({
 
   skills: [],
   setSkills: (skills) => set({ skills }),
+
+  companies: [],
+  setCompanies: (companies) => set({ companies }),
 }))

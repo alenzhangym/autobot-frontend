@@ -1102,13 +1102,18 @@ function App() {
     // Save token to localStorage if not already saved
     if (loginData && loginData.token && !localStorage.getItem('token')) {
       localStorage.setItem('token', loginData.token)
-      if (loginData.user) {
-        localStorage.setItem('user', JSON.stringify(loginData.user))
-      }
     }
     
-    // Get user data directly from localStorage
-    const currentUser = JSON.parse(localStorage.getItem('user') || '{}')
+    // Build user object from login response
+    const currentUser = {
+      id: loginData?.id,
+      username: loginData?.username,
+      role: loginData?.role,
+      companyId: loginData?.companyId
+    }
+    
+    // Save user info to localStorage
+    localStorage.setItem('user', JSON.stringify(currentUser))
     
     // Set user directly in Zustand store
     setUser(currentUser)

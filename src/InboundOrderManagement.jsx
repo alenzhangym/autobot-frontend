@@ -63,8 +63,11 @@ export default function InboundOrderManagement({ user, companies = [] }) {
           api.get('/erp/suppliers/all', { params }),
           api.get('/erp/parts', { params: { ...params, size: 999 } }),
         ])
-        setSuppliers(sRes.data || [])
-        const fetchedParts = pRes.data.parts || []
+        // Handle ApiResult wrapper: { code, message, data }
+        const suppliersData = sRes.data?.data || sRes.data || []
+        const partsData = pRes.data?.data || pRes.data || []
+        setSuppliers(Array.isArray(suppliersData) ? suppliersData : (suppliersData.data || []))
+        const fetchedParts = Array.isArray(partsData) ? partsData : (partsData.parts || [])
         setParts(fetchedParts)
         const types = [...new Set([...PART_TYPES, ...fetchedParts.map(p => p.partType).filter(Boolean)])]
         setPartTypes(types)
@@ -79,8 +82,10 @@ export default function InboundOrderManagement({ user, companies = [] }) {
         supplierName: filters.supplierName || undefined, dateFrom: filters.dateFrom || undefined, dateTo: filters.dateTo || undefined }
       if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
       const res = await api.get('/erp/inbound-orders', { params })
-      setOrders(res.data.orders || [])
-      setTotal(res.data.total || 0)
+      // Handle ApiResult wrapper: { code, message, data }
+      const apiData = res.data?.data || res.data || {}
+      setOrders(Array.isArray(apiData) ? apiData : (apiData.orders || []))
+      setTotal(apiData.total || 0)
     } catch (e) {
       message.error('加载入库单失败: ' + (e.response?.data?.error || e.message))
     } finally { setLoading(false) }

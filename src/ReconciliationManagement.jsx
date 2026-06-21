@@ -42,8 +42,10 @@ export default function ReconciliationManagement({ user, companies = [] }) {
         else params.supplierName = partyFilter
       }
       const res = await api.get('/erp/reconciliations', { params })
-      setRecords(res.data.data || [])
-      setTotal(res.data.count || 0)
+      // Handle ApiResult wrapper: { code, message, data }
+      const apiData = res.data?.data || res.data || {}
+      setRecords(Array.isArray(apiData) ? apiData : (apiData.data || []))
+      setTotal(apiData.count || 0)
     } catch (e) {
       message.error('加载对账单失败: ' + (e.response?.data?.error || e.message))
     } finally { setLoading(false) }
@@ -86,8 +88,14 @@ export default function ReconciliationManagement({ user, companies = [] }) {
     const params = {}
     if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
     Promise.all([
-      api.get('/erp/customers', { params }).then(r => setCustomers(r.data.customers || [])).catch(() => {}),
-      api.get('/erp/suppliers/all', { params }).then(r => setSuppliers(r.data || [])).catch(() => {}),
+      api.get('/erp/customers', { params }).then(r => {
+        const customersData = r.data?.data || r.data || []
+        setCustomers(Array.isArray(customersData) ? customersData : (customersData.customers || []))
+      }).catch(() => {}),
+      api.get('/erp/suppliers/all', { params }).then(r => {
+        const suppliersData = r.data?.data || r.data || []
+        setSuppliers(Array.isArray(suppliersData) ? suppliersData : (suppliersData.data || []))
+      }).catch(() => {}),
     ])
   }, [effectiveCompanyId, isSuperAdmin])
 

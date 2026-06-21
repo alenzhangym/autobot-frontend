@@ -46,8 +46,10 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
       if (statusFilter) params.status = statusFilter
       if (supplierFilter) params.supplierName = supplierFilter
       const res = await api.get('/erp/purchase-orders', { params })
-      setOrders(res.data.data || [])
-      setTotal(res.data.count || 0)
+      // res.data is ApiResult wrapper: { code, message, data }
+      const apiData = res.data?.data || res.data || {}
+      setOrders(Array.isArray(apiData) ? apiData : (apiData.data || []))
+      setTotal(apiData.count || 0)
     } catch (e) {
       message.error('加载采购单失败: ' + (e.response?.data?.error || e.message))
     } finally { setLoading(false) }
@@ -77,7 +79,9 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
       const params = {}
       if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
       const res = await api.get('/erp/suppliers/all', { params })
-      setSuppliers((res.data || []).map(s => ({ value: s.name, label: s.name })))
+      // res.data is ApiResult wrapper, actual data is in res.data.data
+      const suppliersList = res.data?.data || res.data || []
+      setSuppliers(Array.isArray(suppliersList) ? suppliersList.map(s => ({ value: s.name, label: s.name })) : [])
     } catch (e) { /* ignore */ }
   }, [effectiveCompanyId, isSuperAdmin])
 

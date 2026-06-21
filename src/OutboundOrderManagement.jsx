@@ -70,8 +70,11 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
           api.get('/erp/customers', { params }),
           api.get('/erp/parts', { params: { ...params, size: 999 } }),
         ])
-        setCustomers(cRes.data.customers || [])
-        setParts(pRes.data.parts || [])
+        // Handle ApiResult wrapper: { code, message, data }
+        const customersData = cRes.data?.data || cRes.data || []
+        const partsData = pRes.data?.data || pRes.data || []
+        setCustomers(Array.isArray(customersData) ? customersData : (customersData.customers || []))
+        setParts(Array.isArray(partsData) ? partsData : (partsData.parts || []))
       } catch (e) { /* ignore */ }
     })()
   }, [isSuperAdmin, effectiveCompanyId])

@@ -45,8 +45,10 @@ export default function SalesOrderManagement({ user, companies = [] }) {
       if (keyword) params.keyword = keyword
       if (statusFilter) params.status = statusFilter
       const res = await api.get('/erp/sales-orders', { params })
-      setOrders(res.data.data || [])
-      setTotal(res.data.count || 0)
+      // Handle ApiResult wrapper: { code, message, data }
+      const apiData = res.data?.data || res.data || {}
+      setOrders(Array.isArray(apiData) ? apiData : (apiData.data || []))
+      setTotal(apiData.count || 0)
     } catch (e) {
       message.error('加载销售单失败: ' + (e.response?.data?.error || e.message))
     } finally { setLoading(false) }
@@ -59,7 +61,9 @@ export default function SalesOrderManagement({ user, companies = [] }) {
       const params = { size: 500 }
       if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
       const res = await api.get('/erp/customers', { params })
-      setCustomers((res.data.customers || []).map(c => ({ value: c.customerId, label: c.name })))
+      // Handle ApiResult wrapper: { code, message, data }
+      const customersData = res.data?.data || res.data || []
+      setCustomers(Array.isArray(customersData) ? customersData.map(c => ({ value: c.customerId, label: c.name })) : (customersData.customers || []).map(c => ({ value: c.customerId, label: c.name })))
     } catch (e) { /* ignore */ }
   }, [effectiveCompanyId, isSuperAdmin])
 
@@ -89,12 +93,15 @@ export default function SalesOrderManagement({ user, companies = [] }) {
         const params = { size: 2000 }
         if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
       const res = await api.get('/erp/parts', { params })
-        setParts((res.data.parts || []).map(p => ({
+        // Handle ApiResult wrapper: { code, message, data }
+        const partsData = res.data?.data || res.data || []
+        const partsList = Array.isArray(partsData) ? partsData : (partsData.parts || [])
+        setParts(partsList.map(p => ({
           partId: p.partId,
           userPartModel: p.userPartModel || '',
           partType: p.partType || '',
           manufacturer: p.manufacturer || '',
-          label: p.userPartModel || `物料ID:${p.partId}`
+          label: p.userPartModel || `物料 ID:${p.partId}`
         })))
       } catch (e) { /* ignore */ }
     }

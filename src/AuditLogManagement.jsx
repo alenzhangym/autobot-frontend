@@ -87,8 +87,10 @@ export default function AuditLogManagement({ user }) {
       }
       if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
       const res = await api.get('/erp/audit-logs', { params })
-      setRows(res.data.data || [])
-      setTotal(res.data.count || 0)
+      // Handle ApiResult wrapper: { code, message, data }
+      const apiData = res.data?.data || res.data || {}
+      setRows(Array.isArray(apiData) ? apiData : (apiData.data || []))
+      setTotal(apiData.count || 0)
     } catch (e) {
       if (e.response?.status === 403) {
         message.error('需要管理员权限才能访问')
