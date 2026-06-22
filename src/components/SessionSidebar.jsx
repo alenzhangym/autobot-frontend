@@ -4,15 +4,7 @@ import { PlusOutlined, FileTextOutlined, DatabaseOutlined, LogoutOutlined, Setti
 import { useTranslation } from 'react-i18next';
 import { useUserStore } from '../store/useUserStore';
 import api, { getLocalAgentBaseUrl } from '../auth';
-
-const ALL_CHANNELS = [
-  { key: 'general', label: '普通会话', desc: '通用AI助手', icon: '💬', antIcon: <MessageOutlined /> },
-  { key: 'document_qa', label: '文档问答', desc: '基于知识库的文档检索问答', icon: '📚', antIcon: <SearchOutlined /> },
-  { key: 'code', label: '代码任务', desc: '代码分析/生成/审查', icon: '💻', antIcon: <CodeOutlined /> },
-  { key: 'document_generation', label: '文档生成', desc: '创建文档/报告', icon: '📄', antIcon: <FileSearchOutlined /> },
-  { key: 'erp', label: 'ERP 进销存', desc: '库存/订单/客户管理', icon: '🏭', antIcon: <ShopOutlined /> },
-  { key: 'database_analysis', label: '数据库分析', desc: '查询公司数据库', icon: '🗄️', antIcon: <DatabaseOutlined /> },
-];
+import { CHANNELS as ALL_CHANNELS, CHANNELS_BY_KEY, getTaskTypeByChannel } from '../constants/taskTypes.jsx';
 
 function getChannelIcon(channel) {
   const ch = ALL_CHANNELS.find(c => c.key === channel);

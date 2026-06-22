@@ -59,6 +59,9 @@ export function useWebSocket(options = {}) {
             options.onUiRender(msg);
           } else if ((type === 'AGENT_STREAM' || type === 'AGENT_THOUGHT') && options.onAgentStream) {
             options.onAgentStream(msg);
+          } else if (type === 'REACT_TOOL_CALL' && options.onReActToolCall) {
+            // [P3] ReAct 工具调用事件 - 用于前端展示 "AI 正在使用 X 工具..."
+            options.onReActToolCall(msg);
           } else if (type === 'agent_step' && options.onAgentStep) {
             options.onAgentStep(msg);
           }

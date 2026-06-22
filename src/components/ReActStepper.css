@@ -1,0 +1,156 @@
+/* ReAct Stepper - 带连接线的步骤条 */
+
+.react-stepper {
+  background: linear-gradient(135deg, #f0f7ff 0%, #fafcff 100%);
+  border: 1px solid #d6e4ff;
+  border-radius: 8px;
+  margin: 8px 0;
+  overflow: hidden;
+  font-size: 13px;
+  max-width: 720px;
+}
+
+.react-stepper--running {
+  border-color: #91caff;
+  box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.08);
+  animation: react-pulse 2s ease-in-out infinite;
+}
+
+@keyframes react-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.08); }
+  50% { box-shadow: 0 0 0 4px rgba(22, 119, 255, 0.16); }
+}
+
+.react-stepper__header {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  background: rgba(255, 255, 255, 0.6);
+  border-bottom: 1px solid #e6f0ff;
+  transition: background 0.2s;
+}
+
+.react-stepper__header:hover {
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.react-stepper__body {
+  padding: 8px 0 12px 0;
+}
+
+.react-stepper__row {
+  display: flex;
+  align-items: stretch;
+  position: relative;
+  padding: 4px 12px 4px 0;
+}
+
+.react-stepper__rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 36px;
+  flex-shrink: 0;
+  position: relative;
+  padding-top: 2px;
+}
+
+.react-stepper__dot {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: #999;
+  background: #fff;
+  border: 2px solid #d9d9d9;
+  z-index: 1;
+  transition: all 0.3s;
+}
+
+/* 状态：OK */
+.react-stepper__row:has(.ant-tag-success) .react-stepper__dot {
+  color: #52c41a;
+  border-color: #52c41a;
+  background: #f6ffed;
+}
+
+/* 状态：FAILED */
+.react-stepper__row:has(.ant-tag-error) .react-stepper__dot {
+  color: #ff4d4f;
+  border-color: #ff4d4f;
+  background: #fff1f0;
+}
+
+/* 状态：CALLING */
+.react-stepper__row:has(.ant-tag-processing) .react-stepper__dot {
+  color: #1677ff;
+  border-color: #1677ff;
+  background: #e6f4ff;
+  animation: dot-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes dot-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+}
+
+.react-stepper__line {
+  width: 2px;
+  flex: 1;
+  min-height: 24px;
+  background: #d9d9d9;
+  margin-top: 2px;
+  border-radius: 1px;
+}
+
+.react-stepper__line--OK {
+  background: linear-gradient(180deg, #52c41a 0%, #95de64 100%);
+}
+
+.react-stepper__line--FAILED {
+  background: linear-gradient(180deg, #ff4d4f 0%, #ff7875 100%);
+}
+
+.react-stepper__line--CALLING {
+  background: linear-gradient(180deg, #1677ff 0%, #69b1ff 100%);
+  background-size: 200% 200%;
+  animation: line-flow 1.5s ease infinite;
+}
+
+@keyframes line-flow {
+  0% { background-position: 0% 0%; }
+  100% { background-position: 0% 200%; }
+}
+
+.react-stepper__content {
+  flex: 1;
+  padding: 2px 8px 8px 4px;
+  min-width: 0;
+}
+
+.react-stepper__title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 2px;
+}
+
+.react-stepper__input {
+  font-size: 12px;
+  color: #595959;
+  background: rgba(255, 255, 255, 0.7);
+  border-left: 2px solid #d6e4ff;
+  padding: 4px 8px;
+  border-radius: 0 4px 4px 0;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+}

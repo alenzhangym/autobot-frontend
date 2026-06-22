@@ -9,6 +9,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { extractDataStoreIds, isValidDataStoreResponse, fetchMissingDataFromServer, injectDataStoreData, decodeHtmlEntities, cleanScriptSrc, wrapUiHtml, isHtmlContent, MarkdownContent, extractTrailingStateJson, stripAgentMarkers, extractAnalysisState, tryParseAnalysisResult, decodeStateStringList } from '../utils/helpers.jsx';
 import { formatAnalysisPhase, CodeAnalysisProgress } from '../hooks/useAnalysisProgress.jsx';
 import FixIssueCard from './FixIssueCard';
+import ReActStepper from './ReActStepper';
 
 const PRIORITY_COLOR = {
   P0: { color: '#ff4d4f', bg: 'rgba(255,77,79,0.10)' },
@@ -221,6 +222,7 @@ function MessageBubble({ msg, onCopy, onRegenerate, onExpand, onDelete, sessionI
   
   const isUser = msg.role === 'user';
   const isPlan = msg.role === 'plan';
+  const isReActFlow = msg.role === 'react_flow';
 
   // ── Graceful degradation: keep last valid parse results ──
   // When a new message's JSON is truncated/malformed, parsing returns null.
@@ -347,6 +349,13 @@ function MessageBubble({ msg, onCopy, onRegenerate, onExpand, onDelete, sessionI
   if (isPlan && msg.content && msg.content.plan) {
     return (
       <PlanMessage content={msg.content} onDelete={onDelete} msgId={msg.id} msg={msg} />
+    );
+  }
+
+  // [P3] ReAct 工具调用流程 - 带连接线的步骤条
+  if (isReActFlow && msg.events) {
+    return (
+      <ReActFlowMessage msg={msg} onDelete={onDelete} />
     );
   }
 
@@ -532,6 +541,42 @@ function MessageBubble({ msg, onCopy, onRegenerate, onExpand, onDelete, sessionI
             )}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * [P3] ReAct 流程消息 - 展示带连接线的工具调用步骤条
+ */
+function ReActFlowMessage({ msg, onDelete }) {
+  const [hovered, setHovered] = useState(false);
+  const events = msg.events || [];
+  return (
+    <div
+      style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 12 }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <Avatar
+        icon={<BranchesOutlined />}
+        size={32}
+        style={{ background: '#722ed1', flexShrink: 0 }}
+      />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+          <Text style={{ color: '#888', fontSize: 12 }}>AutoBot · ReAct</Text>
+          {hovered && onDelete && msg.id && (
+            <Button
+              type="text"
+              size="small"
+              icon={<DeleteOutlined />}
+              onClick={onDelete}
+              style={{ color: '#999', marginLeft: 'auto' }}
+            />
+          )}
+        </div>
+        <ReActStepper events={events} isActive={msg.isActive} />
       </div>
     </div>
   );

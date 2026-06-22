@@ -2,15 +2,7 @@ import React, { useState } from 'react';
 import { Modal, Form, Input, Button, Space, Tag, Divider, Checkbox, Select } from 'antd';
 import { DeleteOutlined, EditOutlined, CheckOutlined, PlusOutlined, CrownOutlined, BranchesOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
-
-const CHANNELS = [
-  { key: 'general', label: '普通会话', desc: '通用AI助手' },
-  { key: 'document_qa', label: '文档问答', desc: '基于知识库的文档检索问答' },
-  { key: 'code', label: '代码任务', desc: '代码分析/生成/审查' },
-  { key: 'document_generation', label: '文档生成', desc: '创建文档/报告' },
-  { key: 'erp', label: 'ERP 进销存', desc: '库存/订单/客户管理' },
-  { key: 'database_analysis', label: '数据库分析', desc: '查询公司数据库' },
-];
+import { CHANNELS } from './constants/taskTypes.jsx';
 
 function CompanyManagement({ open, onClose, companies, onAddCompany, onUpdateCompany, onDeleteCompany }) {
   const { t } = useTranslation()

@@ -2,207 +2,95 @@ import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Card, Typography, Button, Row, Col, Divider, Tag, Space, List, Avatar, Spin, Alert, message } from 'antd'
 import api, { isAuthenticated } from './auth'
+import { CHANNELS_BY_TASK_TYPE, TASK_TYPE } from './constants/taskTypes.jsx'
 import {
   RobotOutlined,
   CodeOutlined,
   DatabaseOutlined,
   GlobalOutlined,
   FileTextOutlined,
-  BugOutlined,
-  LineChartOutlined,
-  LayoutOutlined,
-  VideoCameraOutlined,
-  ThunderboltOutlined,
-  LoginOutlined,
-  SettingOutlined,
-  AppstoreOutlined,
-  ProfileOutlined,
-  ClusterOutlined,
-  SyncOutlined,
   MessageOutlined,
+  LoginOutlined,
   UserOutlined,
-  LockOutlined
+  LockOutlined,
+  ThunderboltOutlined,
+  SettingOutlined,
+  LayoutOutlined,
+  LineChartOutlined
 } from '@ant-design/icons'
 
 const { Title, Text, Paragraph } = Typography
 
 // Agent 功能描述数据
+// 任务类型 - 与后端 TaskType 枚举保持一致（4 个核心类型 + ERP 独立分支）
+// 方向 B+C 重构：按"任务类型"维度展示，对齐后端 buildXxxTaskPlan
 const agentCategories = [
   {
-    id: 'code',
-    title: '代码开发 Agent',
-    description: '自动化代码分析、生成与修复',
-    icon: <CodeOutlined style={{ fontSize: 32, color: '#1677ff' }} />,
-    agents: [
-      {
-        name: 'CodeAgent',
-        desc: '代码生成与编辑，支持多语言（Java/TypeScript/Go）',
-        features: ['代码生成', '文件编辑', '构建执行', '错误修复']
-      },
-      {
-        name: 'CodeAnalysisAgent',
-        desc: '静态代码分析，识别潜在问题与优化建议',
-        features: ['代码扫描', '问题检测', '报告生成']
-      },
-      {
-        name: 'CodeValidatorAgent',
-        desc: '代码验证与测试，确保修改正确性',
-        features: ['单元测试', '集成验证', '回归检测']
-      }
-    ]
-  },
-  {
-    id: 'data',
-    title: '数据分析 Agent',
-    description: '数据库查询、数据探索与可视化分析',
-    icon: <DatabaseOutlined style={{ fontSize: 32, color: '#52c41a' }} />,
-    agents: [
-      {
-        name: 'DBSqlAgent',
-        desc: '智能 SQL 生成与执行，支持多数据库类型',
-        features: ['SQL 生成', '查询优化', '安全验证', '结果格式化']
-      },
-      {
-        name: 'DataProfilerAgent',
-        desc: '数据探查与统计，自动生成数据概览',
-        features: ['数据分布', '异常检测', '统计指标']
-      },
-      {
-        name: 'DataStoreAgent',
-        desc: '数据持久化与检索，支持大规模数据集',
-        features: ['数据存储', '索引构建', '高效查询']
-      }
-    ]
-  },
-  {
-    id: 'web',
-    title: 'Web 交互 Agent',
-    description: '浏览器自动化与网页内容处理',
-    icon: <GlobalOutlined style={{ fontSize: 32, color: '#faad14' }} />,
-    agents: [
-      {
-        name: 'BrowserAgent',
-        desc: '浏览器自动化操作，支持网页导航与交互',
-        features: ['页面访问', '元素定位', '表单填写', '截图保存']
-      },
-      {
-        name: 'RagQueryAgent',
-        desc: '基于知识库的问答检索，精准获取信息',
-        features: ['语义检索', '知识整合', '答案生成']
-      }
-    ]
-  },
-  {
-    id: 'document',
-    title: '文档处理 Agent',
-    description: '文档解析、提取与知识管理',
-    icon: <FileTextOutlined style={{ fontSize: 32, color: '#722ed1' }} />,
-    agents: [
-      {
-        name: 'DocumentAgent',
-        desc: '文档解析与内容提取，支持多种格式',
-        features: ['PDF 解析', 'Office 文档', '文本提取']
-      },
-      {
-        name: 'KnowledgeExtractorAgent',
-        desc: '知识图谱构建与三元组提取',
-        features: ['实体识别', '关系抽取', '图谱存储']
-      },
-      {
-        name: 'DocumentArchitectAgent',
-        desc: '文档架构设计与蓝图生成',
-        features: ['结构规划', '章节设计', '依赖分析']
-      }
-    ]
-  },
-  {
-    id: 'debug',
-    title: '调试与诊断 Agent',
-    description: '智能错误定位与问题修复',
-    icon: <BugOutlined style={{ fontSize: 32, color: '#eb2f96' }} />,
-    agents: [
-      {
-        name: 'DebugAgent',
-        desc: '调试信息收集与异常分析',
-        features: ['日志分析', '堆栈追踪', '断点管理']
-      },
-      {
-        name: 'ReflectionAgent',
-        desc: '自我反思与执行优化',
-        features: ['结果评估', '策略调整', '经验积累']
-      },
-      {
-        name: 'CriticAgent',
-        desc: '代码与方案质量评审',
-        features: ['一致性检查', '事实验证', '逻辑评估']
-      }
-    ]
-  },
-  {
-    id: 'visual',
-    title: '可视化与 UI 生成 Agent',
-    description: '数据可视化与界面自动生成',
-    icon: <LineChartOutlined style={{ fontSize: 32, color: '#faad14' }} />,
-    agents: [
-      {
-        name: 'UIAgent',
-        desc: 'HTML/CSS界面生成与渲染',
-        features: ['页面布局', '样式设计', '交互实现']
-      },
-      {
-        name: 'VisualAgent',
-        desc: '图表与可视化元素生成',
-        features: ['Mermaid 图表', '数据可视化', '流程图']
-      }
-    ]
-  },
-  {
-    id: 'reasoning',
-    title: '推理与规划 Agent',
-    description: '复杂任务分解与多步推理',
+    id: TASK_TYPE.GENERAL_QUERY,
+    title: '通用查询（ReAct 推理）',
+    description: '复杂任务自动分解 + 原子工具调用',
     icon: <RobotOutlined style={{ fontSize: 32, color: '#1677ff' }} />,
+    channels: CHANNELS_BY_TASK_TYPE.GENERAL_QUERY || [],
     agents: [
-      {
-        name: 'PlannerAgent',
-        desc: '任务分解与执行计划生成',
-        features: ['意图识别', '步骤规划', '依赖分析']
-      },
-      {
-        name: 'ReasoningAgent',
-        desc: '多步推理与问题求解',
-        features: ['逻辑推理', '工具调用', '自纠错']
-      },
-      {
-        name: 'SummaryAgent',
-        desc: '结果汇总与报告生成',
-        features: ['信息整合', '要点提炼', '格式输出']
-      }
+      { name: 'ReasoningAgent', desc: '多步推理与 ReAct 循环', features: ['逻辑推理', '工具调用', '自纠错'] },
+      { name: 'RagAgent', desc: '企业知识库检索', features: ['语义检索', 'top_k', '多文档'] },
+      { name: 'DBSqlAgent', desc: '受控 SQL 查询（SELECT only）', features: ['安全校验', '结果格式化'] },
+      { name: 'DBInspectAgent', desc: '表结构探查', features: ['schema 导出', '索引信息'] },
+      { name: 'CodeAnalysisAgent', desc: '代码符号搜索', features: ['符号匹配', '引用追踪'] },
     ]
   },
   {
-    id: 'sync',
-    title: '同步与集成 Agent',
-    description: '外部系统集成与数据同步',
-    icon: <SyncOutlined style={{ fontSize: 32, color: '#52c41a' }} />,
+    id: TASK_TYPE.CODE_TASK,
+    title: '代码任务',
+    description: '代码分析 / 生成 / 修复（统一入口）',
+    icon: <CodeOutlined style={{ fontSize: 32, color: '#722ed1' }} />,
+    channels: CHANNELS_BY_TASK_TYPE.CODE_TASK || [],
     agents: [
-      {
-        name: 'ERPOrchestrator',
-        desc: 'ERP 系统流程编排与执行',
-        features: ['订单处理', '库存管理', '财务对账']
-      },
-      {
-        name: 'ScheduledTaskAgent',
-        desc: '定时任务调度与执行',
-        features: ['任务编排', '时间触发', '状态监控']
-      },
-      {
-        name: 'MemoryAgent',
-        desc: '会话记忆与上下文管理',
-        features: ['历史追溯', '偏好学习', '状态保存']
-      }
+      { name: 'CodeAnalysisAgent', desc: '代码结构与依赖分析', features: ['代码扫描', '问题检测', '报告生成'] },
+      { name: 'CodeAgent', desc: '代码生成与编辑（Java/TS/Go）', features: ['代码生成', '文件编辑', '构建执行'] },
+      { name: 'CodeValidatorAgent', desc: '代码验证与测试', features: ['单元测试', '集成验证', '回归检测'] },
     ]
-  }
+  },
+  {
+    id: TASK_TYPE.DOC_TASK,
+    title: '文档任务',
+    description: '文档问答 / 文档生成 / 摘要（统一入口）',
+    icon: <FileTextOutlined style={{ fontSize: 32, color: '#fa8c16' }} />,
+    channels: CHANNELS_BY_TASK_TYPE.DOC_TASK || [],
+    agents: [
+      { name: 'RagAgent', desc: '文档检索（QA 模式）', features: ['语义检索', '答案生成'] },
+      { name: 'DocumentArchitectAgent', desc: '文档结构设计（Generation 模式）', features: ['结构规划', '章节设计'] },
+      { name: 'ContentAgent', desc: '文档内容生成', features: ['段落生成', '知识引用'] },
+      { name: 'DocumentAssembler', desc: '文档组装输出', features: ['格式编排', '模板应用'] },
+      { name: 'SummaryAgent', desc: '多文档摘要', features: ['要点提炼', '摘要输出'] },
+    ]
+  },
+  {
+    id: TASK_TYPE.DB_TASK,
+    title: '数据库任务',
+    description: '数据库分析 / 报表生成（统一入口）',
+    icon: <DatabaseOutlined style={{ fontSize: 32, color: '#52c41a' }} />,
+    channels: CHANNELS_BY_TASK_TYPE.DB_TASK || [],
+    agents: [
+      { name: 'DBInspectAgent', desc: '表结构探查', features: ['schema 导出', '索引分析'] },
+      { name: 'DBSqlAgent', desc: '智能 SQL 生成与执行', features: ['SQL 生成', '查询优化', '结果格式化'] },
+      { name: 'DataProfilerAgent', desc: '数据探查与统计', features: ['数据分布', '异常检测'] },
+      { name: 'SummaryAgent', desc: '分析结果汇总', features: ['报告生成', '要点提炼'] },
+      { name: 'UIAgent', desc: '结果可视化展示', features: ['表格渲染', '图表生成'] },
+    ]
+  },
+  {
+    id: 'ERP',
+    title: 'ERP 进销存',
+    description: '采购 / 入库 / 出库 / 销售 / 对账',
+    icon: <GlobalOutlined style={{ fontSize: 32, color: '#13c2c2' }} />,
+    channels: CHANNELS_BY_TASK_TYPE.OTHER || [],
+    agents: [
+      { name: 'ERPOrchestrator', desc: 'ERP 流程编排与执行', features: ['订单处理', '库存管理', '财务对账'] },
+    ]
+  },
 ]
+
 
 // 登录表单组件
 function LoginForm({ onLoginSuccess, onBackToHome }) {
@@ -449,6 +337,26 @@ function HomeContent({ onLoginClick }) {
                     <Text style={{ color: '#888', fontSize: '14px' }}>
                       {category.description}
                     </Text>
+                    {category.channels && category.channels.length > 0 && (
+                      <div style={{ marginTop: 8 }}>
+                        <Text style={{ color: '#666', fontSize: '11px', marginRight: 6 }}>入口：</Text>
+                        {category.channels.map((ch) => (
+                          <Tag
+                            key={ch.key}
+                            style={{
+                              fontSize: '11px',
+                              padding: '2px 8px',
+                              borderRadius: 4,
+                              background: 'rgba(82, 196, 26, 0.1)',
+                              color: '#52c41a',
+                              border: '1px solid rgba(82, 196, 26, 0.3)'
+                            }}
+                          >
+                            {ch.icon} {ch.label}
+                          </Tag>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   <List

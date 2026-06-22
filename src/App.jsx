@@ -54,6 +54,7 @@ import enUS from 'antd/es/locale/en_US'
 import { Virtuoso } from 'react-virtuoso'
 import { extractTrailingStateJson, stripAgentMarkers, tryParseAnalysisResult, getLastParseError, decodeStateStringList, replaceTrailingAnalysisState, mergeAnalysisStateContent, extractAnalysisState } from './utils/helpers.jsx'
 import { createHealthPoller, probeHttp } from './utils/healthPoller.js'
+import { getTaskTypeByChannel, CHANNELS_BY_KEY } from './constants/taskTypes.jsx'
 
 // ── Web Worker for async profileData ─────────────────────────────────────────
 const profileDataWorker = new Worker(new URL('./workers/profileData.worker.js', import.meta.url), { type: 'module' });
@@ -1362,6 +1363,45 @@ function App() {
 
           if (data.type === 'plan') {
             setMessages(prev => [...prev, { role: 'plan', content: data.message }])
+          } else if (data.type === 'REACT_TOOL_CALL') {
+            // [P3] ReAct 工具调用进度 - 聚合同一会话内的所有步骤到一条 react_flow 消息
+            const iteration = data.iteration ?? 0
+            const tool = data.tool || '?'
+            const mappedAgent = data.mappedAgent || '?'
+            const status = data.status || 'CALLING'
+            const input = data.input || ''
+            const truncated = input.length > 80 ? input.substring(0, 80) + '...' : input
+            const statusIcon = status === 'CALLING' ? '⚙️' : status === 'OK' ? '✅' : status === 'FAILED' ? '❌' : '❓'
+            const logLine = `${statusIcon} [ReAct #${iteration + 1}] ${tool} → ${mappedAgent} | ${truncated}\n`
+            if (typeof appendLiveLog === 'function') appendLiveLog(logLine)
+            setMessages(prev => {
+              // 找到同 session 的最后一个 react_flow 消息，没有就新建
+              const newMsgs = [...prev]
+              let flowIdx = -1
+              for (let i = newMsgs.length - 1; i >= 0; i--) {
+                if (newMsgs[i].role === 'react_flow') { flowIdx = i; break; }
+                // 遇到 user 消息就停（不同 turn）
+                if (newMsgs[i].role === 'user') break;
+              }
+              const newEvent = { tool, mappedAgent, status, iteration, input, logLine, ts: Date.now() }
+              if (flowIdx === -1) {
+                newMsgs.push({
+                  role: 'react_flow',
+                  content: 'ReAct 推理中...',
+                  events: [newEvent],
+                  isActive: status === 'CALLING',
+                })
+              } else {
+                const existing = newMsgs[flowIdx]
+                newMsgs[flowIdx] = {
+                  ...existing,
+                  events: [...(existing.events || []), newEvent],
+                  isActive: status === 'CALLING' || existing.isActive,
+                }
+              }
+              return newMsgs
+            })
+            return  // 短路后面的 plan 消息处理
           } else if (data.type === 'ui_render') {
             const localId = data.id || Date.now()
             setMessages(prev => [...prev, { id: data.id || null, _localId: localId, role: 'ui_render', content: data.message }])
@@ -2067,9 +2107,19 @@ function App() {
       setWorkspaceDir(wsDir)
       setWsInvalid(false) // Workspace is now valid
     }
+    // [方向 B+C 重构] 根据 channel 自动计算 taskType + subType，对齐后端
+    const channelDef = CHANNELS_BY_KEY[ch] || {};
+    const sessionMeta = {
+      id: newId,
+      title: 'New Chat',
+      channel: ch,
+      taskType: channelDef.taskType || null,
+      subType: channelDef.subType || null,
+      createdAt: new Date().toISOString()
+    };
     setSessions(prev => {
       const withoutTemp = prev.filter(s => s.title !== 'New Chat')
-      return [{ id: newId, title: 'New Chat', channel: ch, createdAt: new Date().toISOString() }, ...withoutTemp]
+      return [sessionMeta, ...withoutTemp]
     })
   }
 
