@@ -66,21 +66,25 @@ export default function ReconciliationManagement({ user, companies = [] }) {
   // 列表刷新后，自动预加载所有对账单的明细（用于在卡片中直接展示物料行）
   useEffect(() => {
     if (!records || records.length === 0) return
-    const missing = records.filter(r => !expandedDetails[r.reconciliation_id])
-    if (missing.length === 0) return
     const params = {}
     if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
-    Promise.all(missing.map(r =>
-      api.get(`/erp/reconciliations/${r.reconciliation_id}`, { params })
-        .then(res => ({ key: r.reconciliation_id, data: res.data }))
-        .catch(() => null)
-    )).then(results => {
-      const updates = {}
-      for (const r of results) if (r && r.data) updates[r.key] = r.data
-      if (Object.keys(updates).length > 0) {
-        setExpandedDetails(prev => ({ ...prev, ...updates }))
+    const refreshExpandedDetail = async (recId) => {
+      if (missing.length === 0) return
+      try {
+        const results = await Promise.all(missing.map(r =>
+          api.get(`/erp/reconciliations/${r.reconciliation_id}`, { params })
+            .then(res => ({ key: r.reconciliation_id, data: res.data }))
+            .catch(() => null)
+        ))
+        const updates = {}
+        for (const r of results) if (r && r.data) updates[r.key] = r.data
+        if (Object.keys(updates).length > 0) {
+          setExpandedDetails(prev => ({ ...prev, ...updates }))
+        }
+      } catch (e) {
+        message.error('刷新对账明细失败: ' + (e.response?.data?.message || e.response?.data?.error || e.message))
       }
-    })
+    }
   }, [records])
 
   // 加载客户/供应商清单 (供选择器使用)
@@ -123,7 +127,9 @@ export default function ReconciliationManagement({ user, companies = [] }) {
       if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
       const res = await api.get(`/erp/reconciliations/${record.reconciliation_id}`, { params })
       setExpandedDetails(prev => ({ ...prev, [key]: res.data }))
-    } catch (e) { /* ignore */ }
+    } catch (e) {
+      message.error('加载对账明细失败: ' + (e.response?.data?.message || e.response?.data?.error || e.message))
+    }
   }
 
   const refreshExpandedDetail = async (recId) => {
