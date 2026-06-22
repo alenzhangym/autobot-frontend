@@ -66,10 +66,11 @@ export default function ReconciliationManagement({ user, companies = [] }) {
   // 列表刷新后，自动预加载所有对账单的明细（用于在卡片中直接展示物料行）
   useEffect(() => {
     if (!records || records.length === 0) return
+    const missing = records.filter(r => !expandedDetails[r.reconciliation_id])
+    if (missing.length === 0) return
     const params = {}
     if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
-    const refreshExpandedDetail = async (recId) => {
-      if (missing.length === 0) return
+    ;(async () => {
       try {
         const results = await Promise.all(missing.map(r =>
           api.get(`/erp/reconciliations/${r.reconciliation_id}`, { params })
@@ -84,7 +85,7 @@ export default function ReconciliationManagement({ user, companies = [] }) {
       } catch (e) {
         message.error('刷新对账明细失败: ' + (e.response?.data?.message || e.response?.data?.error || e.message))
       }
-    }
+    })()
   }, [records])
 
   // 加载客户/供应商清单 (供选择器使用)
