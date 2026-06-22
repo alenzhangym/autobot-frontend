@@ -175,7 +175,8 @@ export default function InboundOrderManagement({ user, companies = [] }) {
       const params = { supplierName, limit: 100 }
       if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
       const res = await api.get('/erp/purchase-orders', { params })
-      setPurchaseOrders((res.data.data || []).filter(po => po.status !== 'RECEIVED'))
+      const poPayload = res.data?.data || res.data || {}
+      setPurchaseOrders((poPayload.data || []).filter(po => po.status !== 'RECEIVED'))
     } catch (e) { /* ignore */ }
     setPoLoading(false)
   }
@@ -185,7 +186,7 @@ export default function InboundOrderManagement({ user, companies = [] }) {
       const params = {}
       if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
       const res = await api.get(`/erp/purchase-orders/${poId}`, { params })
-      return res.data?.items || []
+      return res.data?.data?.items || res.data?.items || []
     } catch (e) { return [] }
   }
 
@@ -229,7 +230,8 @@ export default function InboundOrderManagement({ user, companies = [] }) {
       const params = { supplierName, limit: 100 }
       if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
       const res = await api.get('/erp/purchase-orders', { params })
-      const list = (res.data.data || []).filter(po => po.status !== 'RECEIVED')
+      const poPayload = res.data?.data || res.data || {}
+      const list = (poPayload.data || []).filter(po => po.status !== 'RECEIVED')
       setPurchaseOrders(list)
       await buildItemsFromPurchaseOrders(list)
     } catch (e) { /* ignore */ }

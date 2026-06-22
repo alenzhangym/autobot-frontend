@@ -125,7 +125,7 @@ export default function SalesOrderManagement({ user, companies = [] }) {
       const params = {}
       if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
       const res = await api.get(`/erp/sales-orders/${record.sales_id}`, { params })
-      const detail = res.data
+      const detail = res.data?.data || res.data
       form.setFieldsValue({
         customerPo: detail.customer_po, customerId: detail.customer_id,
         orderDate: detail.order_date ? dayjs(detail.order_date) : null,
@@ -291,7 +291,7 @@ export default function SalesOrderManagement({ user, companies = [] }) {
     if (expandedItems[record.sales_id]) return
     try {
       const res = await api.get(`/erp/sales-orders/${record.sales_id}`)
-      const items = res.data?.items || []
+      const items = res.data?.data?.items || []
       setExpandedItems(prev => ({ ...prev, [record.sales_id]: items }))
     } catch (e) { /* ignore */ }
   }

@@ -25,7 +25,7 @@ export default function ErpManagement({ user, companies = [] }) {
     try {
       const params = isSuperAdmin && selectedCompanyId ? { companyId: selectedCompanyId } : {}
       const res = await api.get('/erp/admin/tables', { params })
-      setTables(res.data.tables || [])
+      setTables(res.data?.data?.tables || res.data?.tables || [])
     } catch (e) { console.error('Failed to fetch tables', e) }
   }, [isSuperAdmin, selectedCompanyId])
 
@@ -36,7 +36,7 @@ export default function ErpManagement({ user, companies = [] }) {
     try {
       const params = isSuperAdmin && selectedCompanyId ? { companyId: selectedCompanyId } : {}
       const res = await api.get(`/erp/admin/tables/${tableName}/fields`, { params })
-      setFields(res.data.fields || [])
+      setFields(res.data?.data?.fields || res.data?.fields || [])
     } catch (e) { console.error('Failed to fetch fields', e) }
   }, [isSuperAdmin, selectedCompanyId])
 
@@ -46,8 +46,9 @@ export default function ErpManagement({ user, companies = [] }) {
     try {
       const params = { limit: 50, page: p }
       const res = await api.get('/erp/admin/audit-logs/my-company', { params })
-      setAuditLogs(res.data.logs || [])
-      setAuditTotal(res.data.total || 0)
+      const auditPayload = res.data?.data || res.data || {}
+      setAuditLogs(auditPayload.logs || [])
+      setAuditTotal(auditPayload.total || 0)
     } catch (e) { message.error('加载审计日志失败') }
     finally { setAuditLoading(false) }
   }, [])

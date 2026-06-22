@@ -42,8 +42,9 @@ export default function CustomerManagement({ user, companies = [] }) {
       const params = { page, size: pageSize, keyword: keyword || undefined }
       if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
       const res = await api.get('/erp/customers', { params })
-      setCustomers(res.data.customers || [])
-      setTotal(res.data.total || 0)
+      const custPayload = res.data?.data || res.data || {}
+      setCustomers(custPayload.customers || [])
+      setTotal(custPayload.total || 0)
     } catch (e) {
       message.error('加载客户失败: ' + (e.response?.data?.error || e.message))
     } finally { setLoading(false) }

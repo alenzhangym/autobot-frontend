@@ -48,9 +48,10 @@ export default function PartManagement({ user, companies = [] }) {
       const params = { page, size: pageSize, keyword: keyword || undefined }
       if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
       const res = await api.get('/erp/parts', { params })
-      const fetched = res.data.parts || []
+      const partPayload = res.data?.data || res.data || {}
+      const fetched = partPayload.parts || []
       setParts(fetched)
-      setTotal(res.data.total || 0)
+      setTotal(partPayload.total || 0)
       const types = [...new Set([...DEFAULT_PART_TYPES, ...fetched.map(p => p.partType).filter(Boolean)])]
       setPartTypes(types)
     } catch (e) {

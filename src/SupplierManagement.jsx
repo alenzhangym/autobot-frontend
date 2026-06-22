@@ -23,8 +23,9 @@ export default function SupplierManagement({ user, companies = [] }) {
       if (keyword) params.keyword = keyword
       if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
       const res = await api.get('/erp/suppliers', { params })
-      setSuppliers(res.data.suppliers || [])
-      setTotal(res.data.total || 0)
+      const supPayload = res.data?.data || res.data || {}
+      setSuppliers(supPayload.suppliers || [])
+      setTotal(supPayload.total || 0)
     } catch (e) { message.error('加载供应商列表失败') }
     finally { setLoading(false) }
   }, [keyword, isSuperAdmin, effectiveCompanyId])

@@ -45,8 +45,9 @@ export default function CustomerPartMappingManagement({ user, companies = [] }) 
       const params = { page, size: pageSize, keyword: keyword || undefined, customerId: filterCustomerId || undefined }
       if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
       const res = await api.get('/erp/customer-part-mappings', { params })
-      setMappings(res.data.mappings || [])
-      setTotal(res.data.total || 0)
+      const mapPayload = res.data?.data || res.data || {}
+      setMappings(mapPayload.mappings || [])
+      setTotal(mapPayload.total || 0)
     } catch (e) {
       message.error('加载失败: ' + (e.response?.data?.error || e.message))
     } finally { setLoading(false) }

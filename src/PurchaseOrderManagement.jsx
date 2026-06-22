@@ -62,7 +62,8 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
       const params = { size: 2000 }
       if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
       const res = await api.get('/erp/parts', { params })
-      const list = (res.data.parts || []).map(p => {
+      const partsPayload = res.data?.data || res.data || {}
+      const list = (partsPayload.parts || []).map(p => {
         const model = p.userPartModel || ''
         return { value: p.partId, label: model || `物料ID:${p.partId}`, partId: p.partId, partType: p.partType || '' }
       })
@@ -96,7 +97,7 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
       const params = {}
       if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
       const res = await api.get(`/erp/purchase-orders/${record.purchase_id}`, { params })
-      const detail = res.data
+      const detail = res.data?.data || res.data
       form.setFieldsValue({
         supplierName: detail.supplier_name,
         expectedDeliveryDate: detail.expected_delivery_date ? dayjs(detail.expected_delivery_date) : null,
@@ -187,7 +188,7 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
     if (expandedItems[record.purchase_id]) return
     try {
       const res = await api.get(`/erp/purchase-orders/${record.purchase_id}`)
-      const items = res.data?.items || []
+      const items = res.data?.data?.items || res.data?.items || []
       setExpandedItems(prev => ({ ...prev, [record.purchase_id]: items }))
     } catch (e) { /* ignore */ }
   }

@@ -22,7 +22,8 @@ export default function ImportProductRelation({ user, companies = [] }) {
         const params = {}
         if (effectiveCompanyId) params.companyId = effectiveCompanyId
         const res = await api.get('/erp/customers', { params })
-        setCustomers(res.data.customers || [])
+        const custPayload = res.data?.data || res.data || {}
+        setCustomers(custPayload.customers || [])
       } catch (e) { /* ignore */ }
     })()
   }, [effectiveCompanyId])

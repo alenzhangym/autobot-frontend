@@ -194,7 +194,8 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
       const params = { customerId, limit: 100 }
       if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
       const res = await api.get('/erp/sales-orders', { params })
-      setSalesOrders((res.data.data || []).filter(so => so.status !== 'SHIPPED'))
+      const soPayload = res.data?.data || res.data || {}
+      setSalesOrders((soPayload.data || []).filter(so => so.status !== 'SHIPPED'))
     } catch (e) { /* ignore */ }
     setSoLoading(false)
   }
@@ -204,7 +205,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
       const params = {}
       if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
       const res = await api.get(`/erp/sales-orders/${soId}`, { params })
-      return res.data?.items || []
+      return res.data?.data?.items || res.data?.items || []
     } catch (e) { return [] }
   }
 
@@ -327,7 +328,8 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
       const params = { customerId, limit: 100 }
       if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
       const res = await api.get('/erp/sales-orders', { params })
-      const list = (res.data.data || []).filter(so => so.status !== 'SHIPPED')
+      const soPayload = res.data?.data || res.data || {}
+      const list = (soPayload.data || []).filter(so => so.status !== 'SHIPPED')
       setSalesOrders(list)
       await buildItemsFromSalesOrders(list)
     } catch (e) { /* ignore */ }
@@ -486,7 +488,23 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
       fetchOrders()
     } catch (e) {
       if (e.errorFields) return
-      message.error('创建失败: ' + (e.response?.data?.error || e.message))
+      const errData = e.response?.data
+      if (errData?.code === 'INVENTORY_INSUFFICIENT') {
+        Modal.confirm({
+          title: '库存不足',
+          content: errData.message || '当前库存不足以完成本次出库，请调整数量后重试。',
+          okText: '我知道了',
+          cancelText: '取消',
+          onOk: () => {
+            setShowCreateModal(false)
+            setItems([emptyItem()])
+            setSelectedCustId(null)
+            setSalesOrders([])
+          },
+        })
+        return
+      }
+      message.error('创建失败: ' + (errData?.message || e.message))
     }
   }
 
