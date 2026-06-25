@@ -1,10 +1,11 @@
 import React, { useState, useCallback, useEffect, useRef, useImperativeHandle, forwardRef } from 'react'
 import { Layout, Input, Button, Tree, Space, Typography, message, Spin, Modal, List } from 'antd'
-import { FolderOpenOutlined, FileOutlined, ReloadOutlined, SaveOutlined, EditOutlined, HomeOutlined } from '@ant-design/icons'
+import { FolderOpenOutlined, FileOutlined, ReloadOutlined, SaveOutlined, EditOutlined, HomeOutlined, SearchOutlined } from '@ant-design/icons'
 import api, { getBackendHost, getLocalAgentBaseUrl } from '../auth'
 import axios from 'axios'
 import { shouldRequireConfirmation, formatCommandSummary, addTrustedPattern, patternFromCommand } from './agentCommandSafety'
 import { extractTrailingStateJson, extractImplStateBlock } from '../utils/helpers.jsx'
+import WorkspaceTopologySearch from './WorkspaceTopologySearch'
 
 const localApi = axios.create({ baseURL: getLocalAgentBaseUrl(), timeout: 600000 })
 
@@ -63,33 +64,41 @@ export default forwardRef(function WorkspacePanel({ workspaceDir, onDirChange, s
   const [browseEntries, setBrowseEntries] = useState([])
   const [browseLoading, setBrowseLoading] = useState(false)
   const [targetLine, setTargetLine] = useState(null)  // 1-based; non-null after jumpToFile
+  // S5: 拓扑索引搜索 modal
+  const [topologyVisible, setTopologyVisible] = useState(false)
   const viewerRef = useRef(null)  // scrollable <pre> container
 
   // Imperative API for parent components (e.g. the right-hand issue panel
   // jumping to a file when the user clicks an issue). Resolves the path
   // against the current workspace if a relative path is supplied, then
   // reads the file and scrolls to the requested line.
-  useImperativeHandle(ref, () => ({
-    jumpToFile: async (filePath, lineNumber) => {
-      if (!filePath) return
-      let resolved = filePath
-      if (workspaceDir && !filePath.match(/^[a-zA-Z]:[\\/]/) && !filePath.startsWith('/')) {
-        const sep = workspaceDir.includes('\\') ? '\\' : '/'
-        resolved = workspaceDir.replace(/[\\/]+$/, '') + sep + filePath.replace(/^[\\/]+/, '')
-      }
-      setTargetLine(lineNumber && lineNumber > 0 ? lineNumber : null)
-      await readFile(resolved)
-      // Scroll after content is rendered. readFile is async; the state
-      // update from setFileContent will trigger a re-render in the next
-      // tick, so we schedule the scroll on a microtask.
-      Promise.resolve().then(() => {
-        const container = viewerRef.current
-        if (!container) return
-        const lineHeight = 16  // matches monospace 11px * 1.5 line-height
-        const idx = (lineNumber && lineNumber > 0 ? lineNumber : 1) - 1
-        container.scrollTop = Math.max(0, idx * lineHeight - container.clientHeight / 3)
-      })
+  //
+  // Exposed both as the imperative `jumpToFile` and as an internal
+  // function so the topology-search modal can reuse the same logic
+  // (it doesn't have a ref to this component).
+  const jumpToFileInternal = async (filePath, lineNumber) => {
+    if (!filePath) return
+    let resolved = filePath
+    if (workspaceDir && !filePath.match(/^[a-zA-Z]:[\\/]/) && !filePath.startsWith('/')) {
+      const sep = workspaceDir.includes('\\') ? '\\' : '/'
+      resolved = workspaceDir.replace(/[\\/]+$/, '') + sep + filePath.replace(/^[\\/]+/, '')
     }
+    setTargetLine(lineNumber && lineNumber > 0 ? lineNumber : null)
+    await readFile(resolved)
+    // Scroll after content is rendered. readFile is async; the state
+    // update from setFileContent will trigger a re-render in the next
+    // tick, so we schedule the scroll on a microtask.
+    Promise.resolve().then(() => {
+      const container = viewerRef.current
+      if (!container) return
+      const lineHeight = 16  // matches monospace 11px * 1.5 line-height
+      const idx = (lineNumber && lineNumber > 0 ? lineNumber : 1) - 1
+      container.scrollTop = Math.max(0, idx * lineHeight - container.clientHeight / 3)
+    })
+  }
+
+  useImperativeHandle(ref, () => ({
+    jumpToFile: jumpToFileInternal
   }), [workspaceDir])
   const driveEntries = isWindows()
     ? browseEntries.filter(entry => entry?.isDir && /^[A-Za-z]:$/.test(entry.name))
@@ -263,6 +272,15 @@ export default forwardRef(function WorkspacePanel({ workspaceDir, onDirChange, s
             浏览
           </Button>
           <Button size="small" icon={<ReloadOutlined />} onClick={fetchFiles}>刷新</Button>
+          <Button
+            size="small"
+            icon={<SearchOutlined />}
+            onClick={() => setTopologyVisible(true)}
+            disabled={!sessionId}
+            title="按符号/类名/方法名搜索工作区拓扑索引"
+          >
+            拓扑搜索
+          </Button>
         </Space>
       </div>
 
@@ -381,6 +399,18 @@ export default forwardRef(function WorkspacePanel({ workspaceDir, onDirChange, s
           )}
         </div>
       </Modal>
+      {/* S5: 拓扑索引搜索 modal —— 按符号/类名/方法名跨文件检索 */}
+      <WorkspaceTopologySearch
+        open={topologyVisible}
+        workspaceId={sessionId}
+        onClose={() => setTopologyVisible(false)}
+        onPick={(filePath) => {
+          if (filePath) {
+            setTopologyVisible(false)
+            jumpToFileInternal(filePath, null)
+          }
+        }}
+      />
     </div>
   )
 })
@@ -692,6 +722,40 @@ async function executeSingleCommand(cmd, workspaceDir, onLog, sessionId) {
         const path = resolveCommandPath(workspaceDir, cmd.path || workspaceDir)
         onLog?.(`[AgentCMD] scan failed ${path}: ${detail}\n`)
         return `Error scanning ${path}: ${detail}`
+      }
+    }
+    case 'issues': {
+      // S9: 拉取本会话已记录的 OPEN 状态 issue，按 severity 降序，取前 30 条，
+      // 渲染成 markdown 表格作为命令结果返回。后端把表格落到 cache service，
+      // 跨轮次由 buildReadContext 渲染为"【已知 Issue 列表】"段喂给 LLM。
+      try {
+        const targetSessionId = cmd.sessionId || sessionId
+        if (!targetSessionId) {
+          onLog?.('[AgentCMD] issues failed: no sessionId in cmd or call site\n')
+          return 'Error: cmd-issues requires sessionId'
+        }
+        const res = await api.get(`/api/code-analysis/${encodeURIComponent(targetSessionId)}/issues`)
+        const issues = (res.data?.issues || []).filter(i => (i.status || 'open') === 'open')
+        const rank = { HIGH: 0, MEDIUM: 1, LOW: 2 }
+        issues.sort((a, b) => (rank[a.severity] ?? 9) - (rank[b.severity] ?? 9))
+        const top = issues.slice(0, 30)
+        onLog?.(`[AgentCMD] issues ok ${top.length} open (of ${issues.length}) for session=${targetSessionId}\n`)
+        if (top.length === 0) {
+          return 'No open issues recorded for this session.'
+        }
+        const escape = (s) => String(s ?? '').replace(/\|/g, '\\|').replace(/\n/g, ' ').slice(0, 200)
+        const rows = top.map(i =>
+          `| ${escape(i.severity)} | ${escape(i.category)} | ${escape(i.filePath || '-')}${i.lineNumber ? ':' + i.lineNumber : ''} | ${escape(i.description)} |`
+        )
+        return [
+          '| severity | category | file:line | description |',
+          '| --- | --- | --- | --- |',
+          ...rows
+        ].join('\n')
+      } catch (e) {
+        const detail = e.response?.data?.error || e.message
+        onLog?.(`[AgentCMD] issues failed: ${detail}\n`)
+        return `Error fetching issues: ${detail}`
       }
     }
     case 'tree_sync': {

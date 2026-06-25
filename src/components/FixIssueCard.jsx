@@ -5,30 +5,19 @@ import {
   ToolOutlined, FileTextOutlined
 } from '@ant-design/icons'
 import { MarkdownContent } from '../utils/helpers.jsx'
+import { useFixTaskContext, extractFixTaskKeysFromMessage } from '../context/FixTaskContext.jsx'
 
 const { Text } = Typography
 
 /**
- * Inline card rendered in the chat stream for messages whose
- * {@code meta.type} is {@code "fix_issue"} (placeholder) or
- * {@code "fix_summary"} (terminal). Designed to give the user
- * a single, stable, scannable card that morphs from "正在
- * 修复…" to the final verdict as the backend updates the
- * message row in place.
- *
- * Why a dedicated card (and not just the raw {@code content}
- * string): the placeholder is intentionally terse ("🔧 已
- * 开始修复…"), the terminal summary is a multi-line diff. A
- * shared card keeps the two states visually continuous, and
- * preserves the file list + diff the user actually wants to
- * see.
- *
- * Props:
- *   msg — the message object. We read {@code msg.meta}
- *     (JSON string) and {@code msg.content} (string body).
- *     The card is purely a function of those two fields, so
- *     the parent's reload-on-update path is enough to keep
- *     it in sync.
+ * Inline card rendered in the chat stream for messages tied to a
+ * fix task (placeholder / in-progress / terminal). S1 起：
+ * <ul>
+ *   <li>不再从 {@code msg.meta} 解析 status / patches / taskId
+ *       —— 状态从 {@link useFixTaskContext}（WS 唯一真源）取</li>
+ *   <li>msg.meta 仅作"key 兜底"读 taskId/issueId 字段（不改 DB schema）</li>
+ *   <li>无 WS 状态时按"in-progress 占位"渲染，避免空白</li>
+ * </ul>
  */
 export default function FixIssueCard({ msg }) {
   const meta = useMemo(() => {
@@ -36,20 +25,36 @@ export default function FixIssueCard({ msg }) {
     try { return JSON.parse(msg.meta) } catch (_) { return null }
   }, [msg?.meta])
 
-  // Not a fix-issue / fix-summary message — bail out and let
-  // MessageBubble render the raw content the usual way.
-  if (!meta || (meta.type !== 'fix_issue' && meta.type !== 'fix_summary')) {
+  const { getFixTaskByTaskId, getFixTaskForIssue } = useFixTaskContext()
+  // msg.meta 仅作 key 兜底：拿 taskId / issueId
+  const metaKeys = useMemo(() => extractFixTaskKeysFromMessage(msg), [msg?.meta])
+  // 真实状态走 context（WS）
+  const taskState = useMemo(() => {
+    if (metaKeys.taskId) return getFixTaskByTaskId(metaKeys.taskId)
+    if (metaKeys.issueId) return getFixTaskForIssue(metaKeys.issueId)
     return null
-  }
+  }, [metaKeys.taskId, metaKeys.issueId, getFixTaskByTaskId, getFixTaskForIssue])
 
-  const status = String(meta.status || '').toUpperCase()
+  // 计算显示状态：context > meta > 兜底 in-progress
+  const status = useMemo(() => {
+    if (taskState && taskState.status) return String(taskState.status).toUpperCase()
+    const metaType = meta && meta.type
+    if (metaType === 'fix_issue') return 'IN_PROGRESS'
+    if (metaType === 'fix_summary') return String(meta.status || 'COMPLETED').toUpperCase()
+    return 'IN_PROGRESS' // 兜底
+  }, [taskState, meta])
+
   const isInProgress = status === 'IN_PROGRESS' || status === 'RUNNING'
   const isCompleted = status === 'COMPLETED'
   const isFailed = status === 'FAILED'
-  // Patches are only present in the terminal meta envelope
-  // (buildFixSummaryMeta). During the in-progress phase the
-  // placeholder has no patches; we render the spinner only.
-  const patches = Array.isArray(meta.patches) ? meta.patches : []
+  // patches 优先 context；context 没有时退到 meta（兼容老消息）
+  const patches = useMemo(() => {
+    if (taskState && Array.isArray(taskState.patches) && taskState.patches.length > 0) {
+      return taskState.patches
+    }
+    return Array.isArray(meta && meta.patches) ? meta.patches : []
+  }, [taskState, meta])
+
   const files = useMemo(() => {
     const seen = new Set()
     const out = []

@@ -8,6 +8,7 @@ import {
   CodeOutlined, FileTextOutlined, CaretRightOutlined,
   CopyOutlined
 } from '@ant-design/icons'
+import SemanticValidationBadge from './SemanticValidationBadge'
 
 const { Text, Paragraph } = Typography
 
@@ -40,7 +41,7 @@ const { Text, Paragraph } = Typography
  *     show a smaller header. Used when many fix results are
  *     stacked in a chat history.
  */
-export default function FixSummaryCard({ summary, onClose, compact = false }) {
+export default function FixSummaryCard({ summary, onClose, compact = false, workspaceId }) {
   if (!summary) return null
   const v = summary.verification || {}
   const diffs = Array.isArray(summary.diffs) ? summary.diffs : []
@@ -69,7 +70,7 @@ export default function FixSummaryCard({ summary, onClose, compact = false }) {
       style={{ marginBottom: 12 }}
     >
       <VerificationSection verification={v} compact={compact} />
-      <DiffsSection diffs={diffs} compact={compact} />
+      <DiffsSection diffs={diffs} compact={compact} workspaceId={workspaceId} />
       {diffs.length === 0 && (
         <Empty
           image={Empty.PRESENTED_IMAGE_SIMPLE}
@@ -154,7 +155,7 @@ function VerificationSection({ verification, compact }) {
  * is what replaces it", which is exactly what the LLM patch
  * contained (searchText → replaceText).
  */
-function DiffsSection({ diffs, compact }) {
+function DiffsSection({ diffs, compact, workspaceId }) {
   if (!diffs || diffs.length === 0) return null
   return (
     <Collapse
@@ -164,16 +165,21 @@ function DiffsSection({ diffs, compact }) {
       expandIcon={({ isActive }) => <CaretRightOutlined rotate={isActive ? 90 : 0} />}
       items={diffs.map(d => ({
         key: `f-${d.patchIndex}`,
-        label: <DiffHeader diff={d} />,
+        label: <DiffHeader diff={d} workspaceId={workspaceId} />,
         children: <DiffBody diff={d} />
       }))}
     />
   )
 }
 
-function DiffHeader({ diff }) {
+function DiffHeader({ diff, workspaceId }) {
   const removed = (diff.oldLineCount || 0)
   const added = (diff.newLineCount || 0)
+  // 软校验：把 added 行拼成 code 喂给后端
+  const softCode = useMemo(() => {
+    const lines = Array.isArray(diff.lines) ? diff.lines : []
+    return lines.filter(l => l.kind === 'added').map(l => l.text).join('\n')
+  }, [diff.lines])
   return (
     <Space>
       <FileTextOutlined />
@@ -183,6 +189,13 @@ function DiffHeader({ diff }) {
       <Text type="secondary" style={{ fontSize: 12 }}>
         -{removed} +{added}
       </Text>
+      {workspaceId && softCode && (
+        <SemanticValidationBadge
+          workspaceId={workspaceId}
+          filePath={diff.filePath}
+          code={softCode}
+        />
+      )}
     </Space>
   )
 }

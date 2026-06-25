@@ -15,13 +15,30 @@ import type { PlanProps, AgentStep, Document } from './types/plan'
 const { Text, Paragraph } = Typography
 const { TextArea } = Input
 
-const AGENT_COLORS = {
+// S3: 硬编码 fallback —— 后端 SubagentSpec.color 是真源（N-7）。
+// 前端读 agent_color 字段；后端没给时退化到本表。
+// 新增 agent 时**先在后端** SubagentRegistry 注册并配 color，前端会自动跟随。
+const AGENT_COLORS_FALLBACK: Record<string, string> = {
   LLMAgent: 'blue', CommandAgent: 'orange', CodeAgent: 'green',
   FileAgent: 'cyan', BrowserAgent: 'purple', SummaryAgent: 'magenta',
   SelfAgent: 'geekblue', SkillsAgent: 'gold', PlannerService: 'red',
   UIAgent: 'teal'
 }
 
+/**
+ * S3: agent color 统一解析器。
+ * @param agentName 后端 event / step 里 agent 字段
+ * @param colorOverride 后端直接给的 color（来自 SubagentSpec.color，N-7）
+ * @returns antd tag color 字符串
+ */
+export function resolveAgentColor(agentName?: string, colorOverride?: string): string {
+  if (colorOverride && typeof colorOverride === 'string') return colorOverride
+  if (agentName && AGENT_COLORS_FALLBACK[agentName]) return AGENT_COLORS_FALLBACK[agentName]
+  return 'default'
+}
+
+// 兼容老代码：保留 AGENT_COLORS 别名 + AGENT_OPTIONS
+const AGENT_COLORS = AGENT_COLORS_FALLBACK
 const AGENT_OPTIONS = Object.keys(AGENT_COLORS).map(a => ({ value: a, label: a }))
 
 function statusIcon(status?: string) {
@@ -86,7 +103,7 @@ export default function PlanView({ plan, editable = false, onConfirm }: PlanProp
   const items = steps.map((step: AgentStep, idx: number) => {
     const isEditing = editingStep === idx
     const agent = step.agent || 'UNKNOWN'
-    const agentColor = AGENT_COLORS[agent as keyof typeof AGENT_COLORS] || 'default'
+    const agentColor = resolveAgentColor(step.agent, step.color)
     const hasDetail = step.args || step.result || step.step_context || step.output_file
 
     const description = isEditing ? (

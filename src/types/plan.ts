@@ -18,6 +18,8 @@ export interface AgentStep {
   status?: 'pending' | 'running' | 'completed' | 'failed' | 'wait' | 'process' | 'finish' | 'error';
   result?: string;
   thought?: string;
+  /** S3: 后端 SubagentSpec.color（N-7）—— 优先于前端 AGENT_COLORS_FALLBACK */
+  color?: string;
 }
 
 export interface PlanData {

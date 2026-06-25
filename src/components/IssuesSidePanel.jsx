@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react'
+import React, { useEffect, useState, useRef, useMemo } from 'react'
 import { Card, List, Tag, Space, Typography, Button, Empty, Spin, Tooltip, message, Segmented, Modal, Radio } from 'antd'
 import {
   CheckCircleOutlined, CloseCircleOutlined, MinusCircleOutlined,
@@ -6,9 +6,10 @@ import {
   LoadingOutlined, StopOutlined, QuestionCircleOutlined,
   BranchesOutlined
 } from '@ant-design/icons'
-import api, { getBackendHost, getWsBaseUrl } from '../auth'
+import api, { getBackendHost } from '../auth'
 import FixSummaryCard from './FixSummaryCard'
 import FixTaskStateMachine from './FixTaskStateMachine'
+import { useFixTaskBus, useIssueList } from '../hooks/useFixTaskPoller'
 
 const { Text } = Typography
 
@@ -27,173 +28,44 @@ const STATUS_TAG = {
 
 export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile, onInjectAssistantMessage, onFixIssueMessageUpdated }) {
   const [filter, setFilter] = useState('open')   // 'open' | 'in_progress' | 'all' | 'fixed' | 'ignored'
-  const [issues, setIssues] = useState([])
-  const [loading, setLoading] = useState(false)
+  // S7: 列表 + 自适应轮询 走 useIssueList
+  const { issues, setIssues, loading, refresh } = useIssueList({ sessionId })
   const [busyId, setBusyId] = useState(null)
-  // Polls more aggressively while there is at least one in-flight
-  // (in_progress) issue, so the user sees status transitions without
-  // manual refresh. Falls back to a slow idle poll otherwise.
-  const pollRef = useRef(null)
-  // Active fix-task sessions, keyed by issueId. Maps to { taskId, status,
-  // pending: [confirmation, ...] }. Polled in the same loop as the issues
-  // list so the modal opens as soon as the agent emits a <CONFIRM_REQUEST>.
-  const [tasks, setTasks] = useState({})   // issueId -> task state
-  // The currently shown confirmation modal (one at a time).
-  const [activeConfirm, setActiveConfirm] = useState(null)
-  // Tracks the highest confirmation id we've already shown for a task so
-  // we don't pop the same modal twice.
-  const seenConfirmRef = useRef(new Set())
-  // Latest `fix-task.completed` summary per issueId. The
-  // WebSocket subscription below stores the most recent one
-  // here when the backend's FixTaskEventBus publishes
-  // `fix-task.completed`. We open a Modal so the user can see
-  // the diff and verification result as a single card — this
-  // is the only place the actual machine-verified outcome is
-  // surfaced (the `fix-task.phase` events only carry phase
-  // names like "COMPLETED" without the diff body).
+  // S7: WS + 状态机 + 确认弹窗 走 useFixTaskBus
+  const {
+    tasks, summaries, activeConfirm,
+    registerTask, closeTask,
+    submitConfirmation, dismissConfirm,
+  } = useFixTaskBus({ sessionId })
+  // The currently-shown completion summary modal (one at a time).
+  // Driven by the latest `summaries[issueId]` from the bus when
+  // the user opens a fixed issue's "查看修复结果" link.
   const [summaryModal, setSummaryModal] = useState(null)  // { issueId, summary }
-  // Tracks issueIds we've already shown the summary modal for
-  // in this session so the same card doesn't auto-pop twice
-  // if the WS reconnects. The user can still re-open it via
-  // the "查看修复结果" button on the fixed issue.
-  const seenSummaryRef = useRef(new Set())
-  // Persistent cache of the latest summary per issueId, so
-  // that dismissing the modal does not lose the data — the
-  // fixed issue row keeps a "查看修复结果" link that re-opens
-  // it. Entries stay in here until the panel unmounts.
-  const [summaries, setSummaries] = useState({})  // issueId -> summary obj
-  // Accumulated fix-task phase events per issueId, fed by the
-  // WebSocket subscription above. Each entry is
-  //   { phase, status, ts, note }
-  // keyed off the same issueId as `tasks`. The FixTaskStateMachine
-  // component renders this as a timeline. We keep it in React
-  // state (not the in-memory `tasks` map) so that
-  // IssueItem-spawned modals see the full trajectory without
-  // having to lift the data up to the parent.
-  //
-  // Reset semantics:
-  //   - `fix-task.phase` events append (no dedup; backend ts
-  //     + phase pair is unique per transition).
-  //   - `fix-task.snapshot` seeds with a single entry ONLY if
-  //     the array is empty (i.e. a tab that connects mid-flight
-  //     and missed the earlier events). If we already have
-  //     accumulated events, the snapshot is a no-op (preserves
-  //     history across WS reconnects).
-  //
-  // On a hard page reload the phases for already-completed tasks
-  // are lost (the WS reconnect only sends the current snapshot,
-  // not the past events). This is a known limitation; for
-  // in-progress tasks it is irrelevant.
-  const [phaseLogs, setPhaseLogs] = useState({})  // issueId -> [{phase, status, ts, note}]
+  // Tracks issueIds we've already auto-opened the summary modal
+  // for in this session, so the same card doesn't pop twice on
+  // WS reconnect. The user can still re-open via the fixed row
+  // button (which bypasses this guard).
+  const seenAutoSummaryRef = useRef(new Set())
   // The currently-shown state-machine timeline modal. One at a
-  // time. The shape is:
-  //   {
-  //     issueId, sessionId, taskId,  // for backend fetch
-  //     backendPhases: [...],         // source-of-truth from GET
-  //     loading: bool,                // true while fetch in flight
-  //   }
-  // The displayed phases are computed by merging backendPhases
-  // (canonical) with phaseLogs[issueId] (live WS tail) so a tab
-  // that's open during the task sees the full picture and the
-  // user can keep the modal open while more events stream in.
-  const [stateMachineModal, setStateMachineModal] = useState(null)
+  // time. Fetches the canonical timeline from the backend when
+  // opened, then merges with the live phases streamed via WS
+  // (hook's `tasks[issueId].phases`) so a tab that connects
+  // mid-flight sees the full picture.
+  const [stateMachineModal, setStateMachineModal] = useState(null)  // { issueId, sessionId, taskId, backendPhases, loading }
 
-  const refresh = useCallback(async () => {
-    if (!sessionId) {
-      setIssues([])
-      return
-    }
-    setLoading(true)
-    try {
-      const res = await api.get(`/api/code-analysis/${sessionId}/issues`,
-        { baseURL: getBackendHost() })
-      setIssues(res.data?.issues || [])
-    } catch (e) {
-      message.error('加载问题失败: ' + (e.response?.data?.message || e.message))
-      setIssues([])
-    }
-    setLoading(false)
-  }, [sessionId])
-
-  useEffect(() => { refresh() }, [refresh])
-
-  // Adaptive polling: 2s while any issue is in_progress, 15s otherwise.
-  useEffect(() => {
-    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
-    if (!sessionId) return
-    const hasInProgress = issues.some(i => (i.status || 'open') === 'in_progress')
-    const interval = hasInProgress ? 2000 : 15000
-    pollRef.current = setInterval(refresh, interval)
-    return () => { if (pollRef.current) clearInterval(pollRef.current) }
-  }, [sessionId, issues, refresh])
-
-  // ─────────────────────────────────────────────────────────────────
-  // Fix-task polling — fetch PENDING CONFIRMATIONS only. Terminal
-  // state (COMPLETED/FAILED) is now delivered over the WebSocket
-  // subscription below; the poller used to GET /fix-task/{id} on
-  // every tick, but that work is fully covered by the WS push, so
-  // the only thing the poller still needs is to surface new
-  // confirmations to the modal — confirmations aren't yet pushed
-  // over the bus, so we still poll /pending-confirmations.
-  // ─────────────────────────────────────────────────────────────────
-  const pollTaskStates = useCallback(async () => {
-    const entries = Object.entries(tasks)
-    if (entries.length === 0) return
-    for (const [issueId, t] of entries) {
-      if (!t || !t.taskId) continue
-      try {
-        const pendingRes = await api.get(
-          `/api/code-analysis/${sessionId}/fix-task/${t.taskId}/pending-confirmations`,
-          { baseURL: getBackendHost() }
-        ).catch(err => ({ data: { confirmations: [] }, _err: err }))
-        const pending = (pendingRes.data && Array.isArray(pendingRes.data.confirmations))
-          ? pendingRes.data.confirmations : []
-        // Refresh the cache's pending list only. status/phase
-        // come from the WebSocket; if the WS connection is broken
-        // the parent 2s `refresh()` will eventually re-read the
-        // issue from IssueStore and the "修复中" tag will clear
-        // on its own.
-        setTasks(prev => prev[issueId] ? {
-          ...prev,
-          [issueId]: { ...prev[issueId], pending, lastChecked: Date.now() }
-        } : prev)
-        // AWAITING_CONFIRMATION is not strictly "terminal" — the
-        // user can still reply and the task can transition to
-        // COMPLETED. Surface the modal if we haven't shown this
-        // confirmation yet.
-        if (pending.length > 0 && !activeConfirm) {
-          const c = pending[0]
-          if (!seenConfirmRef.current.has(c.confirmation_id)) {
-            seenConfirmRef.current.add(c.confirmation_id)
-            setActiveConfirm({ ...c, issueId })
-          }
-        }
-      } catch (e) {
-        // 404 → task is gone (e.g. server restart); drop it.
-        if (e.response && e.response.status === 404) {
-          setTasks(prev => {
-            const cp = { ...prev }
-            delete cp[issueId]
-            return cp
-          })
-        }
-      }
-    }
-  }, [sessionId, tasks, activeConfirm])
+  // ── S7: 删掉本地的 refresh / 自适应轮询 / pollTaskStates / per-task WS ──
+  // 全部下沉到 hooks（useIssueList 负责列表+轮询，useFixTaskBus 负责 WS+状态机）。
 
   // Fetch the state-machine timeline from the backend whenever
   // the modal opens for a fresh issueId. The backend is the
-  // source of truth — the WS events we accumulated in
-  // phaseLogs are lossy on reconnect. The merge in render
-  // combines backend (canonical) with phaseLogs (live tail).
+  // source of truth — the WS events accumulated in
+  // tasks[issueId].phases (via the bus hook) are lossy on
+  // reconnect. The merge in render combines backend (canonical)
+  // with the live phases (WS tail).
   //
   // We key the effect on stateMachineModal.issueId rather than
   // the whole object so re-renders triggered by setLoading or
-  // setBackendPhases don't re-fetch. We use a ref-equivalent
-  // guard to discard the result if the user has already
-  // closed the modal by the time the fetch resolves (avoids
-  // a setState on a closed modal — a benign no-op but still
-  // noise on the console).
+  // setBackendPhases don't re-fetch.
   useEffect(() => {
     if (!stateMachineModal) return
     const { issueId, sessionId: smSessionId, taskId } = stateMachineModal
@@ -214,18 +86,6 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
             ? { ...sm, loading: false, backendPhases: [] } : sm)
           return
         }
-        // Normalise the backend payload into the same shape
-        // as phaseLogs entries:
-        //   { phase (upper-case), status, ts (epoch ms), note }
-        // The backend ships ts as ISO-8601 (consistent with
-        // the other created_at/updated_at fields on the same
-        // payload); phaseLogs uses epoch ms. FixTaskStateMachine
-        // only knows the latter, so we parse on the way in.
-        // status is not per-transition in the store; we
-        // synthesise it from the task's current status (the
-        // last entry inherits the terminal status, everything
-        // else is "RUNNING"). The store's per-task status
-        // lives at res.data.task.status.
         const taskStatus = (res?.data?.task?.status || '').toUpperCase()
         const normalised = timeline.map((e, i) => {
           const isLast = i === timeline.length - 1
@@ -240,8 +100,6 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
           ? { ...sm, loading: false, backendPhases: normalised } : sm)
       })
       .catch(() => {
-        // Fetch failure is non-fatal — the modal still
-        // renders the live phaseLogs we accumulated via WS.
         if (cancelled) return
         setStateMachineModal(sm => sm
           ? { ...sm, loading: false, backendPhases: [] } : sm)
@@ -249,237 +107,50 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
     return () => { cancelled = true }
   }, [stateMachineModal && stateMachineModal.issueId])
 
-  // Merge the backend timeline (canonical, fetched on modal
-  // open) with the live phaseLogs (WS tail appended while the
-  // modal stays open). Hoisted out of the JSX IIFE to keep
-  // useMemo's hook order stable. See the modal body for the
-  // merge rules.
+  // Merge backend (canonical) + live phases (from bus hook) for
+  // the timeline modal.
   const mergedTimeline = useMemo(() => {
     if (!stateMachineModal) return []
     const { issueId, backendPhases, loading } = stateMachineModal
-    const live = phaseLogs[issueId] || []
-    if (loading && (!backendPhases || backendPhases.length === 0)) {
-      return live
-    }
-    if (!backendPhases || backendPhases.length === 0) {
-      return live
-    }
+    const live = (tasks[issueId] && tasks[issueId].phases) || []
+    if (loading && (!backendPhases || backendPhases.length === 0)) return live
+    if (!backendPhases || backendPhases.length === 0) return live
     if (live.length === 0) return backendPhases
     const lastBackendTs = backendPhases[backendPhases.length - 1].ts
     const newLive = live.filter(p => p.ts > lastBackendTs)
     return [...backendPhases, ...newLive]
-  }, [stateMachineModal, phaseLogs])
+  }, [stateMachineModal, tasks])
 
+  // S7: bus hook 自动更新 summaries —— 这里 effect 监听 "新 issueId 完成"
+  // 自动弹 summary modal（once-per-issueId）+ 回调 onFixIssueMessageUpdated
+  // 让 App.jsx 重拉 chat 历史。effect 依赖 summaries 数量 + sessionId。
+  const lastSeenSummaryCountRef = useRef(0)
   useEffect(() => {
-    if (Object.keys(tasks).length === 0) return
-    const id = setInterval(pollTaskStates, 2000)
-    return () => clearInterval(id)
-  }, [Object.keys(tasks).length, pollTaskStates])  // eslint-disable-line
+    const ids = Object.keys(summaries)
+    if (ids.length <= lastSeenSummaryCountRef.current) {
+      lastSeenSummaryCountRef.current = ids.length
+      return
+    }
+    // 找到新加入的 issueId
+    const newIds = ids.slice(lastSeenSummaryCountRef.current)
+    lastSeenSummaryCountRef.current = ids.length
+    for (const iid of newIds) {
+      // 1) 更新 issue 状态为 fixed（与原行为一致）
+      setIssues(prev => prev.map(i =>
+        i.issueId === iid ? { ...i, status: 'fixed' } : i))
+      // 2) 自动弹 modal
+      if (!seenAutoSummaryRef.current.has(iid)) {
+        seenAutoSummaryRef.current.add(iid)
+        setSummaryModal({ issueId: iid, summary: summaries[iid] })
+      }
+      // 3) 通知 App.jsx 重拉 chat（fix-task.completed 更新了 chat 占位）
+      if (typeof onFixIssueMessageUpdated === 'function') {
+        try { onFixIssueMessageUpdated(iid) } catch (_) {}
+      }
+    }
+  }, [summaries, onFixIssueMessageUpdated])
 
-  // ─────────────────────────────────────────────────────────────────
-  // Fix-task WebSocket subscription — primary path for terminal
-  // status. The backend's FixTaskEventBus publishes one
-  // JSON envelope per phase transition over
-  //   ws://host/ws/fix-task/{taskId}
-  // and pushes a one-shot snapshot on connect so a tab that
-  // opens mid-flight sees the correct state immediately.
-  //
-  // For each active taskId we open one socket, parse each
-  // fix-task.phase / fix-task.snapshot message, update the task
-  // cache, and on terminal (COMPLETED/FAILED) mirror the state
-  // onto the issue. The poller above is intentionally kept as a
-  // defense-in-depth: if the WS handshake fails (corporate proxy
-  // stripping the Upgrade header, brief network blip) the next
-  // 2s `refresh()` tick will still observe the right issue
-  // status from IssueStore.
-  // ─────────────────────────────────────────────────────────────────
-  const wsRef = useRef(new Map())  // taskId → WebSocket
-  // Mirror the latest `tasks` snapshot so the WS message handler
-  // can map taskId → issueId without depending on the effect's
-  // `tasks` closure (which is captured at effect run time and
-  // would otherwise see a stale view).
-  const tasksRef = useRef(tasks)
-  useEffect(() => { tasksRef.current = tasks }, [tasks])
-
-  useEffect(() => {
-    const currentTaskIds = new Set()
-    for (const t of Object.values(tasks)) {
-      if (t && t.taskId) currentTaskIds.add(t.taskId)
-    }
-    // Close sockets for taskIds that are no longer active (task
-    // was cleaned up after reaching a terminal state, or the user
-    // closed the issue).
-    for (const [taskId, ws] of Array.from(wsRef.current.entries())) {
-      if (!currentTaskIds.has(taskId)) {
-        try { ws.close() } catch (_) { /* idempotent */ }
-        wsRef.current.delete(taskId)
-      }
-    }
-    // Open sockets for new taskIds. We do not auto-reconnect on
-    // close — keeps the implementation simple per AGENTS.md and
-    // matches the "poller is the safety net" design.
-    for (const taskId of currentTaskIds) {
-      if (wsRef.current.has(taskId)) continue
-      const token = encodeURIComponent(localStorage.getItem('token') || '')
-      const url = `${getWsBaseUrl()}/ws/fix-task/${taskId}?token=${token}`
-      let ws
-      try {
-        ws = new WebSocket(url)
-      } catch (e) {
-        // Browser refused to open the socket (e.g. invalid URL,
-        // mixed-content block). The poller above still covers
-        // this task.
-        continue
-      }
-      wsRef.current.set(taskId, ws)
-      // eslint-disable-next-line no-console
-      console.log('[FixTask-WS] opening', taskId, '— HMR-v2')
-      ws.onopen = () => {
-        // eslint-disable-next-line no-console
-        console.log('[FixTask-WS] open', taskId)
-      }
-      ws.onerror = (e) => {
-        // eslint-disable-next-line no-console
-        console.warn('[FixTask-WS] error', taskId, e)
-      }
-      ws.onclose = (ev) => {
-        // eslint-disable-next-line no-console
-        console.log('[FixTask-WS] close', taskId, 'code=', ev.code,
-          'reason=', ev.reason)
-        wsRef.current.delete(taskId)
-        // Drop the dead socket. If the task is still active the
-        // parent 2s `refresh()` will re-read the issue from
-        // IssueStore and the poller will keep an eye on pending
-        // confirmations.
-      }
-      ws.onmessage = (ev) => {
-        let data
-        try { data = JSON.parse(ev.data) } catch (_) { return }
-        if (!data) return
-        // Map taskId → issueId via the latest tasks snapshot.
-        let issueId = null
-        for (const [iid, tt] of Object.entries(tasksRef.current)) {
-          if (tt && tt.taskId === taskId) { issueId = iid; break }
-        }
-        // eslint-disable-next-line no-console
-        console.log('[FixTask-WS] recv', data.type, 'taskId=', taskId,
-          'issueId=', issueId, 'dataKeys=', Object.keys(data).join(','))
-        if (!issueId) return
-        if (data.type === 'fix-task.completed') {
-          // Heavyweight summary: contains diffs and verification.
-          // Stash it per-issueId and pop the modal. We dedupe by
-          // taskId+ts so a WS reconnect (which re-sends the
-          // snapshot but not the completed event — yet, the
-          // server could replay it) doesn't double-show.
-          const key = `${taskId}:${data.ts || 0}`
-          if (seenSummaryRef.current.has(key)) return
-          seenSummaryRef.current.add(key)
-          setSummaries(prev => ({ ...prev, [issueId]: data }))
-          setSummaryModal({ issueId, summary: data })
-          // The backend has just updated the chat-stream's
-          // placeholder message in place (createFixIssueMessage
-          // → updateFixIssueMessage). The chat UI does NOT poll
-          // messages on its own, so we have to nudge App.jsx to
-          // re-fetch the session history; otherwise the bubble
-          // stays stuck on "🔧 已开始修复…" and the user sees
-          // the placeholder instead of the verdict + diff.
-          if (typeof onFixIssueMessageUpdated === 'function') {
-            try { onFixIssueMessageUpdated(issueId) } catch (_) {}
-          }
-          return
-        }
-        if (data.type !== 'fix-task.phase'
-            && data.type !== 'fix-task.snapshot') return
-        const status = (data.status || '').toLowerCase()
-        const phase = (data.phase || '').toLowerCase()
-        // Append to the state-machine trajectory log. We do
-        // this for BOTH `phase` and `snapshot` events so a tab
-        // that connects mid-flight at least sees the current
-        // phase (snapshot seed). The snapshot is a no-op when
-        // the log is non-empty (preserves history across WS
-        // reconnects).
-        //
-        // The backend serialises phase/status as upper-case
-        // ("ANALYZING", "RUNNING"). The existing `phase` and
-        // `status` variables here are lower-cased for the
-        // `tasks` state; for the trajectory we keep the
-        // upper-case form to match FixTaskStateMachine's color
-        // table and the user's expectations (which come from
-        // the same names on the backend).
-        const phaseUpper = (data.phase || '').toUpperCase()
-        const statusUpper = (data.status || '').toUpperCase()
-        setPhaseLogs(prev => {
-          const cur = prev[issueId] || []
-          if (data.type === 'fix-task.snapshot') {
-            // Tab connected mid-flight: only seed if we have
-            // nothing yet. The snapshot carries the current
-            // phase as a single entry.
-            if (cur.length > 0) return prev
-            return { ...prev,
-              [issueId]: [{ phase: phaseUpper, status: statusUpper,
-                ts: data.ts || Date.now(),
-                note: data.note || '(snapshot)' }] }
-          }
-          // `fix-task.phase`: append. Backend never re-sends the
-          // same (ts, phase) pair for the same task, so we don't
-          // need to dedup. Use a functional setState form to
-          // avoid races between two events arriving in quick
-          // succession.
-          return { ...prev,
-            [issueId]: [...cur,
-              { phase: phaseUpper, status: statusUpper,
-                ts: data.ts || Date.now(),
-                note: data.note || '' }] }
-        })
-        setTasks(prev => prev[issueId] ? {
-          ...prev,
-          [issueId]: {
-            ...prev[issueId],
-            status, phase, lastChecked: Date.now()
-          }
-        } : prev)
-        if (status === 'completed') {
-          message.success('修复任务已完成，代码已通过校验')
-          setIssues(prev => prev.map(i =>
-            i.issueId === issueId ? { ...i, status: 'fixed' } : i))
-          // NOTE: do NOT close the WS or call cleanupTask here.
-          // The fix-task.phase event with status=completed is
-          // sent by FixPhaseDriver *before* the controller's
-          // background thread finishes, and the controller's
-          // follow-up `fix-task.completed` event (which is what
-          // actually opens the summary modal) is published a
-          // few ms later. If we close the WS now, the bus has
-          // already removed this session from its subscriber
-          // set by the time publishCompleted fires — the
-          // completed event is silently dropped, the chat
-          // history is never reloaded, and the placeholder
-          // message stays stuck on "🔧 已开始修复…".
-          // The modal that opens on fix-task.completed owns
-          // the WS teardown (see the onCancel / onClose
-          // handler further down).
-        } else if (status === 'failed') {
-          message.warning('修复任务校验未通过，已回到待处理')
-          setIssues(prev => prev.map(i =>
-            i.issueId === issueId ? { ...i, status: 'open' } : i))
-          // Same reasoning as the 'completed' branch above —
-          // keep the WS alive so the fix-task.completed event
-          // that the controller publishes a few ms later can
-          // actually reach this session. The modal teardown
-          // closes the WS.
-        }
-      }
-    }
-  }, [tasks])
-
-  // Close all sockets when the component unmounts.
-  useEffect(() => {
-    return () => {
-      for (const ws of wsRef.current.values()) {
-        try { ws.close() } catch (_) {}
-      }
-      wsRef.current.clear()
-    }
-  }, [])
+  // ── S7: per-task WS 订阅 + onclose teardown 全在 hook 里，这里不写 ──
 
   const updateStatus = async (issue, nextStatus) => {
     setBusyId(issue.issueId)
@@ -538,24 +209,12 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
       const data = res.data || {}
       const taskId = data.task_id || null
       if (taskId) {
-        // Register the task so the poller starts watching it.
-        // status: 'running' is the post-FixTaskStore.createTask
-        // value; the next poll tick will overwrite it with the
-        // current task.status (also 'running' until the driver
-        // reaches a terminal phase).
-        setTasks(prev => ({
-          ...prev,
-          [issue.issueId]: { taskId, status: data.task?.status || 'running', pending: [] }
-        }))
+        // S7: 把 task 注册到 bus —— hook 会开 WS + 维护状态
+        registerTask(issue.issueId, taskId, data.task?.status || 'running')
       }
-      // After the async refactor, the synchronous response only
-      // contains status=started (or one of the synchronous error
-      // values below). Verified/Failed/Executing/Awaiting are no
-      // longer possible in the HTTP body — the poller picks them
-      // up on the next tick.
       if (data.status === 'dispatch_error') {
         message.error('派发修复任务失败: ' + (data.message || '未知错误'))
-        if (taskId) cleanupTask(issue.issueId)
+        if (taskId) closeTask(issue.issueId, 'dispatch_error')
         // Roll back the optimistic in_progress.
         setIssues(prev => prev.map(i =>
           i.issueId === issue.issueId ? { ...i, status: 'open' } : i))
@@ -588,14 +247,7 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
     setBusyId(null)
   }
 
-  // Drop the task entry once the issue is closed out.
-  const cleanupTask = (issueId) => {
-    setTasks(prev => {
-      const cp = { ...prev }
-      delete cp[issueId]
-      return cp
-    })
-  }
+  // S7: drop task 由 hook 提供 (closeTask)
 
   // Close the summary modal AND tear down the WS for that task.
   // The modal is the only place we know the fix-task.completed
@@ -606,13 +258,8 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
   const closeSummaryModal = () => {
     if (summaryModal) {
       const iid = summaryModal.issueId
-      const t = tasksRef.current[iid]
-      if (t && t.taskId) {
-        const w = wsRef.current.get(t.taskId)
-        if (w) { try { w.close() } catch (_) {} }
-        wsRef.current.delete(t.taskId)
-      }
-      cleanupTask(iid)
+      // S7: hook 同时拆 socket + 清 tasks[iid]
+      closeTask(iid, 'summary_modal_closed')
     }
     setSummaryModal(null)
   }
@@ -620,48 +267,33 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
   /**
    * Submit the user's choice to the backend. The backend marks the
    * confirmation RESOLVED and returns a `resume_prompt` that the LLM
-   * thread uses to continue. We surface it to the chat input as a
-   * queued message so the user can edit / send manually.
+   * thread uses to continue.
    */
-  const submitConfirmation = async (confirmation, choiceId) => {
+  const handleConfirmationSubmit = async (confirmation, choiceId) => {
     if (!confirmation) return
     const t = tasks[confirmation.issueId]
     if (!t || !t.taskId) {
       message.error('内部错误：找不到对应的修复任务')
-      setActiveConfirm(null)
+      dismissConfirm()
       return
     }
     setBusyId(confirmation.issueId)
     try {
-      const res = await api.post(
-        `/api/code-analysis/${sessionId}/fix-task/${t.taskId}/confirm`,
-        { confirmation_id: confirmation.confirmation_id, choice_id: choiceId },
-        { baseURL: getBackendHost() }
+      // S7: 走 hook 提交（hook 内部走 POST 并 dismiss）
+      const data = await submitConfirmation(
+        t.taskId, confirmation.confirmation_id, 'user_choice', choiceId
       )
-      const data = res.data || {}
-      if (data.status === 'resolved') {
+      if (data && data.status === 'resolved') {
         message.success('已记录您的选择，CodeAgent 将基于此继续修复')
-        // Mark all confirmations for this task as resolved in cache.
-        setTasks(prev => ({
-          ...prev,
-          [confirmation.issueId]: {
-            ...prev[confirmation.issueId],
-            pending: (prev[confirmation.issueId]?.pending || []).filter(
-              c => c.confirmation_id !== confirmation.confirmation_id)
-          }
-        }))
-        // Resume prompt is logged in the backend; the user can paste it
-        // into the chat input to continue the conversation.
         if (data.resume_prompt) {
           message.info('已为您生成继续提示，可在聊天框中发送以继续修复')
         }
-      } else {
+      } else if (data && data.status === 'error') {
         message.error('提交选择失败: ' + (data.message || '未知错误'))
       }
     } catch (e) {
-      message.error('提交选择失败: ' + (e.response?.data?.message || e.message))
+      message.error('提交选择失败: ' + (e.message || 'unknown'))
     }
-    setActiveConfirm(null)
     setBusyId(null)
   }
 
@@ -735,20 +367,12 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
                   ? () => setSummaryModal({ issueId: issue.issueId,
                       summary: summaries[issue.issueId] })
                   : null}
-                // State-machine timeline. We surface the button
-                // for both in_progress (live trajectory) and
-                // fixed (post-mortem) issues, as long as we have
-                // at least one phase event to show. For a
-                // task that completed before this tab connected
-                // (no events accumulated), the button is hidden
-                // — the trajectory is gone in that case.
-                //
-                // We always pass sessionId + taskId so the modal
-                // can refetch the canonical timeline from the
-                // backend; the WS-accumulated phaseLogs only
-                // covers events the current tab observed.
+                // State-machine timeline. Live phases now live in
+                // tasks[issueId].phases (from the bus hook) — same
+                // shape as the old phaseLogs[issueId] so the
+                // condition below still works.
                 onViewStateMachine={
-                  ((phaseLogs[issue.issueId] || []).length > 0
+                  (((tasks[issue.issueId] || {}).phases || []).length > 0
                    || (tasks[issue.issueId] || {}).taskId
                    || (summaries[issue.issueId] || {}).taskId)
                     ? () => setStateMachineModal({
@@ -771,8 +395,8 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
           a <CONFIRM_REQUEST> mid-fix and the user has not yet answered. */}
       <FixConfirmDialog
         confirmation={activeConfirm}
-        onCancel={() => setActiveConfirm(null)}
-        onConfirm={(choiceId) => submitConfirmation(activeConfirm, choiceId)}
+        onCancel={() => dismissConfirm()}
+        onConfirm={(choiceId) => handleConfirmationSubmit(activeConfirm, choiceId)}
         busy={!!activeConfirm && busyId === activeConfirm.issueId}
       />
       {/* Fix-task completed summary. The backend's
@@ -792,6 +416,7 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
           <FixSummaryCard
             summary={summaryModal.summary}
             onClose={closeSummaryModal}
+            workspaceId={workspaceDir || sessionId}
           />
         )}
       </Modal>

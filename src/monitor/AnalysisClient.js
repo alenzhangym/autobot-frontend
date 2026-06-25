@@ -4,6 +4,7 @@ import axios from 'axios';
 import { spawn } from 'child_process';
 import { EventEmitter } from 'events';
 import os from 'os';
+import { parseAllCmdBlocks } from '../utils/cmdBlocks.js'; // S2: 共享解析器
 
 /**
  * AnalysisClient drives the autobot backend's chat endpoint to perform a
@@ -25,43 +26,9 @@ import os from 'os';
 
 const BACKEND_BASE = process.env.BACKEND_BASE_URL || 'http://localhost:8000';
 
+// S2: parseCmdBlocks 改为薄包装，共用扫描器
 function parseCmdBlocks(text) {
-  if (!text || !text.includes('__CMD__')) return [];
-  const commands = [];
-  let searchStart = 0;
-  while (true) {
-    const idx = text.indexOf('__CMD__', searchStart);
-    if (idx < 0) break;
-    const jsonStart = idx + '__CMD__'.length;
-    if (jsonStart >= text.length || text[jsonStart] !== '{') {
-      searchStart = jsonStart;
-      continue;
-    }
-    let depth = 0;
-    let i = jsonStart;
-    let inString = false;
-    let escape = false;
-    while (i < text.length) {
-      const ch = text[i];
-      if (escape) { escape = false; i++; continue; }
-      if (ch === '\\' && inString) { escape = true; i++; continue; }
-      if (ch === '"') { inString = !inString; i++; continue; }
-      if (inString) { i++; continue; }
-      if (ch === '{') depth++;
-      else if (ch === '}') { depth--; if (depth === 0) break; }
-      i++;
-    }
-    if (depth === 0) {
-      const jsonStr = text.substring(jsonStart, i + 1);
-      try {
-        commands.push(JSON.parse(jsonStr));
-      } catch (e) {}
-      searchStart = i + 1;
-    } else {
-      searchStart = jsonStart + 1;
-    }
-  }
-  return commands;
+  return parseAllCmdBlocks(text).map(b => b.cmd);
 }
 
 function extractFinalJson(text) {

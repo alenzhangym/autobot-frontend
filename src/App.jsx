@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from 'react'
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import {
   Layout, Menu, Button, Input, Avatar, Typography, Space, Tooltip,
   Modal, Form, Tabs, Tag, Dropdown, Divider, ConfigProvider, theme, Badge, Select, InputNumber, TimePicker, message, Checkbox,
@@ -43,6 +43,7 @@ import SessionSidebar from './components/SessionSidebar'
 import { executeAgentCommands, appendStreamToken, tryStreamDispatch, resetStreamBuffer } from './components/WorkspacePanel'
 import MessageBubble from './components/MessageBubble'
 import IssuesSidePanel from './components/IssuesSidePanel'
+import IntentCorrectionFloater from './components/IntentCorrectionFloater'
 import { useUserStore } from './store/useUserStore'
 import { useDataStore } from './store/useDataStore'
 import { useConfigStore } from './store/useConfigStore'
@@ -785,11 +786,16 @@ function App() {
   }
 
   const [messages, setMessages] = useState([])
+  // S6: 意图纠正浮层状态
+  const [intentFloater, setIntentFloater] = useState({ open: false, query: '', predicted: '' })
+  const lastUserQueryRef = useRef('')
   const msgIdCounter = useRef(Date.now())
   const nextMsgId = () => { msgIdCounter.current += 1; return msgIdCounter.current }
   const [input, setInput] = useState('')
   const [sessionId, setSessionId] = useState('')
-  const [codeMode, setCodeMode] = useState('plan')  // 'plan' (分析) or 'build' (构建)
+  // A 方案：code 会话不再需要 'plan'/'build' 二选 toggle；'auto' 表示由后端自动推断。
+  // 保留 codeMode 状态变量是为未来可能的"高级用户强制锁定"留口子（UI 已不再暴露）。
+  const [codeMode, setCodeMode] = useState('auto')  // 'auto' (默认) | 'plan' (强制只分析) | 'build' (强制实施)
   const [isLoading, setIsLoading] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
   const [workspaceDir, setWorkspaceDir] = useState('')
@@ -2195,6 +2201,31 @@ function App() {
     } catch (e) {}
   }
 
+  // S6: 触发意图纠正浮层。
+  // 后端 PlannerService.attachIntentAnalysis 把 taskIntent.name() 写到
+  // planData.intent；直接 success 路径有时也会写 res.data.intent。
+  // 触发策略：
+  //   1. 用户 query 长度 >= 4（避免空 / 标点）
+  //   2. 分类结果是 code 会话专用的 CodeSessionIntent（ANALYZE/FIX/BUILD/QUERY）且不是 QUERY
+  //      ——QUERY 频率太高（每条自由提问都是），弹浮层没意义
+  //   3. 当前浮层未开（避免堆叠）
+  const maybeShowIntentFloater = (data, queryText) => {
+    try {
+      if (!data) return
+      if (intentFloater.open) return
+      const predicted = data.intent || (data.plan && data.plan.intent) || (data.plan && data.plan.code_intent)
+      if (!predicted) return
+      const normalized = String(predicted).toUpperCase()
+      // A 方案：code 会话 4 档意图中，ANALYZE/FIX/BUILD 都值得用户确认（避免 LLM 误判改文件），
+      // QUERY 频率太高、CONFIRMATION 是系统拦截，CONVERSATIONAL 是闲聊——这三类静默。
+      const silent = ['QUERY', 'CONVERSATIONAL', 'CONFIRMATION', 'UNKNOWN']
+      if (silent.includes(normalized)) return
+      const q = (queryText || lastUserQueryRef.current || '').trim()
+      if (q.length < 4) return
+      setIntentFloater({ open: true, query: q, predicted: normalized })
+    } catch (_) { /* 静默 — 浮层是 best-effort */ }
+  }
+
   const sendMessage = async (presetText) => {
     let text = typeof presetText === 'string' ? presetText : input;
     if ((!text.trim() && !selectedImageBase64 && uploadedDocuments.length === 0) || isLoading) return
@@ -2244,6 +2275,8 @@ function App() {
       contentToDisplay = `[Document context: ${docNames}]\n${text}`;
     }
     setMessages(prev => [...prev, { id: nextMsgId(), role: 'user', content: contentToDisplay }])
+    // S6: 记录最近一条 user query（供 intent 弹层用）
+    lastUserQueryRef.current = text
     
     if (!sessions.find(s => s.id === sessionId)) {
       const currentSession = sessions.find(s => s.id === sessionId)
@@ -2256,7 +2289,10 @@ function App() {
       }
 
       const payload = { message: text, session_id: sessionId };
-      if (codeMode === 'build') payload.code_mode = 'build';
+      // A 方案：code 会话意图由后端推断——前端不再发 code_mode（除非用户强制锁定）。
+      // 旧 'plan' 锁定可通过 IssuesSidePanel 的修复按钮 + IssuesSidePanel "auto" 模式替代；
+      // 旧 'build' 锁定 → 后端会基于 isImplementationContinuation 自动升级。
+      if (codeMode && codeMode !== 'auto') payload.code_mode = codeMode;
       if (selectedImageBase64) {
         payload.image_base64 = selectedImageBase64;
       }
@@ -2277,6 +2313,9 @@ function App() {
         payload.client_info = getClientInfo(probeResult);
       }
       const res = await api.post('/chat', payload)
+      // S6: 后端在 plan / 直接 response 携带 intent —— 弹纠正浮层
+      //     触发条件：用户非确认型 query + 分类结果不是 CONVERSATIONAL
+      maybeShowIntentFloater(res.data, text)
       if (res.data.status === 'success') {
         setMessages(prev => [...prev, normalizeMessage({ id: nextMsgId(), role: 'assistant', content: res.data.response })])
         fetchSessions()
@@ -2324,12 +2363,48 @@ function App() {
         return
       }
       setMessages(prev => [...prev, { role: 'error', content: `Network Error: ${err.message}` }])
-    } finally { 
+    } finally {
       setIsLoading(false);
       setSelectedImage(null);
       setSelectedImageBase64(null);
     }
   }
+
+  // 方案 A: IntentCorrect replay 结果注入聊天流。
+  // 后端 /intent/correct 同步返回了 replay_result (内含 chatExecute 的 final conclusion
+  // —— enforce-final 模式直接生成的 2058 字符 final, 含 issue 列表 + 状态统计)，
+  // 这里复刻 /chat/execute 路径 (App.jsx 2335-2352) 的处理:
+  //   1. 把 final 当成 assistant 消息注入聊天流 (走 normalizeMessage 解析 state/analysisResult)
+  //   2. 找最近 plan 消息, 标 status='executed' + 全 step 标 'completed'
+  //   3. 刷新 session 列表
+  // 这样:
+  //   - 聊天 UI 能看到完整的分析结论 (issue 列表 + 修复状态)
+  //   - plan 状态切到 executed, 右栏 IssuesSidePanel 会跟着收尾
+  //   - 避免"前端一轮停止"+ useIssueList 永久轮询
+  const handleIntentCorrectResult = useCallback((replayResult) => {
+    if (!replayResult) return
+    const finalResponse = replayResult.response
+    if (typeof finalResponse === 'string' && finalResponse.length > 0) {
+      // enforce-final 模式不含 __CMD__, 不会有"等前端喂 COMMAND_RESULTS"的中间态
+      const hasCommands = finalResponse.includes('__CMD__{')
+      setMessages(prev => [...prev, normalizeMessage({ id: nextMsgId(), role: 'assistant', content: finalResponse })])
+      setMessages(prev => {
+        const newMsgs = [...prev]
+        for (let i = newMsgs.length - 1; i >= 0; i--) {
+          if (newMsgs[i].role === 'plan') {
+            const newContent = { ...newMsgs[i].content, status: 'executed' }
+            if (!hasCommands && newContent.plan) {
+              newContent.plan = newContent.plan.map(s => ({ ...s, status: 'completed' }))
+            }
+            newMsgs[i] = { ...newMsgs[i], content: newContent }
+            break
+          }
+        }
+        return newMsgs
+      })
+      fetchSessions()
+    }
+  }, [normalizeMessage, fetchSessions])
 
   // ── Agent command detection: auto-execute __CMD__ markers ──
   const processedCmdMsgs = useRef(new Set())
@@ -3163,39 +3238,8 @@ const handleDeleteSession = (id) => {
               ) : (
                 <div style={{ padding: '12px 24px 20px', background: '#0d0d0d', borderTop: '1px solid #1a1a1a' }}>
                   <div style={{ maxWidth: 760, margin: '0 auto' }}>
-                    {/* ── Code mode toggle (Plan / Build) ── */}
-                    {(() => {
-                      const currentSession = sessions.find(s => s.id === sessionId)
-                      const isCodeChannel = currentSession?.channel === 'code' || (!currentSession?.channel && currentChannel === 'code')
-                      if (isCodeChannel) {
-                        return (
-                          <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 4 }}>
-                            <span
-                              onClick={() => setCodeMode('plan')}
-                              style={{
-                                cursor: 'pointer', padding: '2px 8px', borderRadius: 4, fontSize: 13,
-                                color: codeMode === 'plan' ? '#1677ff' : '#666',
-                                fontWeight: codeMode === 'plan' ? 600 : 400,
-                                background: codeMode === 'plan' ? 'rgba(22,119,255,0.08)' : 'transparent',
-                                transition: 'all 0.2s',
-                              }}
-                            >🔍 分析</span>
-                            <span style={{ color: '#444', fontSize: 12 }}>|</span>
-                            <span
-                              onClick={() => setCodeMode('build')}
-                              style={{
-                                cursor: 'pointer', padding: '2px 8px', borderRadius: 4, fontSize: 13,
-                                color: codeMode === 'build' ? '#1677ff' : '#666',
-                                fontWeight: codeMode === 'build' ? 600 : 400,
-                                background: codeMode === 'build' ? 'rgba(22,119,255,0.08)' : 'transparent',
-                                transition: 'all 0.2s',
-                              }}
-                            >🔧 构建</span>
-                          </div>
-                        )
-                      }
-                      return null
-                    })()}
+                    {/* ── A 方案：code 会话移除「分析/构建」toggle，意图由后端基于消息+状态推断。
+                          状态栏保留 codeMode='auto' 默认值；高级用户可通过 devtools 临时改 state 强制锁定。 */}
                     <div style={{
                       background: '#1a1a1a', borderRadius: 24, border: '1px solid #2a2a2a',
                       padding: '10px 14px', display: 'flex', alignItems: 'flex-end', gap: 8,
@@ -3344,6 +3388,16 @@ const handleDeleteSession = (id) => {
           )}
         </Layout>
       </Layout>
+
+      {/* S6: 意图纠正浮层 —— 后端 predicted_intent 出现时弹出 */}
+      <IntentCorrectionFloater
+        visible={intentFloater.open}
+        query={intentFloater.query}
+        predictedIntent={intentFloater.predicted}
+        sessionId={intentFloater.sessionId || sessionId}
+        onResult={handleIntentCorrectResult}
+        onClose={() => setIntentFloater({ open: false, query: '', predicted: '', sessionId: '' })}
+      />
 
       {/* ── Workspace Directory Picker for Code Sessions ── */}
       <Modal
