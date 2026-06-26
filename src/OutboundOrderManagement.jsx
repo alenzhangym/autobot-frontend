@@ -448,6 +448,10 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
     }
   }
 
+  const getInsufficientStockItems = (list) => (
+    list.filter(it => it.currentStock != null && Number(it.qty || 0) > Number(it.currentStock))
+  )
+
   const handleCreate = async () => {
     try {
       const values = await createForm.validateFields()
@@ -460,6 +464,15 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
       const invalidQty = dirty.filter(it => !it.qty || it.qty <= 0)
       if (invalidQty.length > 0) {
         message.error(`有 ${invalidQty.length} 条已修改物料数量为 0 或未填写，本次出库数量必须大于 0`)
+        return
+      }
+      const insufficientStockItems = getInsufficientStockItems(dirty)
+      if (insufficientStockItems.length > 0) {
+        const firstItem = insufficientStockItems[0]
+        message.error(
+          `库存不足：共有 ${insufficientStockItems.length} 条物料的本次出库数量大于库存，` +
+          `请修改后再创建。首条物料型号：${firstItem.model || '-'}，库存：${firstItem.currentStock}，本次出库：${firstItem.qty}`
+        )
         return
       }
       const orderItems = dirty.map(it => ({
@@ -490,17 +503,10 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
       if (e.errorFields) return
       const errData = e.response?.data
       if (errData?.code === 'INVENTORY_INSUFFICIENT') {
-        Modal.confirm({
+        Modal.error({
           title: '库存不足',
           content: errData.message || '当前库存不足以完成本次出库，请调整数量后重试。',
           okText: '我知道了',
-          cancelText: '取消',
-          onOk: () => {
-            setShowCreateModal(false)
-            setItems([emptyItem()])
-            setSelectedCustId(null)
-            setSalesOrders([])
-          },
         })
         return
       }
