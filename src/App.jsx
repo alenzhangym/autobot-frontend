@@ -44,6 +44,7 @@ import { executeAgentCommands, appendStreamToken, tryStreamDispatch, resetStream
 import MessageBubble from './components/MessageBubble'
 import IssuesSidePanel from './components/IssuesSidePanel'
 import IntentCorrectionFloater from './components/IntentCorrectionFloater'
+import ReVerifyProgressToast from './components/ReVerifyProgressToast'
 import { useUserStore } from './store/useUserStore'
 import { useDataStore } from './store/useDataStore'
 import { useConfigStore } from './store/useConfigStore'
@@ -788,6 +789,8 @@ function App() {
   const [messages, setMessages] = useState([])
   // S6: 意图纠正浮层状态
   const [intentFloater, setIntentFloater] = useState({ open: false, query: '', predicted: '' })
+  // 路线 B: re-verify 模式右下角 toast 开关 (命中"是否修复"语义 + 提交成功后置 true)
+  const [reVerifyToastEnabled, setReVerifyToastEnabled] = useState(false)
   const lastUserQueryRef = useRef('')
   const msgIdCounter = useRef(Date.now())
   const nextMsgId = () => { msgIdCounter.current += 1; return msgIdCounter.current }
@@ -2319,6 +2322,14 @@ function App() {
       if (res.data.status === 'success') {
         setMessages(prev => [...prev, normalizeMessage({ id: nextMsgId(), role: 'assistant', content: res.data.response })])
         fetchSessions()
+        // Agent-driven issue ops: 后端可能在本轮 chat 中执行了 <ISSUE_OP .../>
+        // (例如用户说"删除 issue 12, 13" / "把 22 标为已修复"), IssueStore 已被修改.
+        // 通知右栏立即刷新一次, 避免等 5s 自适应轮询.
+        if (typeof window !== 'undefined' && window.dispatchEvent) {
+          window.dispatchEvent(new CustomEvent('agent-issue-ops-applied', {
+            detail: { sessionId, source: 'chat' }
+          }))
+        }
       } else if (res.data.status === 'plan_generated') {
         const planData = { ...res.data.plan, status: 'executing' }
         setMessages(prev => [...prev, { id: nextMsgId(), role: 'plan', content: planData }])
@@ -2348,6 +2359,12 @@ function App() {
               return newMsgs
             })
             fetchSessions()
+            // plan execute 也可能产出 <ISSUE_OP .../> (e.g. "把 plan 里的 issue 全标为 in_progress")
+            if (typeof window !== 'undefined' && window.dispatchEvent) {
+              window.dispatchEvent(new CustomEvent('agent-issue-ops-applied', {
+                detail: { sessionId, source: 'plan-execute' }
+              }))
+            }
           } else {
             setMessages(prev => [...prev, { role: 'error', content: `Error: ${execRes.data.message}` }])
           }
@@ -2372,7 +2389,7 @@ function App() {
 
   // 方案 A: IntentCorrect replay 结果注入聊天流。
   // 后端 /intent/correct 同步返回了 replay_result (内含 chatExecute 的 final conclusion
-  // —— enforce-final 模式直接生成的 2058 字符 final, 含 issue 列表 + 状态统计)，
+  // —— enforce-final 模式直接生成的 final, 含 issue 列表 + 状态统计),
   // 这里复刻 /chat/execute 路径 (App.jsx 2335-2352) 的处理:
   //   1. 把 final 当成 assistant 消息注入聊天流 (走 normalizeMessage 解析 state/analysisResult)
   //   2. 找最近 plan 消息, 标 status='executed' + 全 step 标 'completed'
@@ -2381,30 +2398,44 @@ function App() {
   //   - 聊天 UI 能看到完整的分析结论 (issue 列表 + 修复状态)
   //   - plan 状态切到 executed, 右栏 IssuesSidePanel 会跟着收尾
   //   - 避免"前端一轮停止"+ useIssueList 永久轮询
-  const handleIntentCorrectResult = useCallback((replayResult) => {
-    if (!replayResult) return
-    const finalResponse = replayResult.response
-    if (typeof finalResponse === 'string' && finalResponse.length > 0) {
-      // enforce-final 模式不含 __CMD__, 不会有"等前端喂 COMMAND_RESULTS"的中间态
-      const hasCommands = finalResponse.includes('__CMD__{')
-      setMessages(prev => [...prev, normalizeMessage({ id: nextMsgId(), role: 'assistant', content: finalResponse })])
-      setMessages(prev => {
-        const newMsgs = [...prev]
-        for (let i = newMsgs.length - 1; i >= 0; i--) {
-          if (newMsgs[i].role === 'plan') {
-            const newContent = { ...newMsgs[i].content, status: 'executed' }
-            if (!hasCommands && newContent.plan) {
-              newContent.plan = newContent.plan.map(s => ({ ...s, status: 'completed' }))
+  //
+  // 路线 B: payload 现在是整条 /intent/correct 响应 (r.data),
+  // 含 re_verify 标志 (后端 isReVerifyQuestion 判定) + replay_result 子对象。
+  // 命中 re_verify=true 时挂起 ReVerifyProgressToast 轮询 progress。
+  const handleIntentCorrectResult = useCallback((payload) => {
+    if (!payload) return
+    // 1. 注入 replay_result.response 到聊天流 (方案 A 主体)
+    const replayResult = payload.replay_result
+    if (replayResult) {
+      const finalResponse = replayResult.response
+      if (typeof finalResponse === 'string' && finalResponse.length > 0) {
+        // enforce-final 模式不含 __CMD__, 不会有"等前端喂 COMMAND_RESULTS"的中间态
+        const hasCommands = finalResponse.includes('__CMD__{')
+        setMessages(prev => [...prev, normalizeMessage({ id: nextMsgId(), role: 'assistant', content: finalResponse })])
+        setMessages(prev => {
+          const newMsgs = [...prev]
+          for (let i = newMsgs.length - 1; i >= 0; i--) {
+            if (newMsgs[i].role === 'plan') {
+              const newContent = { ...newMsgs[i].content, status: 'executed' }
+              if (!hasCommands && newContent.plan) {
+                newContent.plan = newContent.plan.map(s => ({ ...s, status: 'completed' }))
+              }
+              newMsgs[i] = { ...newMsgs[i], content: newContent }
+              break
             }
-            newMsgs[i] = { ...newMsgs[i], content: newContent }
-            break
           }
-        }
-        return newMsgs
-      })
-      fetchSessions()
+          return newMsgs
+        })
+        fetchSessions()
+      }
     }
-  }, [normalizeMessage, fetchSessions])
+    // 2. 路线 B: re-verify 模式 → 挂右下角 Toast 轮询 progress
+    // 注: 即便 replay 没产生 finalResponse (例如 isCodeIntent(corrected)=false 时不重放),
+    // 只要 re_verify=true 也要显示 toast, 让用户知道"系统在跑"。
+    if (payload.re_verify === true && sessionId) {
+      setReVerifyToastEnabled(true)
+    }
+  }, [normalizeMessage, fetchSessions, sessionId])
 
   // ── Agent command detection: auto-execute __CMD__ markers ──
   const processedCmdMsgs = useRef(new Set())
@@ -2589,8 +2620,18 @@ function App() {
       }
 
       if (!finalContent || !finalContent.trim()) {
-        appendLiveLog(`[CodeAnalysis] 使用兜底提示替换消息: ${failureReason || '未收到最终分析结论'}\n`)
-        finalContent = `【Code Analysis】\n\n本轮文件读取已完成，但没有收到最终分析结论。${failureReason ? `\n\n原因: ${failureReason}` : ''}\n\n请重试一次；如果持续出现，请检查后端日志。`
+        // Re-verify / IntentCorrect 等场景下，真实结果会从 /intent/correct → replay_result
+        // 路径以新消息抵达。此处不再把 "本轮文件读取已完成…" 兜底文案塞进聊天流中间，
+        // 否则用户会看到"提问 → 错误占位 → 真实结果"三段，错误是噪声。
+        appendLiveLog(`[CodeAnalysis] 静默回传未拿到最终分析结论: ${failureReason || '未知原因'}。保留原消息内容，不向聊天流注入错误占位（真实结果将由 IntentCorrect replay 等其他路径抵达）。\n`)
+        if (silentResponseVersionRef.current.get(targetMsgId) !== nextVersion) {
+          appendLiveLog('[CodeAnalysis] 检测到更晚的静默回传，忽略当前旧响应\n')
+          return
+        }
+        setMessages(prev => prev.map(m =>
+          m.id === targetMsgId ? { ...m, _isComplete: true } : m
+        ))
+        return
       }
 
       if (silentResponseVersionRef.current.get(targetMsgId) !== nextVersion) {
@@ -2628,16 +2669,14 @@ function App() {
       }
     } catch (e) {
       console.warn('Command results send failed:', e)
-      appendLiveLog(`[CodeAnalysis] 回传异常: ${e?.message || '网络或服务异常'}\n`)
-      const fallbackContent = `【Code Analysis】\n\n本轮文件读取已完成，但回传最终分析结果失败。\n\n原因: ${e?.message || '网络或服务异常'}`
+      // 同样不向聊天流注入错误占位 —— 真实结果会从 IntentCorrect replay 等其他路径抵达。
+      appendLiveLog(`[CodeAnalysis] 静默回传异常: ${e?.message || '网络或服务异常'}。保留原消息内容，不向聊天流注入错误占位。\n`)
       if (silentResponseVersionRef.current.get(targetMsgId) !== nextVersion) {
         appendLiveLog('[CodeAnalysis] 检测到更晚的静默回传，忽略当前异常响应\n')
         return
       }
       setMessages(prev => prev.map(m =>
-        m.id === targetMsgId
-          ? normalizeMessage({ ...m, __cmd: undefined, content: mergeAnalysisStateContent(m.content, fallbackContent), _isComplete: true })
-          : m
+        m.id === targetMsgId ? { ...m, _isComplete: true } : m
       ))
     }
   }
@@ -3397,6 +3436,21 @@ const handleDeleteSession = (id) => {
         sessionId={intentFloater.sessionId || sessionId}
         onResult={handleIntentCorrectResult}
         onClose={() => setIntentFloater({ open: false, query: '', predicted: '', sessionId: '' })}
+      />
+
+      {/* 路线 B: re-verify 模式进度 toast —— re_verify=true 时挂出, 轮询 progress */}
+      <ReVerifyProgressToast
+        sessionId={sessionId}
+        enabled={reVerifyToastEnabled}
+        onDone={(final) => {
+          // 收到 running=false 的最终 snapshot → 关闭 toast
+          // 此时后端已把核实结果写进 IssueStore, 右栏 issues 需要刷新
+          setReVerifyToastEnabled(false)
+          // 通知右栏 IssuesSidePanel 立即拉一次新数据 (避免等 5s 自动轮询)
+          if (typeof window !== 'undefined' && window.dispatchEvent) {
+            window.dispatchEvent(new CustomEvent('reverify-finished', { detail: final }))
+          }
+        }}
       />
 
       {/* ── Workspace Directory Picker for Code Sessions ── */}

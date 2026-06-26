@@ -1,10 +1,10 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react'
-import { Card, List, Tag, Space, Typography, Button, Empty, Spin, Tooltip, message, Segmented, Modal, Radio } from 'antd'
+import { Card, List, Tag, Space, Typography, Button, Empty, Spin, Tooltip, message, Segmented, Modal, Radio, Dropdown, Alert } from 'antd'
 import {
   CheckCircleOutlined, CloseCircleOutlined, MinusCircleOutlined,
   FileTextOutlined, ReloadOutlined, FolderOpenOutlined, ToolOutlined,
   LoadingOutlined, StopOutlined, QuestionCircleOutlined,
-  BranchesOutlined
+  BranchesOutlined, DisconnectOutlined, DeleteOutlined, MoreOutlined
 } from '@ant-design/icons'
 import api, { getBackendHost } from '../auth'
 import FixSummaryCard from './FixSummaryCard'
@@ -30,6 +30,30 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
   const [filter, setFilter] = useState('open')   // 'open' | 'in_progress' | 'all' | 'fixed' | 'ignored'
   // S7: 列表 + 自适应轮询 走 useIssueList
   const { issues, setIssues, loading, refresh } = useIssueList({ sessionId })
+  // 路线 B: 监听 App.jsx 在 re-verify 完成后派发的 'reverify-finished' 事件,
+  // 立即 refresh 一次 (避免等下一次自适应轮询的 5s 间隔)
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.addEventListener) return
+    const handler = () => {
+      try { refresh() } catch (e) { console.error('[IssuesSidePanel] refresh on reverify-finished failed:', e) }
+    }
+    window.addEventListener('reverify-finished', handler)
+    return () => window.removeEventListener('reverify-finished', handler)
+  }, [refresh])
+  // Agent-driven issue ops: 监听 App.jsx 在 chat 完成后派发的 'agent-issue-ops-applied' 事件.
+  // 当用户在 chat 里说"删除 issue X" / "把 Y 标为已修复" 时, 后端会通过 <ISSUE_OP .../>
+  // marker 直接改 IssueStore, 这里必须立即拉一次新数据, 否则 5s 轮询窗口内用户看不到变化.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.addEventListener) return
+    const handler = (ev) => {
+      // 只对当前会话的事件反应, 避免跨 session 误刷
+      const sid = ev?.detail?.sessionId
+      if (sid && sessionId && sid !== sessionId) return
+      try { refresh() } catch (e) { console.error('[IssuesSidePanel] refresh on agent-issue-ops-applied failed:', e) }
+    }
+    window.addEventListener('agent-issue-ops-applied', handler)
+    return () => window.removeEventListener('agent-issue-ops-applied', handler)
+  }, [refresh, sessionId])
   const [busyId, setBusyId] = useState(null)
   // S7: WS + 状态机 + 确认弹窗 走 useFixTaskBus
   const {
@@ -52,6 +76,159 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
   // (hook's `tasks[issueId].phases`) so a tab that connects
   // mid-flight sees the full picture.
   const [stateMachineModal, setStateMachineModal] = useState(null)  // { issueId, sessionId, taskId, backendPhases, loading }
+
+  // ── Issue deletion ───────────────────────────────────────────
+  // Single-issue delete is per-product-rule user-driven only.
+  // The button is only shown for OPEN issues (and FIXED/IGNORED
+  // where the user might want to clear a "noise" entry). For
+  // IN_PROGRESS we hide it to avoid racing the fix-task.
+  const [deletingId, setDeletingId] = useState(null)
+
+  /**
+   * Delete a single issue. Idempotent on the backend, so we use
+   * optimistic update: remove from local list immediately, roll
+   * back on failure. The backend returns 200 even if the id was
+   * already gone (stale tab), so a 404 is not the same as an
+   * error.
+   */
+  const deleteIssue = async (issue) => {
+    Modal.confirm({
+      title: `删除 issue: ${issue.issueId}?`,
+      content: (
+        <div>
+          <div style={{ marginBottom: 6 }}>
+            <Text code style={{ fontSize: 11 }}>{issue.filePath}:{issue.lineNumber}</Text>
+          </div>
+          <div style={{ color: '#888', fontSize: 12 }}>
+            {issue.description}
+          </div>
+          <Alert
+            type="warning" showIcon style={{ marginTop: 8 }}
+            message="删除后无法恢复。如需隐藏但不删除, 请用'忽略'。"
+          />
+        </div>
+      ),
+      okText: '确认删除',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: async () => {
+        setDeletingId(issue.issueId)
+        // Optimistic: drop from list, keep a copy for rollback.
+        const snapshot = issues
+        setIssues(prev => prev.filter(i => i.issueId !== issue.issueId))
+        try {
+          const res = await api.delete(
+            `/api/code-analysis/${sessionId}/issues/${issue.issueId}`,
+            { baseURL: getBackendHost() }
+          )
+          const data = res && res.data
+          if (data && data.removed === false) {
+            // Server says it was already gone — refresh to be sure.
+            message.info('该 issue 已被删除过，正在刷新列表')
+            try { await refresh() } catch (_) {}
+          } else {
+            message.success('已删除')
+          }
+        } catch (e) {
+          // Roll back the optimistic removal.
+          setIssues(snapshot)
+          message.error('删除失败: ' + (e.response?.data?.message || e.message))
+        }
+        setDeletingId(null)
+      }
+    })
+  }
+
+  // ── Dedup (find duplicates → preview → apply) ────────────────
+  // dedupModal shape:
+  //   null                          → closed
+  //   { step: 'pick' }              → strategy picker
+  //   { step: 'preview', strategy, groups, groupCount, wouldRemove, loading }
+  //                                  → preview list with "应用" button
+  //   { step: 'applying', strategy } → apply in flight
+  const [dedupModal, setDedupModal] = useState(null)
+
+  /**
+   * Open the dedup flow. First step: pick a strategy. We
+   * explicitly do NOT call /dedup yet — the user must see the
+   * preview and confirm.
+   */
+  const openDedup = () => {
+    if (!issues || issues.length < 2) {
+      message.info('当前 issue 不足 2 条, 无需去重')
+      return
+    }
+    setDedupModal({ step: 'pick' })
+  }
+
+  /**
+   * Fetch the duplicate groups from the backend. Read-only —
+   * no state is mutated by this call.
+   */
+  const fetchPreview = async (strategy) => {
+    setDedupModal({ step: 'preview', strategy, groups: [], groupCount: 0, wouldRemove: 0, loading: true })
+    try {
+      const res = await api.get(
+        `/api/code-analysis/${sessionId}/issues/duplicates`,
+        { params: { strategy }, baseURL: getBackendHost() }
+      )
+      const data = res && res.data
+      if (!data || data.status !== 'ok') {
+        message.error('预览去重失败: ' + (data && data.message || 'unknown'))
+        setDedupModal(null)
+        return
+      }
+      setDedupModal({
+        step: 'preview',
+        strategy,
+        groups: data.groups || [],
+        groupCount: data.groupCount || 0,
+        wouldRemove: data.wouldRemove || 0,
+        loading: false
+      })
+    } catch (e) {
+      message.error('预览去重失败: ' + (e.response?.data?.message || e.message))
+      setDedupModal(null)
+    }
+  }
+
+  /**
+   * Apply the dedup. Confirms with the user via the existing
+   * Modal.confirm, then POSTs /dedup and refreshes the list.
+   */
+  const applyDedup = (strategy, wouldRemove, groupCount) => {
+    Modal.confirm({
+      title: `确认应用去重?`,
+      content: `将删除 ${wouldRemove} 条 issue (${groupCount} 个重复组), 保留每组最早创建的一条。操作不可撤销。`,
+      okText: '应用去重',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: async () => {
+        setDedupModal({ step: 'applying', strategy })
+        try {
+          const res = await api.post(
+            `/api/code-analysis/${sessionId}/issues/dedup`,
+            { strategy },
+            { baseURL: getBackendHost() }
+          )
+          const data = res && res.data
+          if (!data || data.status !== 'ok') {
+            message.error('去重失败: ' + (data && data.message || 'unknown'))
+            setDedupModal(null)
+            return
+          }
+          message.success(`去重完成: 删除 ${data.removed} 条, 保留 ${data.kept} 条 (${data.groups} 组)`)
+          setDedupModal(null)
+          // Refresh from backend so the local list matches reality
+          // (in case of any race with concurrent mutations).
+          try { await refresh() } catch (_) {}
+        } catch (e) {
+          message.error('去重失败: ' + (e.response?.data?.message || e.message))
+          setDedupModal(null)
+        }
+      }
+    })
+  }
 
   // ── S7: 删掉本地的 refresh / 自适应轮询 / pollTaskStates / per-task WS ──
   // 全部下沉到 hooks（useIssueList 负责列表+轮询，useFixTaskBus 负责 WS+状态机）。
@@ -168,6 +345,56 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
       message.error('更新状态失败: ' + (e.response?.data?.message || e.message))
     }
     setBusyId(null)
+  }
+
+  /**
+   * 一键批量忽略: 把当前所有 OPEN/IN_PROGRESS 的 issue 一次性标为 IGNORED。
+   * 被忽略的 issue 在后端 re-verify 循环里被自动过滤 (下批不出现), 不再参与核实。
+   * 走串行 POST (避免后端 DB 写锁冲突), 失败单条不影响其他。
+   */
+  const ignoreAllOpen = async () => {
+    const targets = (issues || []).filter(i => {
+      const s = (i.status || 'open')
+      return s === 'open' || s === 'in_progress'
+    })
+    if (targets.length === 0) {
+      message.info('当前没有待处理/修复中 issue 可忽略')
+      return
+    }
+    Modal.confirm({
+      title: `一键忽略 ${targets.length} 条 issue?`,
+      content: '被忽略的 issue 在下次"重新核实"时将不再被分析。可在"已忽略"标签下重新打开。',
+      okText: '确认忽略',
+      cancelText: '取消',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        let okCount = 0
+        let failCount = 0
+        for (const t of targets) {
+          try {
+            await api.post(
+              `/api/code-analysis/${sessionId}/issues/${t.issueId}/status`,
+              { status: 'ignored' },
+              { baseURL: getBackendHost() }
+            )
+            okCount++
+          } catch (e) {
+            failCount++
+          }
+        }
+        // 乐观一次性更新本地列表
+        const ignoredSet = new Set(targets.map(t => t.issueId))
+        setIssues(prev => prev.map(i =>
+          ignoredSet.has(i.issueId) ? { ...i, status: 'ignored' } : i))
+        if (failCount === 0) {
+          message.success(`已忽略 ${okCount} 条 issue`)
+        } else {
+          message.warning(`忽略完成: 成功 ${okCount}, 失败 ${failCount}`)
+        }
+        // 触发一次完整 refresh, 同步后端
+        try { await refresh() } catch (_) {}
+      }
+    })
   }
 
   /**
@@ -320,9 +547,25 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
             {counts.in_progress > 0 && <Tag color="processing">{counts.in_progress} 修复中</Tag>}
             {counts.fixed > 0 && <Tag color="success">{counts.fixed} 已修复</Tag>}
           </Space>
-          <Tooltip title="刷新">
-            <Button size="small" icon={<ReloadOutlined />} onClick={refresh} loading={loading} />
-          </Tooltip>
+          <Space>
+            <Tooltip title="查找并去重: 同 file+line / 同 file+描述前缀 / 描述相似 ≥85% 的 issue, 保留最早创建的一条, 删除其他">
+              <Button size="small" icon={<BranchesOutlined />}
+                onClick={openDedup}
+                disabled={!issues || issues.length < 2}>
+                查找重复
+              </Button>
+            </Tooltip>
+            <Tooltip title="把当前所有待处理/修复中 issue 标为已忽略, 重新核实时不再分析这些">
+              <Button size="small" icon={<DisconnectOutlined />}
+                onClick={ignoreAllOpen}
+                disabled={!counts.open && !counts.in_progress}>
+                一键忽略
+              </Button>
+            </Tooltip>
+            <Tooltip title="刷新">
+              <Button size="small" icon={<ReloadOutlined />} onClick={refresh} loading={loading} />
+            </Tooltip>
+          </Space>
         </Space>
         <div style={{ marginTop: 8 }}>
           <Segmented
@@ -358,11 +601,13 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
               <IssueItem
                 issue={issue}
                 busy={busyId === issue.issueId}
+                deleting={deletingId === issue.issueId}
                 onJump={() => onJumpToFile && onJumpToFile(issue.filePath, issue.lineNumber)}
                 onStartFix={() => startFix(issue)}
                 onMarkFixed={() => updateStatus(issue, 'fixed')}
                 onMarkIgnored={() => updateStatus(issue, 'ignored')}
                 onReopen={() => updateStatus(issue, 'open')}
+                onDelete={() => deleteIssue(issue)}
                 onViewSummary={summaries[issue.issueId]
                   ? () => setSummaryModal({ issueId: issue.issueId,
                       summary: summaries[issue.issueId] })
@@ -465,6 +710,176 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
           />
         )}
       </Modal>
+
+      {/* Dedup flow: pick strategy → preview groups → apply.
+          Single modal whose body switches on `dedupModal.step` so the
+          user never loses the dedup context mid-flow. */}
+      <Modal
+        open={!!dedupModal}
+        onCancel={() => {
+          // Don't allow closing mid-apply (the backend is mid-mutation).
+          if (dedupModal && dedupModal.step === 'applying') return
+          setDedupModal(null)
+        }}
+        footer={null}
+        width={720}
+        destroyOnClose
+        title={
+          <Space>
+            <BranchesOutlined />
+            <span>查找重复 issue</span>
+          </Space>
+        }
+      >
+        {dedupModal && dedupModal.step === 'pick' && (
+          <DedupStrategyPicker
+            onPick={(strategy) => fetchPreview(strategy)}
+            onCancel={() => setDedupModal(null)}
+          />
+        )}
+        {dedupModal && dedupModal.step === 'preview' && (
+          <DedupPreview
+            strategy={dedupModal.strategy}
+            groups={dedupModal.groups}
+            groupCount={dedupModal.groupCount}
+            wouldRemove={dedupModal.wouldRemove}
+            loading={dedupModal.loading}
+            onApply={() => applyDedup(dedupModal.strategy, dedupModal.wouldRemove, dedupModal.groupCount)}
+            onBack={() => setDedupModal({ step: 'pick' })}
+            onCancel={() => setDedupModal(null)}
+          />
+        )}
+        {dedupModal && dedupModal.step === 'applying' && (
+          <div style={{ textAlign: 'center', padding: 32 }}>
+            <Spin size="large" />
+            <div style={{ marginTop: 12, color: '#888' }}>
+              正在应用去重 ({dedupModal.strategy})...
+            </div>
+          </div>
+        )}
+      </Modal>
+    </div>
+  )
+}
+
+/**
+ * Step 1 of the dedup flow: pick a strategy. Three options that
+ * trade recall vs risk. We keep the radio to allow back-and-forth
+ * comparison before committing.
+ */
+function DedupStrategyPicker({ onPick, onCancel }) {
+  const [strategy, setStrategy] = useState('file-line')
+  const STRATEGIES = [
+    { value: 'file-line',              label: 'file + line (推荐)',         desc: '同 filePath + 同 lineNumber 视为重复。最严格, 误判风险极低。' },
+    { value: 'file-description-prefix',label: 'file + 描述前缀',             desc: '同 filePath + 描述前 80 字符相同视为重复。能容忍行号漂移。' },
+    { value: 'fuzzy',                  label: '描述相似度 ≥ 85% (Jaccard)', desc: '按描述分词后 Jaccard 相似度 ≥ 0.85 视为重复。召回高, 需预览。' }
+  ]
+  return (
+    <div>
+      <Alert
+        type="info" showIcon style={{ marginBottom: 12 }}
+        message="去重会删除每组中除'最早创建'以外的所有 issue, 不可撤销。请先在预览里确认。"
+      />
+      <Radio.Group
+        value={strategy}
+        onChange={e => setStrategy(e.target.value)}
+        style={{ width: '100%' }}
+      >
+        <Space direction="vertical" style={{ width: '100%' }}>
+          {STRATEGIES.map(s => (
+            <Radio key={s.value} value={s.value} style={{ display: 'block' }}>
+              <Text strong>{s.label}</Text>
+              <div style={{ color: '#888', fontSize: 12, marginLeft: 24 }}>{s.desc}</div>
+            </Radio>
+          ))}
+        </Space>
+      </Radio.Group>
+      <div style={{ marginTop: 16, textAlign: 'right' }}>
+        <Space>
+          <Button onClick={onCancel}>取消</Button>
+          <Button type="primary" onClick={() => onPick(strategy)}>预览</Button>
+        </Space>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Step 2 of the dedup flow: show the duplicate groups. Each row
+ * shows the canonical survivor (kept) at the top in green, and the
+ * candidates-for-removal below in red. The user reviews, then
+ * clicks "应用" to confirm.
+ */
+function DedupPreview({ strategy, groups, groupCount, wouldRemove, loading, onApply, onBack, onCancel }) {
+  if (loading) {
+    return (
+      <div style={{ textAlign: 'center', padding: 32 }}>
+        <Spin size="large" />
+        <div style={{ marginTop: 12, color: '#888' }}>正在查找重复...</div>
+      </div>
+    )
+  }
+  if (!groups || groups.length === 0) {
+    return (
+      <div>
+        <Alert
+          type="success" showIcon style={{ marginBottom: 12 }}
+          message={`未找到重复 issue (策略: ${strategy})`}
+        />
+        <div style={{ textAlign: 'right' }}>
+          <Space>
+            <Button onClick={onBack}>返回</Button>
+            <Button onClick={onCancel}>关闭</Button>
+          </Space>
+        </div>
+      </div>
+    )
+  }
+  return (
+    <div>
+      <Alert
+        type="warning" showIcon style={{ marginBottom: 12 }}
+        message={`发现 ${groupCount} 个重复组, 共 ${wouldRemove} 条 issue 会被删除`}
+        description="每组保留最早创建的一条 (绿色), 其余 (红色) 会被删除。操作不可撤销。"
+      />
+      <div style={{ maxHeight: 380, overflow: 'auto', border: '1px solid #2a2a2a', borderRadius: 4, padding: 8 }}>
+        {groups.map((g, idx) => (
+          <div key={g.key || idx} style={{ marginBottom: 12, padding: 8, background: '#141414', borderRadius: 4 }}>
+            <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>
+              组 {idx + 1} · key=<Text code style={{ fontSize: 10 }}>{g.key}</Text>
+            </div>
+            {g.keep && (
+              <div style={{ padding: 6, background: 'rgba(82,196,26,0.08)', border: '1px solid rgba(82,196,26,0.3)', borderRadius: 3, marginBottom: 4 }}>
+                <Space size={4} wrap>
+                  <Tag color="green">保留</Tag>
+                  <Text code style={{ fontSize: 10 }}>{g.keep.filePath}:{g.keep.lineNumber}</Text>
+                  <Text type="secondary" style={{ fontSize: 11 }}>{g.keep.issueId}</Text>
+                </Space>
+                <div style={{ fontSize: 11, marginTop: 2, color: '#aaa' }}>{g.keep.description}</div>
+              </div>
+            )}
+            {(g.remove || []).map((r) => (
+              <div key={r.issueId} style={{ padding: 6, background: 'rgba(255,77,79,0.06)', border: '1px solid rgba(255,77,79,0.25)', borderRadius: 3, marginBottom: 4 }}>
+                <Space size={4} wrap>
+                  <Tag color="red">删除</Tag>
+                  <Text code style={{ fontSize: 10 }}>{r.filePath}:{r.lineNumber}</Text>
+                  <Text type="secondary" style={{ fontSize: 11 }}>{r.issueId}</Text>
+                </Space>
+                <div style={{ fontSize: 11, marginTop: 2, color: '#888' }}>{r.description}</div>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+      <div style={{ marginTop: 12, textAlign: 'right' }}>
+        <Space>
+          <Button onClick={onBack}>返回</Button>
+          <Button onClick={onCancel}>取消</Button>
+          <Button type="primary" danger onClick={onApply}>
+            应用去重 (删除 {wouldRemove} 条)
+          </Button>
+        </Space>
+      </div>
     </div>
   )
 }
@@ -477,12 +892,16 @@ function emptyDescription(filter, counts) {
   return '该筛选下没有问题'
 }
 
-function IssueItem({ issue, busy, onJump, onStartFix, onMarkFixed, onMarkIgnored, onReopen, onViewSummary, onViewStateMachine }) {
+function IssueItem({ issue, busy, deleting, onJump, onStartFix, onMarkFixed, onMarkIgnored, onReopen, onDelete, onViewSummary, onViewStateMachine }) {
   const status = issue.status || 'open'
   const tag = STATUS_TAG[status] || STATUS_TAG.open
   const isResolved = status === 'fixed' || status === 'ignored'
   const isInProgress = status === 'in_progress'
   const canJump = !!issue.filePath
+  // Show "..." menu only when there's a destructive action available.
+  // IN_PROGRESS issues are protected — deleting while a fix-task is
+  // running could leave the task in a weird state.
+  const showMoreMenu = !!onDelete && !isInProgress
 
   return (
     <Card
@@ -585,6 +1004,37 @@ function IssueItem({ issue, busy, onJump, onStartFix, onMarkFixed, onMarkIgnored
               </Tooltip>
             )}
           </>
+        )}
+
+        {showMoreMenu && (
+          <Dropdown
+            menu={{
+              items: [
+                {
+                  key: 'delete',
+                  label: '删除',
+                  icon: <DeleteOutlined />,
+                  danger: true,
+                  onClick: ({ domEvent }) => {
+                    // Stop propagation so the card's outer click (jump-to-file)
+                    // doesn't also fire.
+                    if (domEvent && domEvent.stopPropagation) domEvent.stopPropagation()
+                    onDelete && onDelete()
+                  }
+                }
+              ]
+            }}
+            trigger={['click']}
+            placement="bottomRight"
+          >
+            <Tooltip title="更多操作">
+              <Button
+                size="small"
+                icon={<MoreOutlined />}
+                loading={deleting}
+              />
+            </Tooltip>
+          </Dropdown>
         )}
       </div>
     </Card>

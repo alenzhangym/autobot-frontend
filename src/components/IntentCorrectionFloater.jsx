@@ -87,14 +87,16 @@ export default function IntentCorrectionFloater({ visible, onClose, onResult, qu
         })
         const ok = r && r.data && r.data.status === 'success'
         if (ok) {
-          // 方案 A: 后端 /intent/correct 同步返回了 replay_result (内含 2058 字符 final conclusion)，
+          // 方案 A: 后端 /intent/correct 同步返回了 replay_result (内含 final conclusion)，
           // 通过 onResult 回调把 final 注入聊天流 + 标记 plan 为 executed。
           // 聊天流里出现 assistant 消息 + plan 切到 executed 即为"成功"反馈，
           // 这里不再弹 message.success 避免和聊天注入重复打扰。
-          const replayResult = r.data && r.data.replay_result
-          if (replayResult && typeof onResult === 'function') {
+          //
+          // 路线 B: 把整条响应 (含 re_verify 标志 + replay_result) 透出,
+          // 父组件 App.jsx 拿到 re_verify=true 时挂 ReVerifyProgressToast。
+          if (typeof onResult === 'function') {
             try {
-              onResult(replayResult)
+              onResult(r.data)
             } catch (cbErr) {
               // 父组件 callback 出错不能让 floater 卡死 (modal 已关, 这里只 console)
               console.error('[IntentCorrectionFloater] onResult callback threw:', cbErr)
