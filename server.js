@@ -1462,6 +1462,7 @@ import { getOrCreate, get, kill as killShellById, list as listShells, killAll as
 import { analyzeCommand, setDefaultRules as setAnalyzerRules, setDefaultAction as setAnalyzerAction, DEFAULT_RULES as ANALYZER_DEFAULT_RULES } from './src/runtime/commandAnalyzer.js';
 import { createTask as createBgTask, get as getTask, list as listTasks, kill as killTask, killAll as killAllTasks, summarize as summarizeTask } from './src/runtime/taskRegistry.js';
 import { webfetch, WebfetchError } from './src/runtime/webfetch.js';
+import { websearch, WebsearchError } from './src/runtime/websearch.js';
 import { write as todoWrite, read as todoRead, updateItem as todoUpdate, clear as todoClear } from './src/runtime/todoStore.js';
 import { create as qCreate, get as qGet, listPending as qListPending, listAll as qListAll, answer as qAnswer } from './src/runtime/questionQueue.js';
 
@@ -1615,6 +1616,24 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
 // LLM. Authorization is the same as `/api/local/bash`: the Java
 // backend is the trust boundary and pre-screens requests; these
 // endpoints just provide the runtime.
+
+// websearch (P-3 v4) — search the web via Bing / DuckDuckGo / mock.
+app.post('/api/local/websearch', async (req, res) => {
+    const { query, maxResults, provider, apiKey } = req.body || {};
+    if (typeof query !== 'string' || !query) {
+        return res.status(400).json({ status: 'error', error: 'query is required' });
+    }
+    try {
+        const result = await websearch(query, { maxResults, provider, apiKey });
+        return res.json({ status: 'ok', ...result });
+    } catch (err) {
+        if (err instanceof WebsearchError) {
+            const status = err.code === 'invalid_query' || err.code === 'query_too_long' || err.code === 'unknown_provider' || err.code === 'missing_key' ? 400 : 502;
+            return res.status(status).json({ status: 'error', code: err.code, error: err.message });
+        }
+        return res.status(500).json({ status: 'error', error: err.message });
+    }
+});
 
 // webfetch (C-6) — fetch a URL, strip HTML, cap at 5 MiB.
 app.post('/api/local/webfetch', async (req, res) => {

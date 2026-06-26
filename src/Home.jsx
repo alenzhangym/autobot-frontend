@@ -192,8 +192,6 @@ const agentCategories = [
     agents: [
       { name: 'ReasoningAgent', desc: '多步推理与 ReAct 循环', features: ['逻辑推理', '工具调用', '自纠错'] },
       { name: 'RagAgent', desc: '企业知识库检索', features: ['语义检索', 'top_k', '多文档'] },
-      { name: 'DBSqlAgent', desc: '受控 SQL 查询（SELECT only）', features: ['安全校验', '结果格式化'] },
-      { name: 'DBInspectAgent', desc: '表结构探查', features: ['schema 导出', '索引信息'] },
       { name: 'CodeAnalysisAgent', desc: '代码符号搜索', features: ['符号匹配', '引用追踪'] },
     ]
   },
