@@ -18,6 +18,17 @@ dist_electron/win-unpacked
 .idea
 .DS_Store
 *.suo
+
+# Windows reserved-name artifacts (`nul` is the null device on Windows;
+# some PowerShell commands accidentally create a literal file called
+# `nul` when `> nul` is used as a redirect). The file can't be
+# deleted by name from a normal PowerShell — open File Explorer and
+# delete it manually, or run from an elevated cmd:
+#   del \\.\e:\code\autobot\autobot-frontend\nul
+nul
+CON
+PRN
+AUX
 *.ntvs*
 *.njsproj
 *.sln
@@ -30,3 +41,4 @@ dist_electron/win-unpacked
 . a u t o b o t _ d b _ s c r i p t s 
  
  
+nul

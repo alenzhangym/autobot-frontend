@@ -1,12 +1,18 @@
 import axios from 'axios';
 
-// Smart default: use the hostname the user typed in the browser + port 8000.
-// Works for both LAN access (user types http://192.168.1.100:3000) and local
-// dev (user types http://localhost:3000). Falls back to 127.0.0.1 for
-// non-network contexts (file://, Electron) where window.location.hostname is empty.
+// Default backend host. Users who haven't touched the login screen's
+// "backend address" field get this. The user can still override at
+// runtime via the Settings panel — that value lands in localStorage
+// (`backend_host`) and wins over this default.
+const DEFAULT_BACKEND_HOST = 'http://120.26.113.95:8000';
+
+// Smart default: when the user hasn't configured anything, fall back
+// to `DEFAULT_BACKEND_HOST`. The earlier heuristic (browser hostname
+// :8000) made sense for fully LAN deployments but is wrong for
+// production — most users access the frontend from outside the LAN
+// and the backend lives on a fixed public address.
 function smartDefaultBackendHost() {
-  const host = (typeof window !== 'undefined' && window.location?.hostname) || '127.0.0.1';
-  return `${host}:8000`;
+  return DEFAULT_BACKEND_HOST;
 }
 
 export const getBackendHost = () => {
@@ -21,16 +27,23 @@ export const getBackendHost = () => {
 };
 
 export const setBackendHost = (host) => {
+  // The axios request interceptor re-reads `getApiBaseUrl()` (which in
+  // turn reads `getBackendHost()`) on every request, so the new host
+  // takes effect immediately. We previously called `window.location.reload()`
+  // here, but that re-initialises React state (e.g. HomeWrapper's
+  // `showLogin` flag), so users who saved the backend address from the
+  // login screen would be kicked back to the home page. Saving and
+  // returning is enough — let the caller show a toast and stay put.
   localStorage.setItem('backend_host', host);
-  window.location.reload();
 };
 
 export const getSuggestedBackendHost = () => {
   // Already configured? Honour it (preserve whatever the user has, with or without http://).
   const configured = localStorage.getItem('backend_host');
   if (configured) return configured;
-  // Smart default shown in the Settings field: a fully-qualified URL.
-  return `http://${smartDefaultBackendHost()}`;
+  // smartDefaultBackendHost() now returns a fully-qualified URL
+  // (e.g. http://120.26.113.95:8000), so don't double-prefix http://.
+  return smartDefaultBackendHost();
 };
 
 export const getApiBaseUrl = () => {

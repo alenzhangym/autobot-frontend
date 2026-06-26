@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Card, Typography, Button, Row, Col, Divider, Tag, Space, List, Avatar, Spin, Alert, message } from 'antd'
-import api, { isAuthenticated } from './auth'
+import { Card, Typography, Button, Row, Col, Divider, Tag, Space, List, Avatar, Spin, Alert, message, Modal, Input } from 'antd'
+import api, { isAuthenticated, getBackendHost, setBackendHost, getSuggestedBackendHost } from './auth'
 import { CHANNELS_BY_TASK_TYPE, TASK_TYPE } from './constants/taskTypes.jsx'
 import {
   RobotOutlined,
@@ -16,10 +16,168 @@ import {
   ThunderboltOutlined,
   SettingOutlined,
   LayoutOutlined,
-  LineChartOutlined
+  LineChartOutlined,
+  GithubOutlined,
+  CopyOutlined,
 } from '@ant-design/icons'
 
 const { Title, Text, Paragraph } = Typography
+
+// Default backend host. Must stay in sync with DEFAULT_BACKEND_HOST
+// in ./auth.js. We duplicate it here (rather than importing) so the
+// InstallCard is self-contained and renders even if auth.js is in a
+// half-loaded state.
+const INSTALL_DEFAULT_BACKEND_HOST = 'http://120.26.113.95:8000'
+const INSTALL_REPO_URL = 'https://github.com/alenzhangym/autobot-frontend.git'
+
+// 复制到剪贴板的轻量助手. n.clipboard 在某些环境 (非 HTTPS) 下
+// 不可用, 因此回退到 document.execCommand 方案.
+function copyToClipboard(text) {
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    return navigator.clipboard.writeText(text)
+  }
+  return new Promise((resolve, reject) => {
+    try {
+      const ta = document.createElement('textarea')
+      ta.value = text
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+      resolve()
+    } catch (e) {
+      reject(e)
+    }
+  })
+}
+
+// 一行可复制的代码块, 旁边带复制按钮.
+function CopyableCommand({ label, command, hint }) {
+  return (
+    <div style={{ marginBottom: 12 }}>
+      {label && (
+        <div style={{ color: '#bbb', fontSize: 12, marginBottom: 4 }}>
+          {label}
+        </div>
+      )}
+      <div style={{
+        display: 'flex',
+        alignItems: 'stretch',
+        background: '#0a0a14',
+        border: '1px solid #2a2a2a',
+        borderRadius: 6,
+        overflow: 'hidden',
+      }}>
+        <pre style={{
+          flex: 1,
+          margin: 0,
+          padding: '10px 12px',
+          color: '#7ee787',
+          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+          fontSize: 13,
+          lineHeight: 1.5,
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-all',
+        }}>{command}</pre>
+        <Button
+          type="text"
+          icon={<CopyOutlined style={{ color: '#888' }} />}
+          onClick={() => {
+            copyToClipboard(command).then(
+              () => message.success('已复制'),
+              () => message.error('复制失败')
+            )
+          }}
+          style={{ color: '#888' }}
+          title="复制到剪贴板"
+        />
+      </div>
+      {hint && <div style={{ color: '#666', fontSize: 11, marginTop: 4 }}>{hint}</div>}
+    </div>
+  )
+}
+
+// 安装说明卡片. 面向使用 dbagent / code agent 的用户 —
+// 他们在自己的机器上跑前端, 后端连到 DEFAULT_BACKEND_HOST.
+function InstallCard() {
+  const isWin = typeof navigator !== 'undefined' && /windows/i.test(navigator.platform || '')
+  const oneClickCmd = isWin
+    ? `irm https://raw.githubusercontent.com/alenzhangym/autobot-frontend/main/scripts/install-autobot-frontend.ps1 | iex`
+    : `curl -fsSL https://raw.githubusercontent.com/alenzhangym/autobot-frontend/main/scripts/install-autobot-frontend.sh | bash`
+
+  return (
+    <Card
+      style={{
+        background: 'rgba(20, 20, 35, 0.7)',
+        border: '1px solid rgba(22, 119, 255, 0.25)',
+        borderRadius: 12,
+      }}
+      styles={{ body: { padding: 24 } }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12 }}>
+        <GithubOutlined style={{ fontSize: 22, color: '#1677ff', marginRight: 10 }} />
+        <Title level={4} style={{ color: '#fff', margin: 0 }}>
+          本地安装 AutoBot 前端（DB Agent / Code Agent 用户）
+        </Title>
+      </div>
+      <Paragraph style={{ color: '#aaa', marginBottom: 16 }}>
+        前端为纯静态 SPA, 可在自己的机器上 <code style={{ color: '#7ee787' }}>npm start</code> 跑起来。
+        默认连后端 <Text code style={{ color: '#7ee787' }}>{INSTALL_DEFAULT_BACKEND_HOST}</Text>；
+        登录页 &quot;后端地址&quot; 框未改时使用该默认地址。
+      </Paragraph>
+
+      <Row gutter={[24, 16]}>
+        <Col xs={24} md={14}>
+          <Title level={5} style={{ color: '#fff', marginTop: 0 }}>
+            <CodeOutlined style={{ color: '#722ed1', marginRight: 8 }} />
+            方式 1：手动安装
+          </Title>
+          <CopyableCommand
+            label="# 1. 克隆代码"
+            command={`git clone ${INSTALL_REPO_URL}`}
+          />
+          <CopyableCommand
+            label="# 2. 安装依赖"
+            command={`cd autobot-frontend && npm install`}
+          />
+          <CopyableCommand
+            label="# 3. 启动前端 (默认连接上面的后端)"
+            command={`npm start`}
+            hint="启动后浏览器会自动打开 http://localhost:3000"
+          />
+        </Col>
+        <Col xs={24} md={10}>
+          <Title level={5} style={{ color: '#fff', marginTop: 0 }}>
+            <ThunderboltOutlined style={{ color: '#fa8c16', marginRight: 8 }} />
+            方式 2：一键脚本
+          </Title>
+          <CopyableCommand
+            label={isWin ? '# Windows (PowerShell)' : '# macOS / Linux'}
+            command={oneClickCmd}
+            hint="脚本会检查 Node 环境、克隆仓库、npm install、写入 .env 写入默认后端地址并启动"
+          />
+          <div style={{
+            background: 'rgba(22, 119, 255, 0.08)',
+            border: '1px solid rgba(22, 119, 255, 0.2)',
+            borderRadius: 6,
+            padding: '10px 12px',
+            color: '#9ec5fe',
+            fontSize: 12,
+            lineHeight: 1.6,
+          }}>
+            <DatabaseOutlined style={{ marginRight: 6 }} />
+            <strong>DB Agent / Code Agent 用户</strong>：脚本默认会将
+            <Text code style={{ color: '#7ee787', margin: '0 4px' }}>VITE_BACKEND_HOST</Text>
+            写入 <Text code style={{ color: '#7ee787' }}>.env</Text>，无需手动配置。
+            如需修改后端地址, 启动后在登录页 &quot;后端地址&quot; 中设置即可。
+          </div>
+        </Col>
+      </Row>
+    </Card>
+  )
+}
 
 // Agent 功能描述数据
 // 任务类型 - 与后端 TaskType 枚举保持一致（4 个核心类型 + ERP 独立分支）
@@ -97,6 +255,23 @@ function LoginForm({ onLoginSuccess, onBackToHome }) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
+  const [settingsVisible, setSettingsVisible] = useState(false)
+  const [backendHost, setLocalBackendHost] = useState('')
+
+  useEffect(() => {
+    setLocalBackendHost(getSuggestedBackendHost())
+  }, [settingsVisible])
+
+  const handleSaveSettings = () => {
+    const v = (backendHost || '').trim()
+    if (!v) {
+      message.warning('请填写后端地址')
+      return
+    }
+    setBackendHost(v)
+    setSettingsVisible(false)
+    message.success('后端地址已保存, 当前页面会立即使用新地址')
+  }
 
   const handleLogin = async (e) => {
     e.preventDefault()
@@ -136,8 +311,52 @@ function LoginForm({ onLoginSuccess, onBackToHome }) {
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
-      background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)'
+      background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
+      position: 'relative',
     }}>
+      <Button
+        type="default"
+        icon={<SettingOutlined />}
+        onClick={() => setSettingsVisible(true)}
+        style={{
+          position: 'absolute',
+          top: 20,
+          right: 20,
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 6,
+          background: 'rgba(22, 119, 255, 0.12)',
+          border: '1px solid rgba(22, 119, 255, 0.45)',
+          color: '#9ec5fe',
+          fontWeight: 500,
+        }}
+      >
+        设置后端地址
+      </Button>
+      <Modal
+        title="后端地址设置"
+        open={settingsVisible}
+        onCancel={() => setSettingsVisible(false)}
+        onOk={handleSaveSettings}
+        okText="保存"
+        cancelText="取消"
+      >
+        <Paragraph style={{ color: '#888', fontSize: 12, marginBottom: 12 }}>
+          默认后端地址为{' '}
+          <Text code style={{ color: '#7ee787' }}>
+            {INSTALL_DEFAULT_BACKEND_HOST}
+          </Text>
+          。如需修改, 请填写完整 URL (含 http://) 或 host:port, 保存后会自动刷新页面。
+        </Paragraph>
+        <div style={{ marginBottom: 8, color: '#bbb', fontSize: 13 }}>
+          后端地址 (host:port 或完整 URL)
+        </div>
+        <Input
+          value={backendHost}
+          onChange={(e) => setLocalBackendHost(e.target.value)}
+          placeholder={INSTALL_DEFAULT_BACKEND_HOST}
+        />
+      </Modal>
       <Card style={{
         width: 400,
         padding: 40,
@@ -256,6 +475,14 @@ function HomeContent({ onLoginClick }) {
       background: 'linear-gradient(135deg, #0d0d0d 0%, #1a1a2e 50%, #16213e 100%)',
       position: 'relative'
     }}>
+      {/* Install Card (unauthenticated only) — tells DB-agent and
+          Code-agent users how to bring the frontend up locally. The
+          default backend URL is the same one auth.js uses as the
+          unconfigured default (DEFAULT_BACKEND_HOST). */}
+      <div style={{ maxWidth: 1100, margin: '40px auto 0', padding: '0 20px' }}>
+        <InstallCard />
+      </div>
+
       {/* Hero Section */}
       <div style={{
         padding: '80px 20px 60px',

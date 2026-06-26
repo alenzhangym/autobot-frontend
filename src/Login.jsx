@@ -93,25 +93,42 @@ export default function Login({ onLoginSuccess }) {
       padding: '40px 20px'
     }}>
       <Button 
-        type="text" 
-        icon={<SettingOutlined style={{ fontSize: 20, color: '#888' }} />} 
+        type="default"
+        icon={<SettingOutlined />}
         onClick={() => setSettingsVisible(true)}
-        style={{ position: 'absolute', top: 20, right: 20 }}
-      />
+        style={{
+          position: 'absolute',
+          top: 20,
+          right: 20,
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 6,
+          background: 'rgba(22, 119, 255, 0.12)',
+          border: '1px solid rgba(22, 119, 255, 0.45)',
+          color: '#9ec5fe',
+          fontWeight: 500,
+        }}
+      >
+        设置后端地址
+      </Button>
       <Modal
-        title="Settings"
+        title="后端地址设置"
         open={settingsVisible}
         onCancel={() => setSettingsVisible(false)}
         onOk={handleSaveSettings}
-        okText="Save"
-        cancelText="Cancel"
+        okText="保存"
+        cancelText="取消"
       >
+        <Paragraph style={{ color: '#888', fontSize: 12, marginBottom: 12 }}>
+          默认后端地址为 <Text code>http://120.26.113.95:8000</Text>。
+          如需修改, 请填写完整 URL (含 http://) 或 host:port, 保存后会自动刷新页面。
+        </Paragraph>
         <Form layout="vertical">
-          <Form.Item label="Backend URL (host:port)">
+          <Form.Item label="后端地址 (host:port 或完整 URL)">
             <Input
               value={backendHost}
               onChange={(e) => setLocalBackendHost(e.target.value)}
-              placeholder="e.g. http://192.168.1.100:8000"
+              placeholder="http://120.26.113.95:8000"
             />
           </Form.Item>
         </Form>

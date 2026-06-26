@@ -1442,6 +1442,267 @@ function trimToTail(text, lines) {
     return `... (${arr.length - lines} earlier lines omitted) ...\n` + arr.slice(-lines).join('\n');
 }
 
+// ── Phase 1 / C-1+C-2: persistent shell (bash) ────────────────────────
+//
+// New unified command-execution surface. The legacy `workspace/run`,
+// `local/execute`, and `local/db` endpoints are NOT removed; they remain
+// in place for backwards compat. New callers should prefer this endpoint
+// because it provides:
+//   - cwd / env preservation across requests (same shellId)
+//   - explicit per-command timeout (capped at 10 min)
+//   - output truncation (2 MB)
+//   - structured status / exitCode / timedOut response
+//
+// The safety model is unchanged: the Java backend is the trust boundary
+// and only forwards commands that the frontend's `agentCommandSafety`
+// dialog has cleared. This endpoint deliberately does NOT re-run that
+// scan — that would require duplicating the entire DANGEROUS_PATTERN /
+// EXPLICIT_SAFE_SHAPES machinery on the server.
+import { getOrCreate, get, kill as killShellById, list as listShells, killAll as killAllShells } from './src/runtime/shellRegistry.js';
+import { analyzeCommand, setDefaultRules as setAnalyzerRules, setDefaultAction as setAnalyzerAction, DEFAULT_RULES as ANALYZER_DEFAULT_RULES } from './src/runtime/commandAnalyzer.js';
+import { createTask as createBgTask, get as getTask, list as listTasks, kill as killTask, killAll as killAllTasks, summarize as summarizeTask } from './src/runtime/taskRegistry.js';
+import { webfetch, WebfetchError } from './src/runtime/webfetch.js';
+import { write as todoWrite, read as todoRead, updateItem as todoUpdate, clear as todoClear } from './src/runtime/todoStore.js';
+import { create as qCreate, get as qGet, listPending as qListPending, listAll as qListAll, answer as qAnswer } from './src/runtime/questionQueue.js';
+
+app.post('/api/local/bash', async (req, res) => {
+    const {
+        shellId,
+        command,
+        cwd,
+        env,
+        timeoutMs = 60_000,
+        // Phase 2 (C-7): the frontend's permission dialog sets this to
+        // `true` after the user clicks "Allow" for an `ask` decision.
+        // `deny` decisions are still rejected server-side regardless.
+        confirmed = false,
+        // Phase 2 (C-7): rule namespace, default 'default'.
+        namespace = 'default',
+        // Phase 3 (C-3): when true, the command runs asynchronously
+        // and the response is `{ taskId, status: 'running' }` instead
+        // of the full result. Use `GET /api/local/bash/tasks/:id`
+        // to poll or `DELETE` to cancel.
+        background = false,
+    } = req.body || {};
+
+    if (typeof command !== 'string' || command.length === 0) {
+        return res.status(400).json({ status: 'error', error: 'command is required' });
+    }
+    if (command.length > 64 * 1024) {
+        return res.status(400).json({ status: 'error', error: 'command exceeds 64KB limit' });
+    }
+    if (typeof timeoutMs !== 'number' || timeoutMs < 1000 || timeoutMs > 600_000) {
+        return res.status(400).json({ status: 'error', error: 'timeoutMs must be 1000..600000' });
+    }
+
+    // Phase 2 (C-5+C-7): run the AST-style analyzer. It evaluates each
+    // subcommand independently and reports deny/ask/allow. This runs
+    // BEFORE shell allocation so denied commands are cheap to reject.
+    const analysis = analyzeCommand(command, { namespace });
+    if (analysis.decision === 'deny') {
+        return res.status(403).json({
+            status: 'denied',
+            reason: analysis.reason,
+            analysis,
+        });
+    }
+    if (analysis.decision === 'ask' && !confirmed) {
+        return res.status(200).json({
+            status: 'needs_confirmation',
+            reason: analysis.reason,
+            analysis,
+        });
+    }
+
+    // Phase 3 (C-3): background tasks skip the persistent-shell queue
+    // and run in a freshly-spawned child. We still pass cwd/env so
+    // the user gets the same "feel" of working in their project.
+    if (background) {
+        const task = createBgTask({
+            command,
+            cwd: typeof cwd === 'string' ? cwd : process.cwd(),
+            env: (env && typeof env === 'object') ? { ...process.env, ...env } : process.env,
+            timeoutMs,
+            analysisReason: analysis.reason,
+        });
+        return res.status(202).json({
+            status: 'running',
+            taskId: task.id,
+            analysis,
+        });
+    }
+
+    let created = false;
+    let shell;
+    try {
+        const result = getOrCreate({
+            id: shellId,
+            cwd: typeof cwd === 'string' ? cwd : undefined,
+            env: (env && typeof env === 'object') ? env : undefined,
+        });
+        shell = result.shell;
+        created = result.created;
+    } catch (err) {
+        return res.status(500).json({ status: 'error', error: 'Failed to start shell: ' + err.message });
+    }
+
+    if (!shell.alive) {
+        return res.status(503).json({ status: 'error', error: 'Shell not alive', shellId: shell.id });
+    }
+
+    try {
+        const execResult = await shell.exec(command, { timeoutMs });
+        return res.json({
+            status: execResult.status,
+            shellId: shell.id,
+            created,
+            exitCode: execResult.exitCode,
+            stdout: execResult.stdout,
+            stderr: execResult.stderr,
+            timedOut: execResult.timedOut,
+            durationMs: execResult.durationMs,
+            analysis,
+        });
+    } catch (err) {
+        return res.status(500).json({ status: 'error', error: err.message, shellId: shell.id });
+    }
+});
+
+app.get('/api/local/bash', (req, res) => {
+    res.json({ shells: listShells() });
+});
+
+app.delete('/api/local/bash/:id', (req, res) => {
+    const ok = killShellById(req.params.id);
+    res.json({ killed: ok });
+});
+
+// Phase 3 (C-3+C-4): background-task endpoints. We expose three
+// operations on `/api/local/bash/tasks`:
+//   GET    /                → list of tasks
+//   GET    /:id             → single task snapshot
+//   DELETE /:id             → terminate (process-group kill)
+app.get('/api/local/bash/tasks', (req, res) => {
+    res.json({ tasks: listTasks() });
+});
+
+app.get('/api/local/bash/tasks/:id', (req, res) => {
+    const t = getTask(req.params.id);
+    if (!t) return res.status(404).json({ status: 'error', error: 'Task not found' });
+    res.json({ task: summarizeTask(t) });
+});
+
+app.delete('/api/local/bash/tasks/:id', async (req, res) => {
+    const ok = await killTask(req.params.id);
+    res.json({ killed: ok });
+});
+
+// Cleanup on shutdown — kill all persistent shells AND background
+// tasks so child processes don't outlive the parent.
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+    process.on(sig, () => {
+        try { killAllShells(); } catch (_) {}
+        try { killAllTasks(); } catch (_) {}
+        // Let the default handler run so the server actually exits.
+    });
+}
+
+// ───────────────────────────────────────────────────────────────────
+// Phase 4 (C-6+C-8): webfetch / todowrite / question tool endpoints
+// ───────────────────────────────────────────────────────────────────
+// These mirror opencode's three "knowledge" tools. They are pure
+// server-side primitives the Java backend can call on behalf of the
+// LLM. Authorization is the same as `/api/local/bash`: the Java
+// backend is the trust boundary and pre-screens requests; these
+// endpoints just provide the runtime.
+
+// webfetch (C-6) — fetch a URL, strip HTML, cap at 5 MiB.
+app.post('/api/local/webfetch', async (req, res) => {
+    const { url, selector, maxBytes } = req.body || {};
+    if (typeof url !== 'string' || !url) {
+        return res.status(400).json({ status: 'error', error: 'url is required' });
+    }
+    try {
+        const result = await webfetch(url, { selector, maxBytes });
+        return res.json({ status: 'ok', ...result });
+    } catch (err) {
+        if (err instanceof WebfetchError) {
+            const status = err.code === 'invalid_url' ? 400 : 502
+            return res.status(status).json({ status: 'error', code: err.code, error: err.message });
+        }
+        return res.status(500).json({ status: 'error', error: err.message });
+    }
+});
+
+// todowrite / todoread (C-8) — small in-memory TODO list. The Java
+// backend is the authoritative planner; this store is the LLM's
+// working scratchpad.
+app.post('/api/local/todos', (req, res) => {
+    const { items } = req.body || {};
+    if (!Array.isArray(items)) {
+        return res.status(400).json({ status: 'error', error: 'items must be an array' });
+    }
+    try {
+        const out = todoWrite(items);
+        return res.json({ status: 'ok', ...out });
+    } catch (err) {
+        return res.status(400).json({ status: 'error', error: err.message });
+    }
+});
+
+app.get('/api/local/todos', (req, res) => {
+    res.json(todoRead());
+});
+
+app.patch('/api/local/todos/:id', (req, res) => {
+    const out = todoUpdate(req.params.id, req.body || {});
+    if (!out) return res.status(404).json({ status: 'error', error: 'todo not found' });
+    res.json({ status: 'ok', ...out });
+});
+
+app.delete('/api/local/todos', (req, res) => {
+    res.json({ status: 'ok', ...todoClear() });
+});
+
+// question (C-8) — queue a question for the user. The Java backend
+// calls `POST /api/local/questions` when the LLM wants clarification.
+// The frontend polls `GET /api/local/questions/pending`, shows a
+// dialog, and posts the answer back via
+// `POST /api/local/questions/:id/answer`.
+app.post('/api/local/questions', (req, res) => {
+    const { question, options, default: defaultOpt, header } = req.body || {};
+    try {
+        const q = qCreate({ question, options, default: defaultOpt, header });
+        return res.status(201).json({ status: 'ok', question: q });
+    } catch (err) {
+        return res.status(400).json({ status: 'error', error: err.message });
+    }
+});
+
+app.get('/api/local/questions/pending', (req, res) => {
+    res.json({ questions: qListPending() });
+});
+
+app.get('/api/local/questions', (req, res) => {
+    res.json({ questions: qListAll() });
+});
+
+app.get('/api/local/questions/:id', (req, res) => {
+    const q = qGet(req.params.id);
+    if (!q) return res.status(404).json({ status: 'error', error: 'question not found' });
+    res.json({ question: q });
+});
+
+app.post('/api/local/questions/:id/answer', (req, res) => {
+    const { answer } = req.body || {};
+    if (typeof answer !== 'string' && typeof answer !== 'number') {
+        return res.status(400).json({ status: 'error', error: 'answer is required' });
+    }
+    const q = qAnswer(req.params.id, answer);
+    if (!q) return res.status(404).json({ status: 'error', error: 'question not found or already answered' });
+    res.json({ status: 'ok', question: q });
+});
+
 // autobot-monitor routes — manage the auto-healer subsystem
 // ═══════════════════════════════════════════════════════════════════
 
