@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import {
   Layout, Menu, Button, Input, Avatar, Typography, Space, Tooltip,
   Modal, Form, Tabs, Tag, Dropdown, Divider, ConfigProvider, theme, Badge, Select, InputNumber, TimePicker, message, Checkbox,
-  List, Spin
+  List, Spin, Drawer
 } from 'antd'
 import dayjs from 'dayjs'
 import {
@@ -13,7 +13,8 @@ import {
   StopOutlined, LoadingOutlined, ThunderboltOutlined, UserOutlined, TeamOutlined,
   DownOutlined, RightOutlined, CheckOutlined, EditOutlined, ClockCircleOutlined,
   FileTextOutlined, PaperClipOutlined, AudioOutlined, CloseOutlined, FileImageOutlined, DownloadOutlined, DatabaseOutlined, GlobalOutlined,
-  FolderOpenOutlined, HomeOutlined, SearchOutlined, ShopOutlined
+  FolderOpenOutlined, HomeOutlined, SearchOutlined, ShopOutlined,
+  ApartmentOutlined
 } from '@ant-design/icons'
 import api, { logout, isAuthenticated, getCurrentUser, fetchMe, getWsBaseUrl, getLocalAgentBaseUrl, getBackendHost } from './auth'
 import Login from './Login'
@@ -43,6 +44,11 @@ import SessionSidebar from './components/SessionSidebar'
 import { executeAgentCommands, appendStreamToken, tryStreamDispatch, resetStreamBuffer } from './components/WorkspacePanel'
 import MessageBubble from './components/MessageBubble'
 import IssuesSidePanel from './components/IssuesSidePanel'
+import InteractivePanel from './components/InteractivePanel'
+import GraphStatusPanel from './components/GraphStatusPanel'
+import LspSettingsPanel from './components/LspSettingsPanel'
+import McpSettingsPanel from './components/McpSettingsPanel'
+import CodeGraphExplorer from './components/CodeGraphExplorer'
 import IntentCorrectionFloater from './components/IntentCorrectionFloater'
 import ReVerifyProgressToast from './components/ReVerifyProgressToast'
 import { useUserStore } from './store/useUserStore'
@@ -725,6 +731,12 @@ function SettingsModal({ open, onClose, user, dbConfigs, onDeleteDbConfig, onAdd
         mask: { backdropFilter: 'blur(4px)' } 
       }}>
       <Tabs items={tabItems} />
+      <div style={{ marginTop: 24 }}>
+        <McpSettingsPanel />
+      </div>
+      <div style={{ marginTop: 16 }}>
+        <LspSettingsPanel />
+      </div>
     </Modal>
   )
 }
@@ -805,6 +817,7 @@ function App() {
   const [showWsPicker, setShowWsPicker] = useState(false)
   const [wsPickerChannel, setWsPickerChannel] = useState(null)
   const [isChangingWorkspace, setIsChangingWorkspace] = useState(false)
+  const [graphDrawerOpen, setGraphDrawerOpen] = useState(false) // P7-6: 会话内图知识库 Drawer
   const [isParsingHistory, setIsParsingHistory] = useState(false)
   const [wsBrowsePath, setWsBrowsePath] = useState(getInitialBrowsePath())
   const [wsBrowseEntries, setWsBrowseEntries] = useState([])
@@ -3061,8 +3074,8 @@ const handleDeleteSession = (id) => {
                 </Text>
               )}
               {activeTab === 'chat' && (sessions.find(s => s.id === sessionId)?.channel === 'code' || (!sessions.find(s => s.id === sessionId)?.channel && currentChannel === 'code')) && workspaceDir && (
-                <Tag 
-                  icon={<FolderOpenOutlined />} 
+                <Tag
+                  icon={<FolderOpenOutlined />}
                   style={{ fontSize: 11, maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', cursor: 'pointer' }}
                   onClick={() => {
                     setIsChangingWorkspace(true)
@@ -3073,6 +3086,16 @@ const handleDeleteSession = (id) => {
                 >
                   📁 {workspaceDir.length > 40 ? '...' + workspaceDir.slice(-40) : workspaceDir}
                 </Tag>
+              )}
+              {activeTab === 'chat' && (sessions.find(s => s.id === sessionId)?.channel === 'code' || (!sessions.find(s => s.id === sessionId)?.channel && currentChannel === 'code')) && workspaceDir && sessionId && (
+                <Button
+                  size="small"
+                  icon={<ApartmentOutlined />}
+                  onClick={() => setGraphDrawerOpen(true)}
+                  style={{ fontSize: 12 }}
+                >
+                  图谱
+                </Button>
               )}
             </Space>
             {activeTab === 'chat' && (
@@ -3354,38 +3377,41 @@ const handleDeleteSession = (id) => {
                 and lets the user mark items fixed/ignored. Strikes through
                 issues whose status === 'fixed' | 'ignored' so the user can
                 see at a glance which items remain. */}
-            {activeTab === 'chat' && (sessions.find(s => s.id === sessionId)?.channel === 'code' || (!sessions.find(s => s.id === sessionId)?.channel && currentChannel === 'code')) && (
+            {activeTab === 'chat' && sessionId && (
               <div style={{
-                width: 360, flexShrink: 0,
+                width: 320, flexShrink: 0,
                 borderLeft: '1px solid #1f1f1f',
-                background: '#0d0d0d'
+                background: '#0d0d0d',
+                overflowY: 'auto'
               }}>
-                <IssuesSidePanel
-                  sessionId={sessionId}
-                  workspaceDir={workspaceDir}
-                  onJumpToFile={(filePath, line) => {
-                    // The chat UI does not own the WorkspacePanel; just
-                    // show the path in a transient notification so the
-                    // user knows what to open. A future iteration can
-                    // mount WorkspacePanel here and call jumpToFile().
-                    message.info(
-                      line ? `${filePath}:${line}` : (filePath || 'No file path'),
-                      2
-                    )
-                  }}
-                  onInjectAssistantMessage={(content) => {
-                    // Inject a synthetic assistant message containing
-                    // __CMD__ into the chat flow so the auto-execution
-                    // useEffect picks it up and continues the multi-round
-                    // __CMD__ → [COMMAND_RESULTS] interaction.
-                    const id = `fix-cmd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-                    setMessages(prev => [...prev, {
-                      id,
-                      role: 'assistant',
-                      content,
-                      createdAt: new Date().toISOString(),
-                      _isComplete: false
-                    }])
+                <InteractivePanel sessionId={sessionId} />
+                {(sessions.find(s => s.id === sessionId)?.channel === 'code' || (!sessions.find(s => s.id === sessionId)?.channel && currentChannel === 'code')) && (
+                  <IssuesSidePanel
+                    sessionId={sessionId}
+                    workspaceDir={workspaceDir}
+                    onJumpToFile={(filePath, line) => {
+                      // The chat UI does not own the WorkspacePanel; just
+                      // show the path in a transient notification so the
+                      // user knows what to open. A future iteration can
+                      // mount WorkspacePanel here and call jumpToFile().
+                      message.info(
+                        line ? `${filePath}:${line}` : (filePath || 'No file path'),
+                        2
+                      )
+                    }}
+                    onInjectAssistantMessage={(content) => {
+                      // Inject a synthetic assistant message containing
+                      // __CMD__ into the chat flow so the auto-execution
+                      // useEffect picks it up and continues the multi-round
+                      // __CMD__ → [COMMAND_RESULTS] interaction.
+                      const id = `fix-cmd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+                      setMessages(prev => [...prev, {
+                        id,
+                        role: 'assistant',
+                        content,
+                        createdAt: new Date().toISOString(),
+                        _isComplete: false
+                      }])
                   }}
                   onFixIssueMessageUpdated={() => {
                     // The IssuesSidePanel just (a) inserted a
@@ -3415,7 +3441,8 @@ const handleDeleteSession = (id) => {
                       loadSession(sessionId, false)
                     }
                   }}
-                />
+                  />
+                )}
               </div>
             )}
 
@@ -3552,6 +3579,18 @@ const handleDeleteSession = (id) => {
         onDeleteUser={deleteUser}
         onUpdateUser={updateUser}
       />
+      <Drawer
+        title={<Space><ApartmentOutlined /><span>代码图谱 — 当前会话</span></Space>}
+        open={graphDrawerOpen}
+        onClose={() => setGraphDrawerOpen(false)}
+        width={720}
+        styles={{ body: { background: '#0f0f0f', padding: 16 } }}
+      >
+        <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+          <GraphStatusPanel workspaceId={sessionId} projectRoot={workspaceDir} />
+          <CodeGraphExplorer workspaceId={sessionId} />
+        </Space>
+      </Drawer>
       <DocumentPreviewModal />
     </ConfigProvider>
   )

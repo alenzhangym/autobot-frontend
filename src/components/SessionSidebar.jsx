@@ -61,21 +61,60 @@ export default function SessionSidebar({
   const safeSessions = Array.isArray(sessions) ? sessions : [];
   const safeScheduledTasks = Array.isArray(scheduledTasks) ? scheduledTasks : [];
 
-  const sidebarItems = safeSessions.map(s => ({
+  // P2-1: 父子分组 —— 顶层 = parentSessionId == null/空, 同一 parentId
+  // 聚到 children 数组里。空 children 不输出 children 字段, 保持菜单
+  // 形态不变。
+  const childrenByParent = new Map();
+  for (const s of safeSessions) {
+    if (s.parentSessionId) {
+      const list = childrenByParent.get(s.parentSessionId) || [];
+      list.push(s);
+      childrenByParent.set(s.parentSessionId, list);
+    }
+  }
+  const topLevelSessions = safeSessions.filter(s => !s.parentSessionId);
+
+  const buildSubItem = (s) => ({
     key: s.id,
-    icon: <span style={{ opacity: 0.75 }}>{getChannelIcon(s.channel)}</span>,
+    icon: <span style={{ opacity: 0.55, fontSize: 11 }}>{getChannelIcon(s.channel)}</span>,
     label: (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-          {s.title || t('nav.newChat')}
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, fontSize: 12 }}>
+          {s.title || s.id}
         </span>
         <DeleteOutlined
           onClick={(e) => { e.stopPropagation(); handleDeleteSession(s.id); }}
-          style={{ fontSize: 10, color: '#555', marginLeft: 8, flexShrink: 0 }}
+          style={{ fontSize: 10, color: '#888', marginLeft: 8, flexShrink: 0 }}
         />
       </div>
     )
-  }));
+  });
+
+  const sidebarItems = topLevelSessions.map(s => {
+    const kids = childrenByParent.get(s.id);
+    const item = {
+      key: s.id,
+      icon: <span style={{ opacity: 0.75 }}>{getChannelIcon(s.channel)}</span>,
+      label: (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+            {s.title || t('nav.newChat')}
+            {kids && kids.length > 0 && (
+              <Tag color="blue" style={{ marginLeft: 6, fontSize: 10, lineHeight: '14px' }}>{kids.length}</Tag>
+            )}
+          </span>
+          <DeleteOutlined
+            onClick={(e) => { e.stopPropagation(); handleDeleteSession(s.id); }}
+            style={{ fontSize: 10, color: '#555', marginLeft: 8, flexShrink: 0 }}
+          />
+        </div>
+      )
+    };
+    if (kids && kids.length > 0) {
+      item.children = kids.map(buildSubItem);
+    }
+    return item;
+  });
 
   const scheduledTaskItems = safeScheduledTasks.map(t => ({
     key: 'sched-' + t.id,

@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useRef, useImperativeHandle, forwardRef } from 'react'
+import React, { useState, useCallback, useEffect, useRef, useImperativeHandle, forwardRef, lazy, Suspense } from 'react'
 import { Layout, Input, Button, Tree, Space, Typography, message, Spin, Modal, List } from 'antd'
 import { FolderOpenOutlined, FileOutlined, ReloadOutlined, SaveOutlined, EditOutlined, HomeOutlined, SearchOutlined } from '@ant-design/icons'
 import api, { getBackendHost, getLocalAgentBaseUrl } from '../auth'
@@ -6,6 +6,9 @@ import axios from 'axios'
 import { shouldRequireConfirmation, formatCommandSummary, addTrustedPattern, patternFromCommand } from './agentCommandSafety'
 import { extractTrailingStateJson, extractImplStateBlock } from '../utils/helpers.jsx'
 import WorkspaceTopologySearch from './WorkspaceTopologySearch'
+
+// 阶段1: Monaco 编辑器（按需加载 ~1.5MB）；SSR/老浏览器环境下不会触发
+const LspMonacoEditor = lazy(() => import('./LspMonacoEditor.jsx'))
 
 const localApi = axios.create({ baseURL: getLocalAgentBaseUrl(), timeout: 600000 })
 
@@ -37,6 +40,25 @@ const getDefaultWorkspaceDir = () => {
     }
   }
   return '/Users/user/code/autobot'
+}
+
+// 阶段1: 按后缀挑 monaco languageId。LSP 也按这个走；没匹配 = 普通文本
+const languageForPath = (p) => {
+  if (!p) return 'plaintext'
+  const lower = String(p).toLowerCase()
+  if (lower.endsWith('.ts') || lower.endsWith('.tsx')) return 'typescript'
+  if (lower.endsWith('.js') || lower.endsWith('.jsx') || lower.endsWith('.mjs') || lower.endsWith('.cjs')) return 'javascript'
+  if (lower.endsWith('.py') || lower.endsWith('.pyi')) return 'python'
+  if (lower.endsWith('.go')) return 'go'
+  if (lower.endsWith('.java')) return 'java'
+  if (lower.endsWith('.json')) return 'json'
+  if (lower.endsWith('.md')) return 'markdown'
+  if (lower.endsWith('.css')) return 'css'
+  if (lower.endsWith('.html') || lower.endsWith('.htm')) return 'html'
+  if (lower.endsWith('.yml') || lower.endsWith('.yaml')) return 'yaml'
+  if (lower.endsWith('.xml')) return 'xml'
+  if (lower.endsWith('.sh')) return 'shell'
+  return 'plaintext'
 }
 
 const getInitialBrowsePath = () => {
@@ -313,22 +335,33 @@ export default forwardRef(function WorkspacePanel({ workspaceDir, onDirChange, s
             </Space>
           )}
         </div>
-        <div style={{ flex: 1, overflow: 'auto', padding: 8 }}>
+        <div style={{ flex: 1, overflow: 'auto', padding: 0, position: 'relative' }}>
           {editing ? (
-            <TextArea
-              value={editContent}
-              onChange={e => setEditContent(e.target.value)}
-              style={{
-                background: '#111', color: '#ccc', border: '1px solid #333',
-                fontFamily: 'monospace', fontSize: 12, resize: 'none',
-                height: '100%', minHeight: 200
-              }}
-            />
+            <Suspense fallback={
+              <TextArea
+                value={editContent}
+                onChange={e => setEditContent(e.target.value)}
+                style={{
+                  background: '#111', color: '#ccc', border: '1px solid #333',
+                  fontFamily: 'monospace', fontSize: 12, resize: 'none',
+                  height: '100%', minHeight: 200
+                }}
+              />
+            }>
+              <LspMonacoEditor
+                value={editContent}
+                onChange={setEditContent}
+                language={languageForPath(selectedFile)}
+                path={selectedFile || 'untitled.txt'}
+                workspaceRoot={workspaceDir || ''}
+                height="100%"
+              />
+            </Suspense>
           ) : (
             <pre ref={viewerRef} style={{
               color: '#ccc', fontSize: 11, fontFamily: 'monospace',
               whiteSpace: 'pre-wrap', wordBreak: 'break-all',
-              margin: 0, lineHeight: 1.5
+              margin: 0, lineHeight: 1.5, padding: 8
             }}>
               {fileContent || '// 选择文件查看内容'}
             </pre>
@@ -734,7 +767,7 @@ async function executeSingleCommand(cmd, workspaceDir, onLog, sessionId) {
           onLog?.('[AgentCMD] issues failed: no sessionId in cmd or call site\n')
           return 'Error: cmd-issues requires sessionId'
         }
-        const res = await api.get(`/api/code-analysis/${encodeURIComponent(targetSessionId)}/issues`)
+        const res = await api.get(`/code-analysis/${encodeURIComponent(targetSessionId)}/issues`)
         const issues = (res.data?.issues || []).filter(i => (i.status || 'open') === 'open')
         const rank = { HIGH: 0, MEDIUM: 1, LOW: 2 }
         issues.sort((a, b) => (rank[a.severity] ?? 9) - (rank[b.severity] ?? 9))

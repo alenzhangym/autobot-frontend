@@ -254,7 +254,7 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
     let cancelled = false
     setStateMachineModal(sm => sm
       ? { ...sm, loading: true, backendPhases: [] } : sm)
-    api.get(`/api/code-analysis/${smSessionId}/fix-task/${taskId}`)
+    api.get(`/code-analysis/${smSessionId}/fix-task/${taskId}`)
       .then(res => {
         if (cancelled) return
         const timeline = res?.data?.task?.state_machine_timeline

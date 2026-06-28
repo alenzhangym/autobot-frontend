@@ -24,7 +24,7 @@ export function useLspLookup() {
     setLoading(true)
     setError(null)
     try {
-      const r = await api.post(`/api/lsp/${endpoint}`, body)
+      const r = await api.post(`/lsp/${endpoint}`, body)
       // r 是 axios response；data 才是真实 body
       const payload = r && r.data ? r.data : {}
       setData(Array.isArray(payload.locations || payload.symbols) ? (payload.locations || payload.symbols) : [])

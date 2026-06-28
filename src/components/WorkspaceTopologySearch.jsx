@@ -28,7 +28,7 @@ export default function WorkspaceTopologySearch({ open, onClose, workspaceId, on
     let cancelled = false
     setLoading(true)
     setData(null)
-    api.get(`/api/topology/${encodeURIComponent(workspaceId)}`)
+    api.get(`/topology/${encodeURIComponent(workspaceId)}`)
       .then(r => {
         if (cancelled) return
         setData(r && r.data ? r.data : null)

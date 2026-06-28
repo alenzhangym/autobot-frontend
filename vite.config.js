@@ -29,6 +29,8 @@ export default defineConfig(({ mode }) => {
   const port = parseInt(env.VITE_PORT || '5173', 10);
 
   return {
+    // 相对路径 base — 让 build 产物可通过 file:// 加载 (Electron 桌面壳需要)
+    base: './',
     plugins: [react(), generateVersionFile()],
     define: {
       'import.meta.env.VITE_APP_VERSION': JSON.stringify(pkg.version)

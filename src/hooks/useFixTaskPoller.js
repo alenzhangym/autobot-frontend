@@ -232,7 +232,6 @@ export function useFixTaskBus({ sessionId, enabled = true } = {}) {
 export function useIssueList({ sessionId, filter = 'open' } = {}) {
   const [issues, setIssues] = useState([])
   const [loading, setLoading] = useState(false)
-  const pollRef = useRef(null)
 
   const refresh = useCallback(async () => {
     if (!sessionId) { setIssues([]); return }
@@ -248,16 +247,9 @@ export function useIssueList({ sessionId, filter = 'open' } = {}) {
     }
   }, [sessionId])
 
+  // 只在 mount + sessionId 变化时拉一次；不轮询。
+  // 显式 status 变更（start-fix / status / 删除）由调用方本地乐观更新 setIssues 即可。
   useEffect(() => { refresh() }, [refresh])
-
-  useEffect(() => {
-    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
-    if (!sessionId) return
-    const hasInProgress = issues.some(i => (i.status || 'open') === 'in_progress')
-    const interval = hasInProgress ? 2000 : 15000
-    pollRef.current = setInterval(refresh, interval)
-    return () => { if (pollRef.current) clearInterval(pollRef.current) }
-  }, [sessionId, issues, refresh])
 
   const filtered = issues.filter(i => filter === 'all' ? true : (i.status || 'open') === filter)
   return { issues, filtered, loading, refresh, setIssues }
