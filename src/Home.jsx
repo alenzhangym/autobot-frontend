@@ -148,7 +148,7 @@ function InstallCard() {
           />
           <CopyableCommand
             label="# 3. 启动前端 (默认连接上面的后端)"
-            command={`npm start`}
+            command={`npm run build && npm run start`}
             hint="启动后浏览器会自动打开 http://localhost:3000"
           />
         </Col>
