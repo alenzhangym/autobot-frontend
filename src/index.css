@@ -1,3 +1,18 @@
+/* Global dark canvas — 消除浏览器默认 8px body margin 顶部露白,
+   防止主页 min-height: 100vh 之外滚动区显示白色.
+   主页 HomeContent 已自带 linear-gradient, 这里是兜底, 不影响深色主题其他页面. */
+html, body {
+    margin: 0;
+    padding: 0;
+    background: #0d0d0d;
+    color-scheme: dark;
+}
+
+#root {
+    min-height: 100vh;
+    background: #0d0d0d;
+}
+
 /* Custom Scrollbar */
 .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
 .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }

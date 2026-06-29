@@ -19,6 +19,10 @@ import {
   LineChartOutlined,
   GithubOutlined,
   CopyOutlined,
+  DesktopOutlined,
+  WindowsOutlined,
+  AppleOutlined,
+  LinuxOutlined,
 } from '@ant-design/icons'
 
 const { Title, Text, Paragraph } = Typography
@@ -176,6 +180,226 @@ function InstallCard() {
         </Col>
       </Row>
     </Card>
+  )
+}
+
+// 桌面客户端构建说明卡片. 面向想把 webui 装成原生桌面 app 的用户
+// — 一条命令出本平台安装包, 也支持三平台交叉编译.
+function DesktopClientCard() {
+  const ua = (typeof navigator !== 'undefined' ? (navigator.userAgent || '') : '').toLowerCase()
+  const isWin = /windows/.test(ua) || /win/.test(typeof navigator !== 'undefined' ? (navigator.platform || '') : '')
+  const isMac = /mac/.test(ua) || /darwin/.test(typeof navigator !== 'undefined' ? (navigator.platform || '') : '')
+  const currentOs = isWin ? 'win' : isMac ? 'mac' : 'linux'
+
+  const distCmd = `npm run desktop:dist:${currentOs}`
+  const oneLineCmd = isWin
+    ? `git clone ${INSTALL_REPO_URL} ; cd autobot-frontend ; npm install ; npm run desktop:install ; npm run desktop:dist:win`
+    : `git clone ${INSTALL_REPO_URL} && cd autobot-frontend && npm install && npm run desktop:install && npm run desktop:dist:${isMac ? 'mac' : 'linux'}`
+
+  return (
+    <Card
+      style={{
+        background: 'rgba(20, 20, 35, 0.7)',
+        border: '1px solid rgba(82, 196, 26, 0.25)',
+        borderRadius: 12,
+        marginTop: 16,
+      }}
+      styles={{ body: { padding: 24 } }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12 }}>
+        <DesktopOutlined style={{ fontSize: 22, color: '#52c41a', marginRight: 10 }} />
+        <Title level={4} style={{ color: '#fff', margin: 0 }}>
+          本地构建桌面客户端（Electron 跨平台壳）
+        </Title>
+      </div>
+      <Paragraph style={{ color: '#aaa', marginBottom: 16 }}>
+        把 AutoBot WebUI 装成本地桌面 app — 跳过浏览器沙箱, 可直接调用本机 LSP / MCP / 文件系统。
+        一键脚本自动 <code style={{ color: '#7ee787' }}>vite build</code> + <code style={{ color: '#7ee787' }}>electron-builder</code>,
+        输出当前平台原生安装包到 <Text code style={{ color: '#7ee787' }}>desktop/release/</Text>。
+      </Paragraph>
+
+      <Row gutter={[24, 16]}>
+        <Col xs={24} md={14}>
+          <Title level={5} style={{ color: '#fff', marginTop: 0 }}>
+            <CodeOutlined style={{ color: '#722ed1', marginRight: 8 }} />
+            方式 1：手动分步（推荐 — 可观察每步输出）
+          </Title>
+          <CopyableCommand
+            label="# 1. 克隆前端仓库"
+            command={`git clone ${INSTALL_REPO_URL}`}
+          />
+          <CopyableCommand
+            label="# 2. 安装 web 依赖"
+            command={`cd autobot-frontend && npm install`}
+          />
+          <CopyableCommand
+            label="# 3. 安装桌面壳依赖 (electron + electron-builder)"
+            command={`npm run desktop:install`}
+            hint="仅首次需要, 等价于 cd desktop && npm install"
+          />
+          <CopyableCommand
+            label={`# 4. 按当前平台出安装包 (检测到: ${currentOs})`}
+            command={distCmd}
+            hint={
+              isWin
+                ? 'Windows: NSIS 安装包 + portable 便携版 (desktop/release/Autobot-0.1.0-x64.exe)'
+                : isMac
+                  ? 'macOS: dmg + zip (Intel/Apple Silicon)'
+                  : 'Linux: AppImage + deb (desktop/release/Autobot-0.1.0-x64.{AppImage,deb})'
+            }
+          />
+        </Col>
+        <Col xs={24} md={10}>
+          <Title level={5} style={{ color: '#fff', marginTop: 0 }}>
+            <ThunderboltOutlined style={{ color: '#fa8c16', marginRight: 8 }} />
+            方式 2：一行命令（适合 CI）
+          </Title>
+          <CopyableCommand
+            label={isWin ? '# Windows (PowerShell)' : '# macOS / Linux'}
+            command={oneLineCmd}
+            hint="git clone → npm install → desktop:install → desktop:dist:本平台"
+          />
+          <div style={{
+            background: 'rgba(82, 196, 26, 0.08)',
+            border: '1px solid rgba(82, 196, 26, 0.2)',
+            borderRadius: 6,
+            padding: '10px 12px',
+            color: '#b7eb8f',
+            fontSize: 12,
+            lineHeight: 1.6,
+            marginBottom: 10,
+          }}>
+            <strong>显式三平台命令</strong> (需在目标平台或对应 docker 镜像中执行):
+          </div>
+          <CopyableCommand
+            label={<span><WindowsOutlined style={{ color: '#0078d4', marginRight: 4 }} /> Windows</span>}
+            command={`npm run desktop:dist:win`}
+          />
+          <CopyableCommand
+            label={<span><AppleOutlined style={{ color: '#999', marginRight: 4 }} /> macOS</span>}
+            command={`npm run desktop:dist:mac`}
+          />
+          <CopyableCommand
+            label={<span><LinuxOutlined style={{ color: '#fff', marginRight: 4 }} /> Linux</span>}
+            command={`npm run desktop:dist:linux`}
+          />
+          <div style={{
+            background: 'rgba(22, 119, 255, 0.08)',
+            border: '1px solid rgba(22, 119, 255, 0.2)',
+            borderRadius: 6,
+            padding: '10px 12px',
+            color: '#9ec5fe',
+            fontSize: 12,
+            lineHeight: 1.6,
+          }}>
+            <strong>详细文档</strong>：<Text code style={{ color: '#7ee787' }}>desktop/README.md</Text>
+            （含图标生成、跨平台构建脚本、dev 模式、与浏览器模式差异对比）
+          </div>
+        </Col>
+      </Row>
+    </Card>
+  )
+}
+
+// 主页 sticky 导航条. 锚点列表 + 当前激活 section 跟随滚动高亮.
+// 滚动用 element.scrollIntoView({behavior:'smooth', block:'start'}),
+// 各 section 已配 scrollMarginTop: 64 让 sticky 头不遮挡锚点标题.
+function HomeNavBar() {
+  const [active, setActive] = useState('hero')
+  const items = [
+    { id: 'install',  label: '安装说明' },
+    { id: 'hero',     label: '平台介绍' },
+    { id: 'modules',  label: '功能模块' },
+    { id: 'workflow', label: '工作流程' },
+    { id: 'cta',      label: '立即开始' },
+  ]
+
+  // 跟随滚动 — IntersectionObserver 监听各 section
+  useEffect(() => {
+    const sections = items
+      .map((it) => document.getElementById(it.id))
+      .filter(Boolean)
+    if (sections.length === 0) return
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        // 取当前在视口中且 ratio 最大的 section
+        let best = null
+        entries.forEach((e) => {
+          if (e.isIntersecting) {
+            if (!best || e.intersectionRatio > best.intersectionRatio) {
+              best = e
+            }
+          }
+        })
+        if (best && best.target.id) {
+          setActive(best.target.id)
+        }
+      },
+      {
+        // 顶部 64px 留给 sticky 头, 底部 -50% 让 section 进入视口中部时切换
+        rootMargin: '-64px 0px -50% 0px',
+        threshold: [0, 0.25, 0.5, 0.75, 1],
+      }
+    )
+    sections.forEach((s) => observer.observe(s))
+    return () => observer.disconnect()
+  }, [])
+
+  const scrollTo = (id) => {
+    const el = document.getElementById(id)
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
+  return (
+    <div
+      style={{
+        position: 'sticky',
+        top: 0,
+        zIndex: 100,
+        background: 'rgba(13, 13, 13, 0.85)',
+        backdropFilter: 'blur(10px)',
+        WebkitBackdropFilter: 'blur(10px)',
+        borderBottom: '1px solid #2a2a2a',
+      }}
+    >
+      <div
+        style={{
+          maxWidth: 1200,
+          margin: '0 auto',
+          padding: '12px 20px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+        }}
+      >
+        <ThunderboltOutlined style={{ fontSize: 18, color: '#1677ff', marginRight: 8 }} />
+        <Text strong style={{ color: '#fff', fontSize: 15, marginRight: 'auto' }}>
+          AutoBot
+        </Text>
+        {items.map((it) => {
+          const isActive = active === it.id
+          return (
+            <Button
+              key={it.id}
+              type="text"
+              onClick={() => scrollTo(it.id)}
+              style={{
+                color: isActive ? '#1677ff' : '#bbb',
+                fontWeight: isActive ? 600 : 400,
+                fontSize: 14,
+                borderBottom: isActive ? '2px solid #1677ff' : '2px solid transparent',
+                borderRadius: 0,
+                height: 32,
+                padding: '0 12px',
+              }}
+            >
+              {it.label}
+            </Button>
+          )
+        })}
+      </div>
+    </div>
   )
 }
 
@@ -468,24 +692,28 @@ function HomeContent({ onLoginClick }) {
   }, [])
 
   return (
-    <div style={{
+    <div id="top" style={{
       minHeight: '100vh',
       background: 'linear-gradient(135deg, #0d0d0d 0%, #1a1a2e 50%, #16213e 100%)',
       position: 'relative'
     }}>
+      <HomeNavBar />
+
       {/* Install Card (unauthenticated only) — tells DB-agent and
           Code-agent users how to bring the frontend up locally. The
           default backend URL is the same one auth.js uses as the
           unconfigured default (DEFAULT_BACKEND_HOST). */}
-      <div style={{ maxWidth: 1100, margin: '40px auto 0', padding: '0 20px' }}>
+      <div id="install" style={{ maxWidth: 1100, margin: '40px auto 0', padding: '0 20px', scrollMarginTop: 64 }}>
         <InstallCard />
+        <DesktopClientCard />
       </div>
 
       {/* Hero Section */}
-      <div style={{
+      <div id="hero" style={{
         padding: '80px 20px 60px',
         textAlign: 'center',
-        background: 'radial-gradient(ellipse at center, rgba(22, 119, 255, 0.1) 0%, transparent 70%)'
+        background: 'radial-gradient(ellipse at center, rgba(22, 119, 255, 0.1) 0%, transparent 70%)',
+        scrollMarginTop: 64,
       }}>
         <div style={{ maxWidth: 900, margin: '0 auto' }}>
           <ThunderboltOutlined style={{ fontSize: 64, color: '#1677ff', marginBottom: 24 }} />
@@ -523,7 +751,7 @@ function HomeContent({ onLoginClick }) {
       </div>
 
       {/* Agent Categories */}
-      <div style={{ maxWidth: 1200, margin: '0 auto', padding: '60px 20px' }}>
+      <div id="modules" style={{ maxWidth: 1200, margin: '0 auto', padding: '60px 20px', scrollMarginTop: 64 }}>
         <Title level={2} style={{
           color: '#fff',
           textAlign: 'center',
@@ -640,7 +868,7 @@ function HomeContent({ onLoginClick }) {
       {/* How It Works */}
       <Divider style={{ borderColor: '#2a2a2a', margin: '60px 0' }} />
 
-      <div style={{ maxWidth: 1200, margin: '0 auto', padding: '40px 20px' }}>
+      <div id="workflow" style={{ maxWidth: 1200, margin: '0 auto', padding: '40px 20px', scrollMarginTop: 64 }}>
         <Title level={2} style={{
           color: '#fff',
           textAlign: 'center',
@@ -715,14 +943,15 @@ function HomeContent({ onLoginClick }) {
       </div>
 
       {/* CTA Section */}
-      <div style={{
+      <div id="cta" style={{
         maxWidth: 900,
         margin: '80px auto 60px',
         padding: '60px 40px',
         background: 'linear-gradient(135deg, rgba(22, 119, 255, 0.1), rgba(26, 115, 232, 0.1))',
         borderRadius: 16,
         border: '1px solid rgba(22, 119, 255, 0.3)',
-        textAlign: 'center'
+        textAlign: 'center',
+        scrollMarginTop: 64,
       }}>
         <Title level={3} style={{
           color: '#fff',
