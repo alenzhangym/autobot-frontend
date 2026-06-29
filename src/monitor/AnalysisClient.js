@@ -128,7 +128,7 @@ export class AnalysisClient extends EventEmitter {
         case 'read': {
           const target = this._resolvePath(cmd.path);
           if (!fs.existsSync(target)) return `Error: file not found: ${target}`;
-          if (fs.statSync(target).size > 200_000) return `Error: file too large: ${target}`;
+          if (fs.statSync(target).size > 500_000) return `Error: file too large: ${target}`;
           const content = fs.readFileSync(target, 'utf-8');
           const startLine = Number(cmd.startLine) || 1;
           const endLine = Number(cmd.endLine) || Number.MAX_SAFE_INTEGER;

@@ -817,6 +817,7 @@ function App() {
   const [showWsPicker, setShowWsPicker] = useState(false)
   const [wsPickerChannel, setWsPickerChannel] = useState(null)
   const [isChangingWorkspace, setIsChangingWorkspace] = useState(false)
+  const [isResumingCodeSession, setIsResumingCodeSession] = useState(false)
   const [graphDrawerOpen, setGraphDrawerOpen] = useState(false) // P7-6: 会话内图知识库 Drawer
   const [isParsingHistory, setIsParsingHistory] = useState(false)
   const [wsBrowsePath, setWsBrowsePath] = useState(getInitialBrowsePath())
@@ -1856,6 +1857,7 @@ function App() {
         if (!valid) {
           console.warn('[Workspace] Stored workspace is invalid:', sessionWorkspaceDir)
           setWsInvalid(true)
+          setIsResumingCodeSession(true)  // 标记: 恢复场景, 选了目录后只补 workspace, 不新建会话
           setWsPickerChannel('code')
           setShowWsPicker(true)
           loadWsBrowse(sessionWorkspaceDir)
@@ -1865,6 +1867,7 @@ function App() {
       } else if (sessionChannel === 'code') {
         // Code session but no workspace set - prompt user to select one
         setWsInvalid(true)
+        setIsResumingCodeSession(true)
         setWsPickerChannel('code')
         setShowWsPicker(true)
         loadWsBrowse(getInitialBrowsePath())
@@ -1993,6 +1996,9 @@ function App() {
       // 浏览器模式已支持 tree-sitter wasm 解析 (通过本机 agent 读文件),
       // 不再限制 code 任务入口. ParserFactory.create 内部按需选择
       // 桌面壳 LSP / 浏览器 wasm + 本机 agent.
+      // 显式清掉恢复标记, 避免上次的 isResumingCodeSession=true 影响本次分流.
+      setIsResumingCodeSession(false)
+      setIsChangingWorkspace(false)
       setWsPickerChannel(ch)
       setShowWsPicker(true)
       loadWsBrowse(getInitialBrowsePath())
@@ -2227,9 +2233,12 @@ function App() {
   //   2. 分类结果是 code 会话专用的 CodeSessionIntent（ANALYZE/FIX/BUILD/QUERY）且不是 QUERY
   //      ——QUERY 频率太高（每条自由提问都是），弹浮层没意义
   //   3. 当前浮层未开（避免堆叠）
-  const maybeShowIntentFloater = (data, queryText) => {
+  //   4. 当前会话不是 code 会话 —— code 任务的意图由后端自行处理, 不再弹纠正浮层
+  //      (用户已确认 "全部给后端自行处理" 不必每次确认)
+  const maybeShowIntentFloater = (data, queryText, isCodeSess) => {
     try {
       if (!data) return
+      if (isCodeSess) return  // code 任务静默, 后端 PlannerService 自己处理 intent 推断 + 执行
       if (intentFloater.open) return
       const predicted = data.intent || (data.plan && data.plan.intent) || (data.plan && data.plan.code_intent)
       if (!predicted) return
@@ -2255,6 +2264,8 @@ function App() {
     const currentSession = sessions.find(s => s.id === sessionId)
     const isCodeSess = currentSession?.channel === 'code' || (!currentSession?.channel && currentChannel === 'code')
     if (isCodeSess && wsInvalid) {
+      setIsResumingCodeSession(true)  // 现有 code session 但 workspace 无效, 选目录后只补齐, 不新建
+      setWsPickerChannel('code')
       setShowWsPicker(true)
       return
     }
@@ -2333,7 +2344,8 @@ function App() {
       const res = await api.post('/chat', payload)
       // S6: 后端在 plan / 直接 response 携带 intent —— 弹纠正浮层
       //     触发条件：用户非确认型 query + 分类结果不是 CONVERSATIONAL
-      maybeShowIntentFloater(res.data, text)
+      //     code 任务静默 (isCodeSess=true) —— 后端自行处理 intent 推断, 不弹浮层
+      maybeShowIntentFloater(res.data, text, isCodeSess)
       if (res.data.status === 'success') {
         setMessages(prev => [...prev, normalizeMessage({ id: nextMsgId(), role: 'assistant', content: res.data.response })])
         fetchSessions()
@@ -3486,18 +3498,29 @@ const handleDeleteSession = (id) => {
       <Modal
         title="选择项目目录"
         open={showWsPicker}
-        onCancel={() => { setShowWsPicker(false); setWsPickerChannel(null); setIsChangingWorkspace(false) }}
+        onCancel={() => { setShowWsPicker(false); setWsPickerChannel(null); setIsChangingWorkspace(false); setIsResumingCodeSession(false) }}
         footer={[
-          <Button key="cancel" onClick={() => { setShowWsPicker(false); setWsPickerChannel(null); setIsChangingWorkspace(false) }}>取消</Button>,
+          <Button key="cancel" onClick={() => { setShowWsPicker(false); setWsPickerChannel(null); setIsChangingWorkspace(false); setIsResumingCodeSession(false) }}>取消</Button>,
           <Button key="ok" type="primary" onClick={() => {
+            const pickedDir = wsBrowsePath
+            // 四类场景分流:
+            // 1. isChangingWorkspace=true       — 用户主动在会话内切目录, 只改 workspace.
+            // 2. isResumingCodeSession=true     — 恢复 code session 但 workspace 已失效, 只补齐 workspace.
+            // 3. wsPickerChannel 已设 (新建会话) — 真正创建新 session, 写入新 workspace.
+            // 4. 兜底                            — 与旧行为保持一致 (改 workspace, 不创建会话).
             if (isChangingWorkspace) {
-              changeWorkspaceDir(wsBrowsePath)
+              changeWorkspaceDir(pickedDir)
+            } else if (isResumingCodeSession) {
+              handleWorkspaceSelect(pickedDir)
+            } else if (wsPickerChannel) {
+              createSessionDirect(wsPickerChannel, pickedDir)
             } else {
-              // For initial workspace selection, just update workspace without creating new session
-              handleWorkspaceSelect(wsBrowsePath)
+              handleWorkspaceSelect(pickedDir)
             }
             setShowWsPicker(false)
+            setWsPickerChannel(null)
             setIsChangingWorkspace(false)
+            setIsResumingCodeSession(false)
           }}>选择此目录</Button>
         ]}
         width={500}

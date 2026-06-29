@@ -1024,7 +1024,7 @@ app.post('/api/local/workspace/read', async (req, res) => {
     try {
         const content = fs.readFileSync(filePath, 'utf-8');
         const size = fs.statSync(filePath).size;
-        if (size > 200_000) return res.status(400).json({ error: 'File too large: ' + size });
+        if (size > 500_000) return res.status(400).json({ error: 'File too large: ' + size });
         if (mode === 'compact') {
             return res.json(await buildCompactReadEnvelopeWithAst(filePath, content, size, backendHost));
         }
