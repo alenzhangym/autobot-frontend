@@ -22,6 +22,9 @@
     "icon:mac": "bash build/gen-icon.sh",
     "icon:linux": "bash build/gen-icon.sh"
   },
+  "config": {
+    "electron_mirror": "https://npmmirror.com/mirrors/electron/"
+  },
   "devDependencies": {
     "cross-env": "^7.0.3",
     "electron": "^31.0.0",
