@@ -22,7 +22,21 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "desktop:install": "npm --prefix desktop install",
+    "desktop:dev": "npm --prefix desktop run dev",
+    "desktop:dev:prod": "npm --prefix desktop run dev:prod",
+    "desktop:copy-frontend": "npm --prefix desktop run copy-frontend",
+    "desktop:icon:win": "npm --prefix desktop run icon:win",
+    "desktop:icon:mac": "npm --prefix desktop run icon:mac",
+    "desktop:icon:linux": "npm --prefix desktop run icon:linux",
+    "desktop:icon": "npm --prefix desktop run icon",
+    "desktop:dist:win": "npm --prefix desktop run dist:win",
+    "desktop:dist:mac": "npm --prefix desktop run dist:mac",
+    "desktop:dist:linux": "npm --prefix desktop run dist:linux",
+    "desktop:dist:dir": "npm --prefix desktop run dist:dir",
+    "desktop:dist": "node desktop/scripts/copy-frontend.js && npm --prefix desktop run dist",
+    "desktop:dist:auto": "node ./scripts/build-desktop-auto.js"
   },
   "dependencies": {
     "@ant-design/icons": "^6.1.0",

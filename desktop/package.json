@@ -1,0 +1,84 @@
+{
+  "name": "autobot-desktop",
+  "version": "0.1.0",
+  "description": "Autobot 桌面壳 — Electron 包装 autobot-frontend, 绕开浏览器沙箱, 直接复用本地 LSP/MCP",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dev": "cross-env AUTOBOT_FRONTEND_URL=http://localhost:5173 electron .",
+    "dev:prod": "cross-env AUTOBOT_FRONTEND_URL=http://localhost:8000 electron .",
+    "icon": "node ./scripts/run-icon.js",
+    "copy-frontend": "node scripts/copy-frontend.js",
+    "dist:win": "npm run icon:win && npm run copy-frontend && electron-builder --win nsis portable",
+    "dist:win:dir": "npm run copy-frontend && electron-builder --win --dir",
+    "dist:mac": "npm run icon:mac && npm run copy-frontend && electron-builder --mac dmg zip",
+    "dist:mac:dir": "npm run copy-frontend && electron-builder --mac --dir",
+    "dist:linux": "npm run icon:linux && npm run copy-frontend && electron-builder --linux AppImage deb",
+    "dist:linux:dir": "npm run copy-frontend && electron-builder --linux --dir",
+    "dist:dir": "npm run copy-frontend && electron-builder --dir",
+    "dist:full": "cd .. && npm run build && cd desktop && npm run dist",
+    "icon:win": "powershell -ExecutionPolicy Bypass -File build/gen-icon.ps1",
+    "icon:mac": "bash build/gen-icon.sh",
+    "icon:linux": "bash build/gen-icon.sh"
+  },
+  "devDependencies": {
+    "cross-env": "^7.0.3",
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.autobot.desktop",
+    "productName": "Autobot",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "asarUnpack": [],
+    "extraResources": [
+      { "from": "resources/frontend", "to": "frontend", "filter": ["**/*"] }
+    ],
+    "files": [
+      "main.js",
+      "preload.js",
+      "package.json",
+      "README.md"
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ],
+      "artifactName": "Autobot-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Autobot"
+    },
+    "portable": {
+      "artifactName": "Autobot-${version}-portable.exe"
+    },
+    "mac": {
+      "icon": "build/icon.icns",
+      "target": [
+        { "target": "dmg", "arch": ["x64", "arm64"] },
+        { "target": "zip", "arch": ["x64", "arm64"] }
+      ],
+      "category": "public.app-category.developer-tools",
+      "artifactName": "Autobot-${version}-${arch}.${ext}"
+    },
+    "linux": {
+      "icon": "build/icon.png",
+      "target": [
+        { "target": "AppImage", "arch": ["x64"] },
+        { "target": "deb", "arch": ["x64"] }
+      ],
+      "category": "Development",
+      "artifactName": "Autobot-${version}-${arch}.${ext}"
+    }
+  }
+}

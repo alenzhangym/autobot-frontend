@@ -1990,14 +1990,9 @@ function App() {
     const ch = channelType || currentChannel
     setCurrentChannel(ch)
     if (ch === 'code') {
-      // P7-9: 浏览器模式不支持 code 任务 — 文件读写和 LSP 解析均需桌面壳
-      const isDesktop = typeof window !== 'undefined' && window.autobotDesktop?.isDesktop === true
-      if (!isDesktop) {
-        message.warning('代码任务需要桌面客户端 — 浏览器模式无法读取本地代码目录与启动 LSP server. 请下载 autobot-desktop.')
-        setCurrentChannel('general')
-        return
-      }
-      // For code sessions: show workspace picker first, then create session
+      // 浏览器模式已支持 tree-sitter wasm 解析 (通过本机 agent 读文件),
+      // 不再限制 code 任务入口. ParserFactory.create 内部按需选择
+      // 桌面壳 LSP / 浏览器 wasm + 本机 agent.
       setWsPickerChannel(ch)
       setShowWsPicker(true)
       loadWsBrowse(getInitialBrowsePath())
