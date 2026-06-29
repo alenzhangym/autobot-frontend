@@ -80,7 +80,16 @@ export default function GraphStatusPanel({ workspaceId = '', projectRoot = '' })
       const r = await api.get(`/graph/status`, { params: { workspaceId } });
       setStatus(r.data);
     } catch (e) {
-      setStatus({ available: false, error: e?.response?.data?.error || e.message });
+      // P2: 401 (token 失效/后端重启) 时, 保留旧 status 仅追加 error 提示,
+      //     避免 4 个数字区直接消失. 重试成功会自动覆盖.
+      const status = e?.response?.status;
+      if (status === 401) {
+        setStatus(prev => prev ? { ...prev, error: '登录已过期, 请刷新页面重新登录' }
+                              : { available: false, error: '未登录' });
+      } else {
+        setStatus(prev => prev ? { ...prev, error: e?.response?.data?.error || e.message }
+                              : { available: false, error: e?.response?.data?.error || e.message });
+      }
     } finally {
       setLoading(false);
     }
@@ -147,6 +156,17 @@ export default function GraphStatusPanel({ workspaceId = '', projectRoot = '' })
         const langSummary = languages.map(l => LANG_LABELS[l] || l).join('+');
         message.success(`建库完成 [${beLabel} ${langSummary}]: 文件 ${totalIngested.files}, 符号 ${totalIngested.symbols}, 调用边 ${totalIngested.callEdges}, 引用边 ${totalIngested.refEdges}${hasError ? ' (部分语言失败)' : ''}`);
       }
+      // P2: 乐观更新 status 数字 (基于本次 build 的累加), 不依赖 /api/graph/status.
+      //     401/5xx 时后端实际数据可能滞后, refresh() 后续会自动覆盖.
+      setStatus(prev => ({
+        available: true,
+        files: totalIngested.files,
+        symbols: totalIngested.symbols,
+        calls: totalIngested.callEdges,
+        references: totalIngested.refEdges,
+        lastIndexedAt: new Date().toISOString(),
+        error: prev?.error, // 保留之前的 error 提示 (例: 401)
+      }));
       refresh();
     } catch (e) {
       setBuildProgress(prev => prev ? { ...prev, phase: 'error' } : null);
