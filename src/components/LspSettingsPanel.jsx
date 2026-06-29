@@ -6,7 +6,6 @@ import {
   ReloadOutlined, DownloadOutlined, CheckCircleOutlined, CloseCircleOutlined,
   ToolOutlined, DesktopOutlined, GlobalOutlined
 } from '@ant-design/icons';
-import api from '../auth';
 
 const { Text, Paragraph } = Typography;
 
@@ -110,17 +109,10 @@ export default function LspSettingsPanel() {
     }
   }, []);
 
-  // ── 浏览器: 调后端 ─────────────────────────────────────────────────────
+  // ── 浏览器: 后端 LSP 端点已删除 (PR2 彻底前端化) — 仅显示提示 ────────
   const refreshServer = useCallback(async () => {
-    setLoading(true);
-    try {
-      const r = await api.get('/lsp/servers');
-      setRows(r.data?.servers || []);
-    } catch (e) {
-      message.error('拉取失败: ' + (e?.response?.data?.error || e.message));
-    } finally {
-      setLoading(false);
-    }
+    // 浏览器模式: 无法本地探测, 也不再有后端 /lsp/servers 端点
+    setRows(LSP_SERVERS.map(srv => ({ ...srv, installed: false, path: null })));
   }, []);
 
   const refresh = isDesktop ? refreshDesktop : refreshServer;
@@ -133,10 +125,10 @@ export default function LspSettingsPanel() {
       message.warning(`${srv.binary} (${srv.via}) 需手工安装 — 请参考项目文档`);
       return;
     }
-    // P7-8: jdtls 走 Eclipse 站点 + 需 JDK 21+ + 写 shim —
-    // 桌面壳直接调后端 /lsp/install 复用现有 installer, 不用复制 Java 探测/tar.gz 解压逻辑
+    // P7-9: jdtls 走 Eclipse 站点 + 需 JDK 21+ + 写 shim —
+    // 后端 LSP 端点已删 (彻底前端化), 桌面壳暂未实现 jdtls 自动安装, 提示手工装
     if (cmdInfo.kind === 'eclipse') {
-      await installServer(srv);
+      message.warning('jdtls 暂未支持桌面壳自动安装 — 需 JDK 21+, 请按 Eclipse JDTLS 官方文档手工装到 PATH');
       return;
     }
     // GitHub Releases via — 走桌面壳 installGithubRelease
@@ -198,19 +190,9 @@ export default function LspSettingsPanel() {
     }
   }
 
-  // ── 浏览器: 调后端 ─────────────────────────────────────────────────────
+  // ── 浏览器: 后端 LSP 端点已删, 仅提示 ─────────────────────────────
   async function installServer(srv) {
-    setInstalling(srv.binary);
-    try {
-      const r = await api.post('/lsp/install', null, { params: { binary: srv.binary } });
-      if (r.data.installed) message.success(`${srv.binary}: ${r.data.message}`);
-      else message.warning(`${srv.binary}: ${r.data.message}`);
-      refresh();
-    } catch (e) {
-      message.error(`${srv.binary} 安装失败: ` + (e?.response?.data?.error || e.message));
-    } finally {
-      setInstalling(null);
-    }
+    message.warning(`浏览器模式无法安装 ${srv.binary} — 请下载桌面客户端`);
   }
 
   const installOne = isDesktop ? installDesktop : installServer;
@@ -257,16 +239,19 @@ export default function LspSettingsPanel() {
       width: 110,
       render: (_, row) => {
         const cmdInfo = installCommandFor(row);
-        const disabled = row.installed || !cmdInfo;
-        const tip = row.installed
-          ? '已就绪'
-          : cmdInfo
-            ? (cmdInfo.kind === 'github' ? `从 GitHub Releases 装 ${row.binary}`
-              : cmdInfo.kind === 'eclipse' ? `后端从 download.eclipse.org 下载 + 解压 + 写 shim (50MB, 需 JDK 21+)`
-              : `运行: ${cmdInfo.cmd} ${cmdInfo.args.join(' ')}`)
-            : (row.repo === null
-                ? `${row.binary} (${row.via}) 暂未支持自动安装 — 请按官方文档手工装 (见项目 README)`
-                : '无安装命令');
+        // P7-9: 浏览器模式禁用所有安装按钮 — 后端 LSP 端点已删, 仅桌面壳支持
+        const disabled = !isDesktop || row.installed || !cmdInfo;
+        const tip = !isDesktop
+          ? '浏览器模式不支持本地安装 — 请下载桌面客户端'
+          : row.installed
+            ? '已就绪'
+            : cmdInfo
+              ? (cmdInfo.kind === 'github' ? `从 GitHub Releases 装 ${row.binary}`
+                : cmdInfo.kind === 'eclipse' ? `桌面壳暂未支持 jdtls 自动安装 (需 JDK 21+, 请手工装)`
+                : `运行: ${cmdInfo.cmd} ${cmdInfo.args.join(' ')}`)
+              : (row.repo === null
+                  ? `${row.binary} (${row.via}) 暂未支持自动安装 — 请按官方文档手工装 (见项目 README)`
+                  : '无安装命令');
         return (
           <Tooltip title={tip}>
             <Button
@@ -294,7 +279,7 @@ export default function LspSettingsPanel() {
           <span>LSP 语言服务器</span>
           {isDesktop
             ? <Tooltip title="桌面壳模式: 在客户端本地探测与安装, 不走后端"><Tag color="purple" icon={<DesktopOutlined />}>本地</Tag></Tooltip>
-            : <Tooltip title="浏览器模式: 由后端服务安装"><Tag icon={<GlobalOutlined />}>后端</Tag></Tooltip>}
+            : <Tooltip title="浏览器模式: 无法本地安装 LSP"><Tag color="orange" icon={<GlobalOutlined />}>浏览器</Tag></Tooltip>}
         </Space>
       }
       extra={
@@ -308,9 +293,19 @@ export default function LspSettingsPanel() {
     >
       <Paragraph type="secondary" style={{ fontSize: 12, margin: '0 0 12px' }}>
         {isDesktop
-          ? '桌面壳模式: 每个客户端独立配置本地 LSP 服务, 安装命令在本机直接执行 (npm/pip/go). 不依赖后端. GitHub 类 server 需手工安装.'
-          : '浏览器模式: 由后端统一安装 LSP server, 所有客户端共享. 桌面壳模式下每个客户端可独立配置.'}
+          ? '桌面壳模式: 每个客户端独立配置本地 LSP 服务, 安装命令在本机直接执行 (npm/pip/go). GitHub 类 server 走 Releases 自动装.'
+          : '浏览器模式: 浏览器沙箱无法 spawn 进程, 也不再有后端 LSP 安装端点. 请下载桌面客户端配置本地 LSP.'}
       </Paragraph>
+
+      {/* P7-9: 浏览器模式提示 */}
+      {!isDesktop && (
+        <Alert
+          type="warning" showIcon
+          style={{ marginBottom: 12 }}
+          message="浏览器模式不支持 LSP 安装"
+          description="代码图解析与 LSP 安装均需桌面客户端. 请下载并启动 autobot-desktop 后再使用此功能."
+        />
+      )}
 
       {installLog && (
         <Alert

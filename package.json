@@ -58,6 +58,7 @@
     "rehype-highlight": "^7.0.2",
     "remark-gfm": "^4.0.1",
     "simple-git": "^3.36.0",
+    "web-tree-sitter": "^0.25.10",
     "xlsx": "^0.18.5",
     "zustand": "^5.0.12"
   },
