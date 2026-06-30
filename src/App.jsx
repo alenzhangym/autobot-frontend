@@ -45,6 +45,7 @@ import { executeAgentCommands, appendStreamToken, tryStreamDispatch, resetStream
 import MessageBubble from './components/MessageBubble'
 import IssuesSidePanel from './components/IssuesSidePanel'
 import InteractivePanel from './components/InteractivePanel'
+import OrderFormModal from './components/OrderFormModal'
 import GraphStatusPanel from './components/GraphStatusPanel'
 import LspSettingsPanel from './components/LspSettingsPanel'
 import McpSettingsPanel from './components/McpSettingsPanel'
@@ -817,6 +818,10 @@ function App() {
   const [showWsPicker, setShowWsPicker] = useState(false)
   const [wsPickerChannel, setWsPickerChannel] = useState(null)
   const [isChangingWorkspace, setIsChangingWorkspace] = useState(false)
+  // 阶段5: ERP 订单表单弹窗 (收到 reply_context.formSpec 时弹出)
+  const [orderFormOpen, setOrderFormOpen] = useState(false)
+  const [orderFormSpec, setOrderFormSpec] = useState(null)
+  const [orderFormHint, setOrderFormHint] = useState('')
   const [isResumingCodeSession, setIsResumingCodeSession] = useState(false)
   const [graphDrawerOpen, setGraphDrawerOpen] = useState(false) // P7-6: 会话内图知识库 Drawer
   const [isParsingHistory, setIsParsingHistory] = useState(false)
@@ -2205,7 +2210,9 @@ function App() {
         setMessages(prev => [...prev, normalizeMessage({ role: 'assistant', content: res.data.response })]);
         fetchSessions();
       } else {
-        setMessages(prev => [...prev, { role: 'error', content: `Error: ${res.data.message}` }]);
+        // 防御性: 与 /chat 同样, message 缺失时回退到 response
+        const errMsg = res.data.message || res.data.response || 'Unknown error'
+        setMessages(prev => [...prev, { role: 'error', content: `Error: ${errMsg}` }]);
       }
     } catch (err) {
       setMessages(prev => [...prev, { role: 'error', content: `Execution Error: ${err.message}` }]);
@@ -2251,6 +2258,38 @@ function App() {
       if (q.length < 4) return
       setIntentFloater({ open: true, query: q, predicted: normalized })
     } catch (_) { /* 静默 — 浮层是 best-effort */ }
+  }
+
+  // 阶段5: ERP 订单表单弹窗.
+  // 后端在 status=clarify 或 success 路径都可能携带 reply_context(JSON),含 formSpec
+  // 试图解析 → 若成功,弹 OrderFormModal;否则静默.
+  const tryOpenOrderFormModal = (data) => {
+    try {
+      if (!data || !data.reply_context) return
+      const ctx = typeof data.reply_context === 'string'
+        ? JSON.parse(data.reply_context) : data.reply_context
+      const spec = ctx && ctx.formSpec
+      if (!spec || !spec.orderType) return
+      setOrderFormSpec(spec)
+      setOrderFormHint(data.response || '')
+      setOrderFormOpen(true)
+    } catch (e) {
+      // 静默 — form_spec 解析失败时让用户走老路径(从 markdown 表格里复制粘贴)
+      console.debug('[OrderFormModal] no formSpec in reply_context:', e?.message)
+    }
+  }
+
+  const closeOrderFormModal = () => {
+    setOrderFormOpen(false)
+    setOrderFormSpec(null)
+    setOrderFormHint('')
+  }
+
+  // 弹窗提交:把填好的内容作为新一条 user message 送回后端
+  // (走同一 channel,后端 ERPOrchestrator 会再次接收,此时 op 完整 → 创建成功)
+  const submitOrderForm = async (text) => {
+    closeOrderFormModal()
+    await sendMessage(text)
   }
 
   const sendMessage = async (presetText) => {
@@ -2346,9 +2385,11 @@ function App() {
       //     触发条件：用户非确认型 query + 分类结果不是 CONVERSATIONAL
       //     code 任务静默 (isCodeSess=true) —— 后端自行处理 intent 推断, 不弹浮层
       maybeShowIntentFloater(res.data, text, isCodeSess)
-      if (res.data.status === 'success') {
+      if (res.data.status === 'success' || res.data.status === 'clarify') {
         setMessages(prev => [...prev, normalizeMessage({ id: nextMsgId(), role: 'assistant', content: res.data.response })])
         fetchSessions()
+        // 阶段5: ERP 订单表单 — 收到 reply_context.formSpec 时弹窗
+        tryOpenOrderFormModal(res.data)
         // Agent-driven issue ops: 后端可能在本轮 chat 中执行了 <ISSUE_OP .../>
         // (例如用户说"删除 issue 12, 13" / "把 22 标为已修复"), IssueStore 已被修改.
         // 通知右栏立即刷新一次, 避免等 5s 自适应轮询.
@@ -2399,7 +2440,10 @@ function App() {
           setMessages(prev => [...prev, { role: 'error', content: `Execution Error: ${err.message}` }])
         }
       } else {
-        setMessages(prev => [...prev, { role: 'error', content: `Error: ${res.data.message}` }])
+        // 防御性: 部分后端路径(如 ERP 旧版)只填 response 不填 message.
+        // 优先用 message, 回退到 response, 最后兜底为 'Unknown error'.
+        const errMsg = res.data.message || res.data.response || 'Unknown error'
+        setMessages(prev => [...prev, { role: 'error', content: `Error: ${errMsg}` }])
       }
     } catch (err) {
       if (err.response?.status === 401) {
@@ -3399,6 +3443,15 @@ const handleDeleteSession = (id) => {
                 overflowY: 'auto'
               }}>
                 <InteractivePanel sessionId={sessionId} />
+                {/* 阶段5: ERP 订单表单弹窗 — 收到 reply_context.formSpec 时弹出 */}
+                <OrderFormModal
+          open={orderFormOpen}
+          onClose={closeOrderFormModal}
+          onSubmit={submitOrderForm}
+          formSpec={orderFormSpec}
+          hintText={orderFormHint}
+          companyId={user?.companyId}
+        />
                 {(sessions.find(s => s.id === sessionId)?.channel === 'code' || (!sessions.find(s => s.id === sessionId)?.channel && currentChannel === 'code')) && (
                   <IssuesSidePanel
                     sessionId={sessionId}
