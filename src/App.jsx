@@ -46,6 +46,7 @@ import MessageBubble from './components/MessageBubble'
 import IssuesSidePanel from './components/IssuesSidePanel'
 import InteractivePanel from './components/InteractivePanel'
 import OrderFormModal from './components/OrderFormModal'
+import ErpQuickActions from './components/ErpQuickActions'
 import GraphStatusPanel from './components/GraphStatusPanel'
 import LspSettingsPanel from './components/LspSettingsPanel'
 import McpSettingsPanel from './components/McpSettingsPanel'
@@ -860,6 +861,11 @@ function App() {
   const liveLogActiveRef = useRef(false)
 
   const sessionCacheRef = useRef(new Map())
+
+  // 2026-07-01: ERP 快速操作标签 — 选中后写到该 state, 不直接发送, 让用户看清再输入.
+  // 形状: {key, label, text, category, color, icon, desc} | null
+  const [selectedQuickAction, setSelectedQuickAction] = useState(null)
+  const chatInputRef = useRef(null)
 
   // Keep session cache in sync with live messages so tab switches don't lose content
   useEffect(() => {
@@ -1828,6 +1834,9 @@ function App() {
         setTimeout(() => connectChatWs(), 50)
       }
       setIsLoading(true)
+      // 2026-07-01: 切换会话时清空已选快速操作标签, 避免上一个会话的标签
+      // 误带到新会话的输入框 (chip 残留会误导不同操作的录入).
+      setSelectedQuickAction(null)
     }
 
     // ── Fast path: cache hit ──
@@ -2285,11 +2294,35 @@ function App() {
     setOrderFormHint('')
   }
 
+  // (2026-07-01: 移除 openOrderFormWithSpec — 快速操作改为 sendText 路径,
+  //  不再本地弹空表单. OrderFormModal 仅由 tryOpenOrderFormModal 触发.)
+
   // 弹窗提交:把填好的内容作为新一条 user message 送回后端
   // (走同一 channel,后端 ERPOrchestrator 会再次接收,此时 op 完整 → 创建成功)
   const submitOrderForm = async (text) => {
     closeOrderFormModal()
     await sendMessage(text)
+  }
+
+  /**
+   * 2026-07-01: 处理用户点发送 / 按回车.
+   * - 如果 selectedQuickAction 存在: 把"标签 text"作为前缀拼到当前 input 前面, 然后发.
+   *   例: selectedQuickAction.text="新建采购单", input="台庆精密... 6 项"
+   *       → 发送: "新建采购单\n台庆精密... 6 项"
+   *   后端 ERPIntentDetector 看到"新建采购单"立即命中 PURCHASE_ORDER (0 LLM 意图调用).
+   * - 发送后清空 selectedQuickAction, 避免下一次发送重复加标签.
+   */
+  const handleSendWithQuickAction = () => {
+    if (selectedQuickAction) {
+      const cur = (typeof input === 'string' ? input : '').trim()
+      // 如果 text 自带 ":" (如 "新增供应商:") 且 cur 不为空, 用空格分隔让用户内容更自然
+      const sep = selectedQuickAction.text.endsWith(':') || selectedQuickAction.text.endsWith('：') ? ' ' : '\n'
+      const full = cur ? `${selectedQuickAction.text}${sep}${cur}` : selectedQuickAction.text
+      setSelectedQuickAction(null)
+      sendMessage(full)
+    } else {
+      sendMessage()
+    }
   }
 
   const sendMessage = async (presetText) => {
@@ -3356,8 +3389,19 @@ const handleDeleteSession = (id) => {
                   </div>
                 </div>
               ) : (
-                <div style={{ padding: '12px 24px 20px', background: '#0d0d0d', borderTop: '1px solid #1a1a1a' }}>
+                <div style={{ padding: '0 24px 20px', background: '#0d0d0d', borderTop: '1px solid #1a1a1a' }}>
                   <div style={{ maxWidth: 760, margin: '0 auto' }}>
+                    {/* ── ERP 快速操作栏 (始终在输入框上方, 不管当前 tab) ──
+                        跳过 LLM 意图识别, 直接进入订单录入/数据分析/主数据流程.
+                        用户粘贴大段 CSV 时, 点标签比让 LLM 解析快 10x+ */}
+                    <ErpQuickActions
+                      selected={selectedQuickAction}
+                      onSelect={setSelectedQuickAction}
+                      onClear={() => setSelectedQuickAction(null)}
+                      currentInput={input}
+                      inputRef={chatInputRef}
+                      disabled={isLoading}
+                    />
                     {/* ── A 方案：code 会话移除「分析/构建」toggle，意图由后端基于消息+状态推断。
                           状态栏保留 codeMode='auto' 默认值；高级用户可通过 devtools 临时改 state 强制锁定。 */}
                     <div style={{
@@ -3391,7 +3435,33 @@ const handleDeleteSession = (id) => {
                         </div>
                       ))}
 
+                      {selectedQuickAction && (
+                        <div
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            background: `${selectedQuickAction.color}22`,
+                            border: `1px solid ${selectedQuickAction.color}80`,
+                            padding: '2px 10px',
+                            borderRadius: 4,
+                            marginRight: 8,
+                            gap: 4,
+                            userSelect: 'none',
+                            cursor: 'default'
+                          }}
+                          title="当前选中的快速操作标签 (不可修改, 在上方标签栏可关闭)"
+                        >
+                          <span style={{ color: selectedQuickAction.color, fontSize: 12, display: 'flex', alignItems: 'center' }}>
+                            {selectedQuickAction.icon}
+                          </span>
+                          <Text style={{ color: '#fff', fontSize: 12, whiteSpace: 'nowrap' }}>
+                            {selectedQuickAction.label}
+                          </Text>
+                        </div>
+                      )}
+
                       <TextArea
+                        ref={chatInputRef}
                         value={input}
                         onChange={e => setInput(e.target.value)}
                         onCompositionStart={() => { window.__imeComposing = true }}
@@ -3400,10 +3470,14 @@ const handleDeleteSession = (id) => {
                           if (e.key === 'Enter' && !e.shiftKey) {
                             if (window.__imeComposing || e.nativeEvent.isComposing) return
                             e.preventDefault()
-                            sendMessage()
+                            handleSendWithQuickAction()
                           }
                         }}
-                        placeholder="Ask AutoBot... (Shift+Enter to break line)"
+                        placeholder={
+                          selectedQuickAction
+                            ? '在此输入内容后回车或点发送 (上方标签可点击关闭)'
+                            : 'Ask AutoBot... (Shift+Enter to break line)'
+                        }
                         autoSize={{ minRows: 1, maxRows: 6 }}
                         style={{ background: 'transparent', border: 'none', color: '#e3e3e3', resize: 'none', flex: 1, padding: '4px 0', fontSize: 14 }}
                         variant="borderless"
@@ -3416,9 +3490,9 @@ const handleDeleteSession = (id) => {
                             onClick={isRecording ? stopRecording : startRecording}
                             style={{ color: isRecording ? '#ff4d4f' : '#666', padding: '4px 6px' }} />
                         </Tooltip>
-                        {(input.trim() || selectedImageBase64) && (
+                        {(input.trim() || selectedImageBase64 || selectedQuickAction) && (
                           <Button type="primary" shape="circle" icon={<SendOutlined />}
-                            onClick={() => sendMessage()} size="small" />
+                            onClick={() => handleSendWithQuickAction()} size="small" />
                         )}
                       </Space>
                     </div>

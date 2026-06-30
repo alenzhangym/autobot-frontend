@@ -198,7 +198,7 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
     return (
       <Table size="small" dataSource={items} rowKey="item_id" pagination={false}
         columns={[
-          { title: '物料编码', dataIndex: 'part_id', width: 160, render: v => { const p = parts.find(p => p.partId === v); return p?.label || v } },
+          { title: '物料编码', dataIndex: 'part_id', width: 160, render: (v, row) => { const p = parts.find(p => p.partId === v); return p?.label || row?.user_part_model || v || '-' } },
           { title: '订量', dataIndex: 'ordered_qty', width: 80 },
           { title: '已收', dataIndex: 'received_qty', width: 80 },
           { title: '估价', dataIndex: 'estimated_unit_price', width: 100, render: v => v ? Number(v).toFixed(4) : '-' },
