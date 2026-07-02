@@ -25,6 +25,7 @@ import MonitorPanel from './components/MonitorPanel'
 import Documents from './Documents'
 import DatabaseManagement from './DatabaseManagement'
 import ErpManagement from './ErpManagement'
+import ErpMetadataManagement from './ErpMetadataManagement'
 import OutboundOrderManagement from './OutboundOrderManagement'
 import InboundOrderManagement from './InboundOrderManagement'
 import StockDashboard from './StockDashboard'
@@ -3239,6 +3240,8 @@ const handleDeleteSession = (id) => {
             <ReconciliationManagement user={user} companies={companies} />
           ) : activeTab === 'erp' ? (
             <ErpManagement user={user} companies={companies} />
+          ) : activeTab === 'erp_metadata' ? (
+            <ErpMetadataManagement user={user} companies={companies} />
           ) : activeTab === 'inventory' ? (
             <InventoryManagement user={user} companies={companies} />
           ) : activeTab === 'audit_logs' ? (
@@ -3442,14 +3445,13 @@ const handleDeleteSession = (id) => {
                             alignItems: 'center',
                             background: `${selectedQuickAction.color}22`,
                             border: `1px solid ${selectedQuickAction.color}80`,
-                            padding: '2px 10px',
+                            padding: '2px 4px 2px 10px',
                             borderRadius: 4,
                             marginRight: 8,
                             gap: 4,
-                            userSelect: 'none',
-                            cursor: 'default'
+                            userSelect: 'none'
                           }}
-                          title="当前选中的快速操作标签 (不可修改, 在上方标签栏可关闭)"
+                          title={`当前选中的快速操作标签: ${selectedQuickAction.label}`}
                         >
                           <span style={{ color: selectedQuickAction.color, fontSize: 12, display: 'flex', alignItems: 'center' }}>
                             {selectedQuickAction.icon}
@@ -3457,6 +3459,23 @@ const handleDeleteSession = (id) => {
                           <Text style={{ color: '#fff', fontSize: 12, whiteSpace: 'nowrap' }}>
                             {selectedQuickAction.label}
                           </Text>
+                          <span
+                            role="button"
+                            aria-label="移除快速操作标签"
+                            onClick={() => setSelectedQuickAction(null)}
+                            onMouseDown={e => e.preventDefault()}
+                            style={{
+                              color: '#bbb',
+                              fontSize: 12,
+                              lineHeight: 1,
+                              padding: '0 4px',
+                              marginLeft: 2,
+                              borderRadius: 2,
+                              cursor: 'pointer'
+                            }}
+                            onMouseEnter={e => { e.currentTarget.style.color = '#fff'; e.currentTarget.style.background = 'rgba(255,255,255,0.1)' }}
+                            onMouseLeave={e => { e.currentTarget.style.color = '#bbb'; e.currentTarget.style.background = 'transparent' }}
+                          >✕</span>
                         </div>
                       )}
 
