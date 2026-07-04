@@ -82,35 +82,113 @@ export default function Login({ onLoginSuccess }) {
     }
   }
 
+  // Reusable input style — overrides AntD with our atelier aesthetic
+  const inputStyle = {
+    backgroundColor: 'var(--ab-bg)',
+    borderColor: 'var(--ab-line)',
+    color: 'var(--ab-text)',
+    fontFamily: 'var(--ab-font-body)',
+    height: 46,
+    borderRadius: 3,
+  }
+
   return (
     <ConfigProvider theme={{
       algorithm: theme.darkAlgorithm,
-      token: { colorPrimary: '#1677ff', borderRadius: 8, colorBgContainer: '#161616', colorBgElevated: '#1a1a1a', colorBorder: '#2a2a2a' }
+      token: {
+        colorPrimary: '#d4a574',
+        borderRadius: 3,
+        colorBgContainer: '#0e0e0e',
+        colorBgElevated: '#181613',
+        colorBorder: '#2a2620',
+        fontFamily: "'Hanken Grotesk', system-ui, sans-serif",
+      },
+      components: {
+        Tabs: {
+          itemColor: '#807a6e',
+          itemActiveColor: '#b8b1a3',
+          itemSelectedColor: '#d4a574',
+          inkBarColor: '#d4a574',
+          titleFontSize: 12,
+        },
+        Modal: {
+          contentBg: '#181613',
+          headerBg: '#181613',
+          titleColor: '#e8e3d8',
+        },
+        Alert: {
+          borderRadiusLG: 3,
+        },
+      },
     }}>
-    <div style={{
+    <div className="ab-grain" style={{
       minHeight: '100vh', display: 'flex', alignItems: 'center',
-      justifyContent: 'center', background: '#0d0d0d', position: 'relative',
-      padding: '40px 20px'
+      justifyContent: 'center', background: 'var(--ab-bg)', position: 'relative',
+      padding: '40px 20px', overflow: 'hidden'
     }}>
-      <Button 
+      <div className="ab-grid-bg" />
+
+      {/* Vertical metadata — left */}
+      <div style={{
+        position: 'absolute',
+        left: 28,
+        top: '50%',
+        transform: 'translateY(-50%)',
+        writingMode: 'vertical-rl',
+        fontFamily: 'var(--ab-font-mono)',
+        fontSize: 10,
+        letterSpacing: '0.32em',
+        color: 'var(--ab-text-4)',
+        textTransform: 'uppercase',
+        zIndex: 2,
+      }}>
+        AUTOBOT · ATELIER COMMAND CENTER · EST. 2026
+      </div>
+
+      {/* Top-right metadata */}
+      <div style={{
+        position: 'absolute',
+        right: 28,
+        top: 28,
+        textAlign: 'right',
+        fontFamily: 'var(--ab-font-mono)',
+        fontSize: 10,
+        letterSpacing: '0.2em',
+        color: 'var(--ab-text-4)',
+        textTransform: 'uppercase',
+        zIndex: 2,
+        lineHeight: 1.8,
+      }}>
+        <div>SECURE CHANNEL</div>
+        <div style={{ color: 'var(--ab-copper)' }} className="ab-cursor-blink">STATUS / READY</div>
+      </div>
+
+      <Button
         type="default"
         icon={<SettingOutlined />}
         onClick={() => setSettingsVisible(true)}
         style={{
           position: 'absolute',
-          top: 20,
-          right: 20,
+          bottom: 28,
+          right: 28,
           display: 'inline-flex',
           alignItems: 'center',
           gap: 6,
-          background: 'rgba(22, 119, 255, 0.12)',
-          border: '1px solid rgba(22, 119, 255, 0.45)',
-          color: '#9ec5fe',
+          background: 'transparent',
+          border: '1px solid var(--ab-line)',
+          color: 'var(--ab-text-2)',
           fontWeight: 500,
+          fontFamily: 'var(--ab-font-mono)',
+          fontSize: 11,
+          letterSpacing: '0.1em',
+          textTransform: 'uppercase',
+          height: 32,
+          zIndex: 2,
         }}
       >
-        设置后端地址
+        Backend
       </Button>
+
       <Modal
         title="后端地址设置"
         open={settingsVisible}
@@ -119,12 +197,12 @@ export default function Login({ onLoginSuccess }) {
         okText="保存"
         cancelText="取消"
       >
-        <Paragraph style={{ color: '#888', fontSize: 12, marginBottom: 12 }}>
-          默认后端地址为 <Text code>http://120.26.113.95:8000</Text>。
+        <Paragraph style={{ color: 'var(--ab-text-3)', fontSize: 12, marginBottom: 12 }}>
+          默认后端地址为 <span className="ab-code">http://120.26.113.95:8000</span>。
           如需修改, 请填写完整 URL (含 http://) 或 host:port, 保存后会自动刷新页面。
         </Paragraph>
         <Form layout="vertical">
-          <Form.Item label="后端地址 (host:port 或完整 URL)">
+          <Form.Item label={<span className="ab-mono-dim" style={{ fontSize: 10 }}>BACKEND ADDRESS</span>}>
             <Input
               value={backendHost}
               onChange={(e) => setLocalBackendHost(e.target.value)}
@@ -134,39 +212,90 @@ export default function Login({ onLoginSuccess }) {
         </Form>
       </Modal>
 
-      <div style={{ display: 'flex', maxWidth: 600, width: '100%', gap: 40, flexWrap: 'wrap', margin: '0 auto', justifyContent: 'center' }}>
-        <div style={{
-          width: 400, padding: '32px', background: '#1a1a1a',
-          borderRadius: 16, border: '1px solid #2a2a2a', boxShadow: '0 8px 32px rgba(0,0,0,0.5)'
-        }}>
-          {error && <Alert message={error} type="error" showIcon style={{ marginBottom: 20, borderRadius: 8 }} />}
-          {successMsg && <Alert message={successMsg} type="success" showIcon style={{ marginBottom: 20, borderRadius: 8 }} />}
+      <div style={{
+        width: 440, padding: '44px 42px', background: 'var(--ab-surface)',
+        border: '1px solid var(--ab-line)', borderRadius: 4,
+        boxShadow: 'var(--ab-shadow-2)',
+        position: 'relative', zIndex: 2
+      }} className="ab-reveal">
+        {/* Corner ticks */}
+        <span style={{ position: 'absolute', top: 0, left: 0, width: 14, height: 14, borderTop: '1px solid var(--ab-copper)', borderLeft: '1px solid var(--ab-copper)' }} />
+        <span style={{ position: 'absolute', top: 0, right: 0, width: 14, height: 14, borderTop: '1px solid var(--ab-copper)', borderRight: '1px solid var(--ab-copper)' }} />
+        <span style={{ position: 'absolute', bottom: 0, left: 0, width: 14, height: 14, borderBottom: '1px solid var(--ab-copper)', borderLeft: '1px solid var(--ab-copper)' }} />
+        <span style={{ position: 'absolute', bottom: 0, right: 0, width: 14, height: 14, borderBottom: '1px solid var(--ab-copper)', borderRight: '1px solid var(--ab-copper)' }} />
 
-          <Tabs activeKey={activeTab} onChange={setActiveTab} centered items={[
+        {error && (
+          <Alert
+            message={error}
+            type="error"
+            showIcon
+            style={{ marginBottom: 20, borderRadius: 3, background: 'rgba(201, 122, 107, 0.08)', border: '1px solid rgba(201, 122, 107, 0.4)' }}
+          />
+        )}
+        {successMsg && (
+          <Alert
+            message={successMsg}
+            type="success"
+            showIcon
+            style={{ marginBottom: 20, borderRadius: 3, background: 'rgba(138, 154, 110, 0.08)', border: '1px solid rgba(138, 154, 110, 0.4)' }}
+          />
+        )}
+
+        <div style={{ marginBottom: 32 }}>
+          <div className="ab-mono-label" style={{ marginBottom: 18 }}>AUTHENTICATE</div>
+          <h1 className="ab-display" style={{ fontSize: 36, fontWeight: 300, marginBottom: 8, letterSpacing: '-0.02em' }}>
+            Enter <em>AutoBot</em>
+          </h1>
+          <div style={{ color: 'var(--ab-text-3)', fontSize: 13, fontFamily: 'var(--ab-font-body)' }}>
+            多 Agent 协作平台 · 请使用账号登录
+          </div>
+        </div>
+
+        <Tabs
+          activeKey={activeTab}
+          onChange={setActiveTab}
+          centered
+          items={[
             {
               key: 'login',
-              label: t('auth.login'),
+              label: 'SIGN IN',
               children: (
-                <Form layout="vertical" onFinish={handleLogin} requiredMark={false} style={{ marginTop: 20 }}>
-                  <Form.Item name="username" rules={[{ required: true, message: 'Please enter username' }]}>
-                    <Input 
-                      prefix={<UserOutlined style={{ color: '#888' }} />} 
-                      placeholder={t('auth.username')} 
-                      size="large" 
-                      style={{ backgroundColor: '#161616', borderColor: '#2a2a2a', color: '#e3e3e3' }}
+                <Form layout="vertical" onFinish={handleLogin} requiredMark={false} style={{ marginTop: 24 }}>
+                  <Form.Item
+                    name="username"
+                    label={<span className="ab-mono-dim" style={{ fontSize: 10 }}>USERNAME</span>}
+                    rules={[{ required: true, message: 'Please enter username' }]}
+                  >
+                    <Input
+                      prefix={<UserOutlined style={{ color: 'var(--ab-text-3)' }} />}
+                      placeholder={t('auth.username')}
+                      size="large"
+                      style={inputStyle}
                     />
                   </Form.Item>
-                  <Form.Item name="password" rules={[{ required: true, message: 'Please enter password' }]}>
-                    <Input.Password 
-                      prefix={<LockOutlined style={{ color: '#888' }} />} 
-                      placeholder={t('auth.password')} 
-                      size="large" 
-                      style={{ backgroundColor: '#161616', borderColor: '#2a2a2a', color: '#e3e3e3' }}
+                  <Form.Item
+                    name="password"
+                    label={<span className="ab-mono-dim" style={{ fontSize: 10 }}>PASSWORD</span>}
+                    rules={[{ required: true, message: 'Please enter password' }]}
+                  >
+                    <Input.Password
+                      prefix={<LockOutlined style={{ color: 'var(--ab-text-3)' }} />}
+                      placeholder={t('auth.password')}
+                      size="large"
+                      style={inputStyle}
                     />
                   </Form.Item>
-                  <Form.Item style={{ marginBottom: 0 }}>
-                    <Button type="primary" htmlType="submit" loading={loading} block size="large" style={{ borderRadius: 8, height: 44, fontWeight: 600 }}>
-                      {t('auth.login')}
+                  <Form.Item style={{ marginBottom: 0, marginTop: 8 }}>
+                    <Button
+                      type="primary"
+                      htmlType="submit"
+                      loading={loading}
+                      block
+                      size="large"
+                      className="ab-btn-copper"
+                      style={{ borderRadius: 3, height: 46, fontWeight: 600, letterSpacing: '0.06em' }}
+                    >
+                      AUTHENTICATE & ENTER
                     </Button>
                   </Form.Item>
                 </Form>
@@ -174,55 +303,91 @@ export default function Login({ onLoginSuccess }) {
             },
             {
               key: 'register',
-              label: t('auth.register'),
+              label: 'REGISTER',
               children: (
-                <Form layout="vertical" onFinish={handleRegister} requiredMark={false} style={{ marginTop: 20 }}>
-                  <Form.Item name="username" rules={[{ required: true, message: 'Please enter username' }]}>
-                    <Input 
-                      prefix={<UserOutlined style={{ color: '#888' }} />} 
-                      placeholder={t('auth.username')} 
-                      size="large" 
-                      style={{ backgroundColor: '#161616', borderColor: '#2a2a2a', color: '#e3e3e3' }}
+                <Form layout="vertical" onFinish={handleRegister} requiredMark={false} style={{ marginTop: 24 }}>
+                  <Form.Item
+                    name="username"
+                    label={<span className="ab-mono-dim" style={{ fontSize: 10 }}>USERNAME</span>}
+                    rules={[{ required: true, message: 'Please enter username' }]}
+                  >
+                    <Input
+                      prefix={<UserOutlined style={{ color: 'var(--ab-text-3)' }} />}
+                      placeholder={t('auth.username')}
+                      size="large"
+                      style={inputStyle}
                     />
                   </Form.Item>
-                  <Form.Item name="password" rules={[{ required: true, message: 'Please enter password' }]}>
-                    <Input.Password 
-                      prefix={<LockOutlined style={{ color: '#888' }} />} 
-                      placeholder={t('auth.password')} 
-                      size="large" 
-                      style={{ backgroundColor: '#161616', borderColor: '#2a2a2a', color: '#e3e3e3' }}
+                  <Form.Item
+                    name="password"
+                    label={<span className="ab-mono-dim" style={{ fontSize: 10 }}>PASSWORD</span>}
+                    rules={[{ required: true, message: 'Please enter password' }]}
+                  >
+                    <Input.Password
+                      prefix={<LockOutlined style={{ color: 'var(--ab-text-3)' }} />}
+                      placeholder={t('auth.password')}
+                      size="large"
+                      style={inputStyle}
                     />
                   </Form.Item>
-                  <Form.Item name="confirmPassword" rules={[{ required: true, message: 'Please confirm password' }]}>
-                    <Input.Password 
-                      prefix={<LockOutlined style={{ color: '#888' }} />} 
-                      placeholder={t('auth.confirmPassword')} 
-                      size="large" 
-                      style={{ backgroundColor: '#161616', borderColor: '#2a2a2a', color: '#e3e3e3' }}
-                    />
-                  </Form.Item>
-                  
-                  <Form.Item name="requestedCompanyName" rules={[{ required: true, message: 'Please enter requested company name' }]}>
-                    <Input 
-                      placeholder={t('auth.requestCompany')} 
-                      size="large" 
-                      style={{ backgroundColor: '#161616', borderColor: '#2a2a2a', color: '#e3e3e3' }}
+                  <Form.Item
+                    name="confirmPassword"
+                    label={<span className="ab-mono-dim" style={{ fontSize: 10 }}>CONFIRM PASSWORD</span>}
+                    rules={[{ required: true, message: 'Please confirm password' }]}
+                  >
+                    <Input.Password
+                      prefix={<LockOutlined style={{ color: 'var(--ab-text-3)' }} />}
+                      placeholder={t('auth.confirmPassword')}
+                      size="large"
+                      style={inputStyle}
                     />
                   </Form.Item>
 
-                  <Form.Item style={{ marginBottom: 0 }}>
-                    <Button type="primary" htmlType="submit" loading={loading} block size="large" style={{ borderRadius: 8, height: 44, fontWeight: 600 }}>
-                      {t('auth.register')}
+                  <Form.Item
+                    name="requestedCompanyName"
+                    label={<span className="ab-mono-dim" style={{ fontSize: 10 }}>COMPANY NAME</span>}
+                    rules={[{ required: true, message: 'Please enter requested company name' }]}
+                  >
+                    <Input
+                      placeholder={t('auth.requestCompany')}
+                      size="large"
+                      style={inputStyle}
+                    />
+                  </Form.Item>
+
+                  <Form.Item style={{ marginBottom: 0, marginTop: 8 }}>
+                    <Button
+                      type="primary"
+                      htmlType="submit"
+                      loading={loading}
+                      block
+                      size="large"
+                      className="ab-btn-copper"
+                      style={{ borderRadius: 3, height: 46, fontWeight: 600, letterSpacing: '0.06em' }}
+                    >
+                      REQUEST ACCESS
                     </Button>
                   </Form.Item>
-                  <div style={{ textAlign: 'center', marginTop: 12, color: '#888', fontSize: 12 }}>
+                  <div style={{
+                    textAlign: 'center',
+                    marginTop: 16,
+                    color: 'var(--ab-text-3)',
+                    fontSize: 11.5,
+                    fontFamily: 'var(--ab-font-body)',
+                    padding: '10px 12px',
+                    background: 'rgba(212, 165, 116, 0.04)',
+                    border: '1px solid var(--ab-line-soft)',
+                    borderLeft: '2px solid var(--ab-copper)',
+                    borderRadius: 2,
+                    lineHeight: 1.6,
+                  }}>
                     Your account and company will require approval from the super admin.
                   </div>
                 </Form>
               )
             }
-          ]} />
-        </div>
+          ]}
+        />
       </div>
     </div>
     </ConfigProvider>

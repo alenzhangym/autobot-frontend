@@ -60,45 +60,45 @@ function copyToClipboard(text) {
 // 一行可复制的代码块, 旁边带复制按钮.
 function CopyableCommand({ label, command, hint }) {
   return (
-    <div style={{ marginBottom: 12 }}>
+    <div style={{ marginBottom: 14 }}>
       {label && (
-        <div style={{ color: '#bbb', fontSize: 12, marginBottom: 4 }}>
+        <div className="ab-mono-dim" style={{ marginBottom: 6, fontSize: 10 }}>
           {label}
         </div>
       )}
       <div style={{
         display: 'flex',
         alignItems: 'stretch',
-        background: '#0a0a14',
-        border: '1px solid #2a2a2a',
-        borderRadius: 6,
+        background: 'var(--ab-bg)',
+        border: '1px solid var(--ab-line)',
+        borderRadius: 3,
         overflow: 'hidden',
       }}>
         <pre style={{
           flex: 1,
           margin: 0,
-          padding: '10px 12px',
-          color: '#7ee787',
-          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-          fontSize: 13,
-          lineHeight: 1.5,
+          padding: '11px 14px',
+          color: 'var(--ab-copper-hi)',
+          fontFamily: 'var(--ab-font-mono)',
+          fontSize: 12.5,
+          lineHeight: 1.6,
           whiteSpace: 'pre-wrap',
           wordBreak: 'break-all',
         }}>{command}</pre>
         <Button
           type="text"
-          icon={<CopyOutlined style={{ color: '#888' }} />}
+          icon={<CopyOutlined style={{ color: 'var(--ab-text-3)' }} />}
           onClick={() => {
             copyToClipboard(command).then(
               () => message.success('已复制'),
               () => message.error('复制失败')
             )
           }}
-          style={{ color: '#888' }}
+          style={{ color: 'var(--ab-text-3)', borderLeft: '1px solid var(--ab-line)' }}
           title="复制到剪贴板"
         />
       </div>
-      {hint && <div style={{ color: '#666', fontSize: 11, marginTop: 4 }}>{hint}</div>}
+      {hint && <div style={{ color: 'var(--ab-text-4)', fontFamily: 'var(--ab-font-mono)', fontSize: 10.5, marginTop: 5, letterSpacing: '0.02em' }}>{hint}</div>}
     </div>
   )
 }
@@ -112,32 +112,31 @@ function InstallCard() {
     : `curl -fsSL https://raw.githubusercontent.com/alenzhangym/autobot-frontend/main/scripts/install-autobot-frontend.sh | bash`
 
   return (
-    <Card
-      style={{
-        background: 'rgba(20, 20, 35, 0.7)',
-        border: '1px solid rgba(22, 119, 255, 0.25)',
-        borderRadius: 12,
-      }}
-      styles={{ body: { padding: 24 } }}
-    >
-      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12 }}>
-        <GithubOutlined style={{ fontSize: 22, color: '#1677ff', marginRight: 10 }} />
-        <Title level={4} style={{ color: '#fff', margin: 0 }}>
-          本地安装 AutoBot 前端（DB Agent / Code Agent 用户）
-        </Title>
+    <div className="ab-surface ab-reveal ab-reveal-2" style={{ padding: '28px 32px' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6, flexWrap: 'wrap', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 14 }}>
+          <span className="ab-mono-label">01 / Install</span>
+        </div>
+        <span className="ab-mono-dim" style={{ fontSize: 10 }}>SPA · STATIC · LOCAL-RUN</span>
       </div>
-      <Paragraph style={{ color: '#aaa', marginBottom: 16 }}>
-        前端为纯静态 SPA, 可在自己的机器上 <code style={{ color: '#7ee787' }}>npm start</code> 跑起来。
-        默认连后端 <Text code style={{ color: '#7ee787' }}>{INSTALL_DEFAULT_BACKEND_HOST}</Text>；
-        登录页 &quot;后端地址&quot; 框未改时使用该默认地址。
-      </Paragraph>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 14, marginBottom: 10 }}>
+        <GithubOutlined style={{ fontSize: 22, color: 'var(--ab-copper)' }} />
+        <h2 className="ab-display" style={{ margin: 0, fontSize: 28, fontWeight: 400 }}>
+          本地安装 <em>AutoBot</em> 前端
+        </h2>
+      </div>
+      <p style={{ color: 'var(--ab-text-2)', marginBottom: 22, lineHeight: 1.7, fontSize: 14, maxWidth: 640 }}>
+        前端为纯静态 SPA, 可在自己的机器上 <span className="ab-code">npm start</span> 跑起来。
+        默认连后端 <span className="ab-code">{INSTALL_DEFAULT_BACKEND_HOST}</span>；
+        登录页 "后端地址" 框未改时使用该默认地址。
+      </p>
 
-      <Row gutter={[24, 16]}>
+      <Row gutter={[32, 20]}>
         <Col xs={24} md={14}>
-          <Title level={5} style={{ color: '#fff', marginTop: 0 }}>
-            <CodeOutlined style={{ color: '#722ed1', marginRight: 8 }} />
-            方式 1：手动安装
-          </Title>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+            <span className="ab-tag ab-tag-copper">METHOD 01</span>
+            <span style={{ fontFamily: 'var(--ab-font-body)', color: 'var(--ab-text)', fontSize: 14, fontWeight: 500 }}>手动安装</span>
+          </div>
           <CopyableCommand
             label="# 1. 克隆代码"
             command={`git clone ${INSTALL_REPO_URL}`}
@@ -153,33 +152,34 @@ function InstallCard() {
           />
         </Col>
         <Col xs={24} md={10}>
-          <Title level={5} style={{ color: '#fff', marginTop: 0 }}>
-            <ThunderboltOutlined style={{ color: '#fa8c16', marginRight: 8 }} />
-            方式 2：一键脚本
-          </Title>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+            <span className="ab-tag ab-tag-teal">METHOD 02</span>
+            <span style={{ fontFamily: 'var(--ab-font-body)', color: 'var(--ab-text)', fontSize: 14, fontWeight: 500 }}>一键脚本</span>
+          </div>
           <CopyableCommand
             label={isWin ? '# Windows (PowerShell)' : '# macOS / Linux'}
             command={oneClickCmd}
             hint="脚本会检查 Node 环境、克隆仓库、npm install、写入 .env 写入默认后端地址并启动"
           />
           <div style={{
-            background: 'rgba(22, 119, 255, 0.08)',
-            border: '1px solid rgba(22, 119, 255, 0.2)',
-            borderRadius: 6,
-            padding: '10px 12px',
-            color: '#9ec5fe',
-            fontSize: 12,
-            lineHeight: 1.6,
+            background: 'rgba(212, 165, 116, 0.05)',
+            border: '1px solid var(--ab-line-soft)',
+            borderLeft: '2px solid var(--ab-copper)',
+            padding: '12px 14px',
+            color: 'var(--ab-text-2)',
+            fontFamily: 'var(--ab-font-body)',
+            fontSize: 12.5,
+            lineHeight: 1.65,
           }}>
-            <DatabaseOutlined style={{ marginRight: 6 }} />
-            <strong>DB Agent / Code Agent 用户</strong>：脚本默认会将
-            <Text code style={{ color: '#7ee787', margin: '0 4px' }}>VITE_BACKEND_HOST</Text>
-            写入 <Text code style={{ color: '#7ee787' }}>.env</Text>，无需手动配置。
-            如需修改后端地址, 启动后在登录页 &quot;后端地址&quot; 中设置即可。
+            <DatabaseOutlined style={{ marginRight: 8, color: 'var(--ab-copper)' }} />
+            <strong style={{ color: 'var(--ab-text)' }}>DB Agent / Code Agent 用户</strong>：脚本默认会将
+            <span className="ab-code" style={{ margin: '0 4px' }}>VITE_BACKEND_HOST</span>
+            写入 <span className="ab-code">.env</span>，无需手动配置。
+            如需修改后端地址, 启动后在登录页 "后端地址" 中设置即可。
           </div>
         </Col>
       </Row>
-    </Card>
+    </div>
   )
 }
 
@@ -197,33 +197,31 @@ function DesktopClientCard() {
     : `git clone ${INSTALL_REPO_URL} && cd autobot-frontend && npm install && npm run desktop:install && npm run desktop:dist:${isMac ? 'mac' : 'linux'}`
 
   return (
-    <Card
-      style={{
-        background: 'rgba(20, 20, 35, 0.7)',
-        border: '1px solid rgba(82, 196, 26, 0.25)',
-        borderRadius: 12,
-        marginTop: 16,
-      }}
-      styles={{ body: { padding: 24 } }}
-    >
-      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12 }}>
-        <DesktopOutlined style={{ fontSize: 22, color: '#52c41a', marginRight: 10 }} />
-        <Title level={4} style={{ color: '#fff', margin: 0 }}>
-          本地构建桌面客户端（Electron 跨平台壳）
-        </Title>
+    <div className="ab-surface ab-reveal ab-reveal-3" style={{ padding: '28px 32px', marginTop: 18 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6, flexWrap: 'wrap', gap: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 14 }}>
+          <span className="ab-mono-label">02 / Desktop</span>
+        </div>
+        <span className="ab-mono-dim" style={{ fontSize: 10 }}>ELECTRON · CROSS-PLATFORM · NATIVE</span>
       </div>
-      <Paragraph style={{ color: '#aaa', marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 14, marginBottom: 10 }}>
+        <DesktopOutlined style={{ fontSize: 22, color: 'var(--ab-teal-hi)' }} />
+        <h2 className="ab-display" style={{ margin: 0, fontSize: 28, fontWeight: 400 }}>
+          构建桌面客户端 <em>Electron</em>
+        </h2>
+      </div>
+      <p style={{ color: 'var(--ab-text-2)', marginBottom: 22, lineHeight: 1.7, fontSize: 14, maxWidth: 640 }}>
         把 AutoBot WebUI 装成本地桌面 app — 跳过浏览器沙箱, 可直接调用本机 LSP / MCP / 文件系统。
-        一键脚本自动 <code style={{ color: '#7ee787' }}>vite build</code> + <code style={{ color: '#7ee787' }}>electron-builder</code>,
-        输出当前平台原生安装包到 <Text code style={{ color: '#7ee787' }}>desktop/release/</Text>。
-      </Paragraph>
+        一键脚本自动 <span className="ab-code">vite build</span> + <span className="ab-code">electron-builder</span>,
+        输出当前平台原生安装包到 <span className="ab-code">desktop/release/</span>。
+      </p>
 
-      <Row gutter={[24, 16]}>
+      <Row gutter={[32, 20]}>
         <Col xs={24} md={14}>
-          <Title level={5} style={{ color: '#fff', marginTop: 0 }}>
-            <CodeOutlined style={{ color: '#722ed1', marginRight: 8 }} />
-            方式 1：手动分步（推荐 — 可观察每步输出）
-          </Title>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+            <span className="ab-tag ab-tag-copper">METHOD 01</span>
+            <span style={{ fontFamily: 'var(--ab-font-body)', color: 'var(--ab-text)', fontSize: 14, fontWeight: 500 }}>手动分步（推荐）</span>
+          </div>
           <CopyableCommand
             label="# 1. 克隆前端仓库"
             command={`git clone ${INSTALL_REPO_URL}`}
@@ -250,54 +248,56 @@ function DesktopClientCard() {
           />
         </Col>
         <Col xs={24} md={10}>
-          <Title level={5} style={{ color: '#fff', marginTop: 0 }}>
-            <ThunderboltOutlined style={{ color: '#fa8c16', marginRight: 8 }} />
-            方式 2：一行命令（适合 CI）
-          </Title>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+            <span className="ab-tag ab-tag-teal">METHOD 02</span>
+            <span style={{ fontFamily: 'var(--ab-font-body)', color: 'var(--ab-text)', fontSize: 14, fontWeight: 500 }}>一行命令（CI）</span>
+          </div>
           <CopyableCommand
             label={isWin ? '# Windows (PowerShell)' : '# macOS / Linux'}
             command={oneLineCmd}
             hint="git clone → npm install → desktop:install → desktop:dist:本平台"
           />
           <div style={{
-            background: 'rgba(82, 196, 26, 0.08)',
-            border: '1px solid rgba(82, 196, 26, 0.2)',
-            borderRadius: 6,
-            padding: '10px 12px',
-            color: '#b7eb8f',
+            background: 'rgba(90, 154, 150, 0.05)',
+            border: '1px solid rgba(90, 154, 150, 0.18)',
+            borderLeft: '2px solid var(--ab-teal)',
+            padding: '10px 14px',
+            color: 'var(--ab-text-2)',
+            fontFamily: 'var(--ab-font-body)',
             fontSize: 12,
             lineHeight: 1.6,
-            marginBottom: 10,
+            marginBottom: 12,
           }}>
-            <strong>显式三平台命令</strong> (需在目标平台或对应 docker 镜像中执行):
+            <strong style={{ color: 'var(--ab-teal-hi)' }}>显式三平台命令</strong> (需在目标平台或对应 docker 镜像中执行):
           </div>
           <CopyableCommand
             label={<span><WindowsOutlined style={{ color: '#0078d4', marginRight: 4 }} /> Windows</span>}
             command={`npm run desktop:dist:win`}
           />
           <CopyableCommand
-            label={<span><AppleOutlined style={{ color: '#999', marginRight: 4 }} /> macOS</span>}
+            label={<span><AppleOutlined style={{ color: 'var(--ab-text-3)', marginRight: 4 }} /> macOS</span>}
             command={`npm run desktop:dist:mac`}
           />
           <CopyableCommand
-            label={<span><LinuxOutlined style={{ color: '#fff', marginRight: 4 }} /> Linux</span>}
+            label={<span><LinuxOutlined style={{ color: 'var(--ab-text)', marginRight: 4 }} /> Linux</span>}
             command={`npm run desktop:dist:linux`}
           />
           <div style={{
-            background: 'rgba(22, 119, 255, 0.08)',
-            border: '1px solid rgba(22, 119, 255, 0.2)',
-            borderRadius: 6,
-            padding: '10px 12px',
-            color: '#9ec5fe',
+            background: 'rgba(212, 165, 116, 0.05)',
+            border: '1px solid var(--ab-line-soft)',
+            borderLeft: '2px solid var(--ab-copper)',
+            padding: '10px 14px',
+            color: 'var(--ab-text-2)',
+            fontFamily: 'var(--ab-font-body)',
             fontSize: 12,
             lineHeight: 1.6,
           }}>
-            <strong>详细文档</strong>：<Text code style={{ color: '#7ee787' }}>desktop/README.md</Text>
+            <strong style={{ color: 'var(--ab-text)' }}>详细文档</strong>：<span className="ab-code">desktop/README.md</span>
             （含图标生成、跨平台构建脚本、dev 模式、与浏览器模式差异对比）
           </div>
         </Col>
       </Row>
-    </Card>
+    </div>
   )
 }
 
@@ -307,11 +307,11 @@ function DesktopClientCard() {
 function HomeNavBar() {
   const [active, setActive] = useState('hero')
   const items = [
-    { id: 'install',  label: '安装说明' },
-    { id: 'hero',     label: '平台介绍' },
-    { id: 'modules',  label: '功能模块' },
-    { id: 'workflow', label: '工作流程' },
-    { id: 'cta',      label: '立即开始' },
+    { id: 'install',  label: 'Install' },
+    { id: 'hero',     label: 'Platform' },
+    { id: 'modules',  label: 'Modules' },
+    { id: 'workflow', label: 'Workflow' },
+    { id: 'cta',      label: 'Begin' },
   ]
 
   // 跟随滚动 — IntersectionObserver 监听各 section
@@ -357,45 +357,44 @@ function HomeNavBar() {
         position: 'sticky',
         top: 0,
         zIndex: 100,
-        background: 'rgba(13, 13, 13, 0.85)',
-        backdropFilter: 'blur(10px)',
-        WebkitBackdropFilter: 'blur(10px)',
-        borderBottom: '1px solid #2a2a2a',
+        background: 'rgba(10, 10, 10, 0.82)',
+        backdropFilter: 'blur(14px) saturate(140%)',
+        WebkitBackdropFilter: 'blur(14px) saturate(140%)',
+        borderBottom: '1px solid var(--ab-line)',
       }}
     >
       <div
         style={{
-          maxWidth: 1200,
+          maxWidth: 1240,
           margin: '0 auto',
-          padding: '12px 20px',
+          padding: '14px 32px',
           display: 'flex',
           alignItems: 'center',
-          gap: 8,
+          gap: 36,
         }}
       >
-        <ThunderboltOutlined style={{ fontSize: 18, color: '#1677ff', marginRight: 8 }} />
-        <Text strong style={{ color: '#fff', fontSize: 15, marginRight: 'auto' }}>
-          AutoBot
-        </Text>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginRight: 'auto' }}>
+          <span style={{
+            fontFamily: 'var(--ab-font-display)',
+            fontSize: 20,
+            fontWeight: 400,
+            color: 'var(--ab-text)',
+            letterSpacing: '-0.015em',
+          }}>
+            AutoBot
+          </span>
+          <span className="ab-mono-dim" style={{ fontSize: 10, color: 'var(--ab-text-4)' }}>/ ATELIER</span>
+        </div>
         {items.map((it) => {
           const isActive = active === it.id
           return (
-            <Button
+            <button
               key={it.id}
-              type="text"
+              className={`ab-nav-link ${isActive ? 'is-active' : ''}`}
               onClick={() => scrollTo(it.id)}
-              style={{
-                color: isActive ? '#1677ff' : '#bbb',
-                fontWeight: isActive ? 600 : 400,
-                fontSize: 14,
-                borderBottom: isActive ? '2px solid #1677ff' : '2px solid transparent',
-                borderRadius: 0,
-                height: 32,
-                padding: '0 12px',
-              }}
             >
               {it.label}
-            </Button>
+            </button>
           )
         })}
       </div>
@@ -409,9 +408,11 @@ function HomeNavBar() {
 const agentCategories = [
   {
     id: TASK_TYPE.GENERAL_QUERY,
-    title: '通用查询（ReAct 推理）',
+    title: '通用查询',
+    subtitle: 'ReAct Reasoning',
     description: '复杂任务自动分解 + 原子工具调用',
-    icon: <RobotOutlined style={{ fontSize: 32, color: '#1677ff' }} />,
+    accent: 'copper',
+    icon: <RobotOutlined />,
     channels: CHANNELS_BY_TASK_TYPE.GENERAL_QUERY || [],
     agents: [
       { name: 'ReasoningAgent', desc: '多步推理与 ReAct 循环', features: ['逻辑推理', '工具调用', '自纠错'] },
@@ -422,8 +423,10 @@ const agentCategories = [
   {
     id: TASK_TYPE.CODE_TASK,
     title: '代码任务',
+    subtitle: 'Code Synthesis',
     description: '代码分析 / 生成 / 修复（统一入口）',
-    icon: <CodeOutlined style={{ fontSize: 32, color: '#722ed1' }} />,
+    accent: 'iris',
+    icon: <CodeOutlined />,
     channels: CHANNELS_BY_TASK_TYPE.CODE_TASK || [],
     agents: [
       { name: 'CodeAnalysisAgent', desc: '代码结构与依赖分析', features: ['代码扫描', '问题检测', '报告生成'] },
@@ -434,8 +437,10 @@ const agentCategories = [
   {
     id: TASK_TYPE.DOC_TASK,
     title: '文档任务',
+    subtitle: 'Document Pipeline',
     description: '文档问答 / 文档生成 / 摘要（统一入口）',
-    icon: <FileTextOutlined style={{ fontSize: 32, color: '#fa8c16' }} />,
+    accent: 'rose',
+    icon: <FileTextOutlined />,
     channels: CHANNELS_BY_TASK_TYPE.DOC_TASK || [],
     agents: [
       { name: 'RagAgent', desc: '文档检索（QA 模式）', features: ['语义检索', '答案生成'] },
@@ -448,8 +453,10 @@ const agentCategories = [
   {
     id: TASK_TYPE.DB_TASK,
     title: '数据库任务',
+    subtitle: 'Data Intelligence',
     description: '数据库分析 / 报表生成（统一入口）',
-    icon: <DatabaseOutlined style={{ fontSize: 32, color: '#52c41a' }} />,
+    accent: 'moss',
+    icon: <DatabaseOutlined />,
     channels: CHANNELS_BY_TASK_TYPE.DB_TASK || [],
     agents: [
       { name: 'DBInspectAgent', desc: '表结构探查', features: ['schema 导出', '索引分析'] },
@@ -462,8 +469,10 @@ const agentCategories = [
   {
     id: 'ERP',
     title: 'ERP 进销存',
+    subtitle: 'Commerce Operations',
     description: '采购 / 入库 / 出库 / 销售 / 对账',
-    icon: <GlobalOutlined style={{ fontSize: 32, color: '#13c2c2' }} />,
+    accent: 'teal',
+    icon: <GlobalOutlined />,
     channels: CHANNELS_BY_TASK_TYPE.OTHER || [],
     agents: [
       { name: 'ERPOrchestrator', desc: 'ERP 流程编排与执行', features: ['订单处理', '库存管理', '财务对账'] },
@@ -471,6 +480,14 @@ const agentCategories = [
   },
 ]
 
+// accent → color mapping
+const ACCENT_COLOR = {
+  copper: 'var(--ab-copper)',
+  iris: 'var(--ab-iris)',
+  rose: 'var(--ab-rose)',
+  moss: 'var(--ab-moss)',
+  teal: 'var(--ab-teal-hi)',
+}
 
 // 登录表单组件
 function LoginForm({ onLoginSuccess, onBackToHome }) {
@@ -528,32 +545,74 @@ function LoginForm({ onLoginSuccess, onBackToHome }) {
   }
 
   return (
-    <div style={{
+    <div className="ab-grain" style={{
       minHeight: '100vh',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
-      background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
+      background: 'var(--ab-bg)',
       position: 'relative',
+      overflow: 'hidden',
     }}>
+      <div className="ab-grid-bg" />
+      {/* Side metadata column */}
+      <div style={{
+        position: 'absolute',
+        left: 32,
+        top: '50%',
+        transform: 'translateY(-50%)',
+        writingMode: 'vertical-rl',
+        fontFamily: 'var(--ab-font-mono)',
+        fontSize: 10,
+        letterSpacing: '0.32em',
+        color: 'var(--ab-text-4)',
+        textTransform: 'uppercase',
+        zIndex: 2,
+      }}>
+        AUTOBOT · ATELIER COMMAND CENTER · EST. 2026
+      </div>
+      {/* Right corner mono metadata */}
+      <div style={{
+        position: 'absolute',
+        right: 32,
+        top: 32,
+        textAlign: 'right',
+        fontFamily: 'var(--ab-font-mono)',
+        fontSize: 10,
+        letterSpacing: '0.2em',
+        color: 'var(--ab-text-4)',
+        textTransform: 'uppercase',
+        zIndex: 2,
+        lineHeight: 1.8,
+      }}>
+        <div>SESSION / NEW</div>
+        <div style={{ color: 'var(--ab-copper)' }} className="ab-cursor-blink">STATUS / READY</div>
+      </div>
+
       <Button
         type="default"
         icon={<SettingOutlined />}
         onClick={() => setSettingsVisible(true)}
         style={{
           position: 'absolute',
-          top: 20,
-          right: 20,
+          bottom: 32,
+          right: 32,
           display: 'inline-flex',
           alignItems: 'center',
           gap: 6,
-          background: 'rgba(22, 119, 255, 0.12)',
-          border: '1px solid rgba(22, 119, 255, 0.45)',
-          color: '#9ec5fe',
+          background: 'transparent',
+          border: '1px solid var(--ab-line)',
+          color: 'var(--ab-text-2)',
           fontWeight: 500,
+          fontFamily: 'var(--ab-font-mono)',
+          fontSize: 11,
+          letterSpacing: '0.1em',
+          textTransform: 'uppercase',
+          height: 32,
+          zIndex: 2,
         }}
       >
-        设置后端地址
+        Backend
       </Button>
       <Modal
         title="后端地址设置"
@@ -563,14 +622,12 @@ function LoginForm({ onLoginSuccess, onBackToHome }) {
         okText="保存"
         cancelText="取消"
       >
-        <Paragraph style={{ color: '#888', fontSize: 12, marginBottom: 12 }}>
+        <Paragraph style={{ color: 'var(--ab-text-3)', fontSize: 12, marginBottom: 12 }}>
           默认后端地址为{' '}
-          <Text code style={{ color: '#7ee787' }}>
-            {INSTALL_DEFAULT_BACKEND_HOST}
-          </Text>
+          <span className="ab-code">{INSTALL_DEFAULT_BACKEND_HOST}</span>
           。如需修改, 请填写完整 URL (含 http://) 或 host:port, 保存后会自动刷新页面。
         </Paragraph>
-        <div style={{ marginBottom: 8, color: '#bbb', fontSize: 13 }}>
+        <div className="ab-mono-dim" style={{ marginBottom: 8, fontSize: 11 }}>
           后端地址 (host:port 或完整 URL)
         </div>
         <Input
@@ -579,64 +636,88 @@ function LoginForm({ onLoginSuccess, onBackToHome }) {
           placeholder={INSTALL_DEFAULT_BACKEND_HOST}
         />
       </Modal>
-      <Card style={{
-        width: 400,
-        padding: 40,
-        background: 'rgba(30, 30, 50, 0.9)',
-        border: '1px solid rgba(22, 119, 255, 0.3)',
-        borderRadius: 16
-      }}>
-        <div style={{ textAlign: 'center', marginBottom: 32 }}>
-          <RobotOutlined style={{ fontSize: 48, color: '#1677ff', marginBottom: 16 }} />
-          <Title level={2} style={{ color: '#fff', marginBottom: 8 }}>
-            AutoBot 登录
-          </Title>
-          <Text style={{ color: '#888' }}>请输入您的账号密码</Text>
+
+      <div style={{
+        width: 440,
+        padding: '48px 44px',
+        background: 'var(--ab-surface)',
+        border: '1px solid var(--ab-line)',
+        borderRadius: 4,
+        boxShadow: 'var(--ab-shadow-2)',
+        position: 'relative',
+        zIndex: 2,
+      }} className="ab-reveal">
+        {/* Corner ticks */}
+        <span style={{ position: 'absolute', top: 0, left: 0, width: 14, height: 14, borderTop: '1px solid var(--ab-copper)', borderLeft: '1px solid var(--ab-copper)' }} />
+        <span style={{ position: 'absolute', top: 0, right: 0, width: 14, height: 14, borderTop: '1px solid var(--ab-copper)', borderRight: '1px solid var(--ab-copper)' }} />
+        <span style={{ position: 'absolute', bottom: 0, left: 0, width: 14, height: 14, borderBottom: '1px solid var(--ab-copper)', borderLeft: '1px solid var(--ab-copper)' }} />
+        <span style={{ position: 'absolute', bottom: 0, right: 0, width: 14, height: 14, borderBottom: '1px solid var(--ab-copper)', borderRight: '1px solid var(--ab-copper)' }} />
+
+        <div style={{ marginBottom: 36 }}>
+          <div className="ab-mono-label" style={{ marginBottom: 18 }}>AUTHENTICATE</div>
+          <h1 className="ab-display" style={{ fontSize: 40, fontWeight: 300, marginBottom: 8 }}>
+            Sign in to <em>AutoBot</em>
+          </h1>
+          <div style={{ color: 'var(--ab-text-3)', fontSize: 13, fontFamily: 'var(--ab-font-body)' }}>
+            请输入您的账号密码以进入控制中心
+          </div>
         </div>
 
-        <form onSubmit={(e) => { 
+        <form onSubmit={(e) => {
           e.preventDefault && e.preventDefault();
           handleLogin(e);
         }} style={{ display: 'flex', flexDirection: 'column' }}>
-          <div style={{ marginBottom: 24 }}>
-            <label style={{ color: '#fff', fontWeight: 500, display: 'block', marginBottom: 8, fontSize: '14px' }}>
-              用户名
+          <div style={{ marginBottom: 22 }}>
+            <label className="ab-mono-dim" style={{ display: 'block', marginBottom: 8, fontSize: 10 }}>
+              USERNAME
             </label>
             <input
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               placeholder="请输入用户名"
-              style={{ 
-                padding: '12px 16px',
-                fontSize: '16px',
-                borderRadius: 8,
-                border: '1px solid rgba(22, 119, 255, 0.3)',
-                backgroundColor: 'rgba(255, 255, 255, 0.1)',
-                color: '#fff',
-                outline: 'none'
+              style={{
+                width: '100%',
+                padding: '13px 16px',
+                fontSize: 14,
+                fontFamily: 'var(--ab-font-body)',
+                borderRadius: 3,
+                border: '1px solid var(--ab-line)',
+                background: 'var(--ab-bg)',
+                color: 'var(--ab-text)',
+                outline: 'none',
+                transition: 'border-color 0.2s, box-shadow 0.2s',
+                boxSizing: 'border-box',
               }}
+              onFocus={e => { e.target.style.borderColor = 'var(--ab-copper)'; e.target.style.boxShadow = '0 0 0 3px var(--ab-copper-glow)' }}
+              onBlur={e => { e.target.style.borderColor = 'var(--ab-line)'; e.target.style.boxShadow = 'none' }}
             />
           </div>
 
           <div style={{ marginBottom: 32 }}>
-            <label style={{ color: '#fff', fontWeight: 500, display: 'block', marginBottom: 8, fontSize: '14px' }}>
-              密码
+            <label className="ab-mono-dim" style={{ display: 'block', marginBottom: 8, fontSize: 10 }}>
+              PASSWORD
             </label>
             <input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="请输入密码"
-              style={{ 
-                padding: '12px 16px',
-                fontSize: '16px',
-                borderRadius: 8,
-                border: '1px solid rgba(22, 119, 255, 0.3)',
-                backgroundColor: 'rgba(255, 255, 255, 0.1)',
-                color: '#fff',
-                outline: 'none'
+              style={{
+                width: '100%',
+                padding: '13px 16px',
+                fontSize: 14,
+                fontFamily: 'var(--ab-font-body)',
+                borderRadius: 3,
+                border: '1px solid var(--ab-line)',
+                background: 'var(--ab-bg)',
+                color: 'var(--ab-text)',
+                outline: 'none',
+                transition: 'border-color 0.2s, box-shadow 0.2s',
+                boxSizing: 'border-box',
               }}
+              onFocus={e => { e.target.style.borderColor = 'var(--ab-copper)'; e.target.style.boxShadow = '0 0 0 3px var(--ab-copper-glow)' }}
+              onBlur={e => { e.target.style.borderColor = 'var(--ab-line)'; e.target.style.boxShadow = 'none' }}
             />
           </div>
 
@@ -644,28 +725,42 @@ function LoginForm({ onLoginSuccess, onBackToHome }) {
             type="primary"
             htmlType="submit"
             loading={loading}
+            className="ab-btn-copper"
             size="large"
             style={{
               width: '100%',
-              fontSize: '16px',
-              borderRadius: 8,
-              background: '#1677ff',
-              border: 'none'
+              fontSize: 13,
+              height: 46,
+              borderRadius: 3,
+              letterSpacing: '0.06em',
             }}
           >
-            登录
+            AUTHENTICATE & ENTER
           </Button>
 
-          <div style={{ textAlign: 'center', marginTop: 16 }}>
-            <Text 
+          <div style={{ textAlign: 'center', marginTop: 22 }}>
+            <button
+              type="button"
               onClick={onBackToHome || (() => onLoginSuccess && onLoginSuccess({ showHome: true }))}
-              style={{ color: '#1677ff', cursor: 'pointer' }}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                fontFamily: 'var(--ab-font-mono)',
+                fontSize: 11,
+                letterSpacing: '0.14em',
+                textTransform: 'uppercase',
+                color: 'var(--ab-text-3)',
+                transition: 'color 0.2s',
+              }}
+              onMouseEnter={e => e.currentTarget.style.color = 'var(--ab-copper)'}
+              onMouseLeave={e => e.currentTarget.style.color = 'var(--ab-text-3)'}
             >
-              ← 返回主页
-            </Text>
+              ← BACK TO HOME
+            </button>
           </div>
         </form>
-      </Card>
+      </div>
     </div>
   )
 }
@@ -692,307 +787,466 @@ function HomeContent({ onLoginClick }) {
   }, [])
 
   return (
-    <div id="top" style={{
+    <div id="top" className="ab-grain" style={{
       minHeight: '100vh',
-      background: 'linear-gradient(135deg, #0d0d0d 0%, #1a1a2e 50%, #16213e 100%)',
-      position: 'relative'
+      background: 'var(--ab-bg)',
+      position: 'relative',
+      overflow: 'hidden',
     }}>
       <HomeNavBar />
 
-      {/* Install Card (unauthenticated only) — tells DB-agent and
-          Code-agent users how to bring the frontend up locally. The
-          default backend URL is the same one auth.js uses as the
-          unconfigured default (DEFAULT_BACKEND_HOST). */}
-      <div id="install" style={{ maxWidth: 1100, margin: '40px auto 0', padding: '0 20px', scrollMarginTop: 64 }}>
+      {/* Install Section */}
+      <div id="install" style={{ maxWidth: 1240, margin: '48px auto 0', padding: '0 32px', scrollMarginTop: 64, position: 'relative', zIndex: 2 }}>
         <InstallCard />
         <DesktopClientCard />
       </div>
 
       {/* Hero Section */}
       <div id="hero" style={{
-        padding: '80px 20px 60px',
-        textAlign: 'center',
-        background: 'radial-gradient(ellipse at center, rgba(22, 119, 255, 0.1) 0%, transparent 70%)',
+        padding: '120px 32px 80px',
+        position: 'relative',
         scrollMarginTop: 64,
+        overflow: 'hidden',
       }}>
-        <div style={{ maxWidth: 900, margin: '0 auto' }}>
-          <ThunderboltOutlined style={{ fontSize: 64, color: '#1677ff', marginBottom: 24 }} />
-          <Title level={1} style={{
-            color: '#fff',
-            fontSize: '48px',
-            marginBottom: 16
+        <div className="ab-grid-bg" />
+        <div className="ab-vignette" />
+
+        {/* Vertical mono strip — left */}
+        <div style={{
+          position: 'absolute',
+          left: 32,
+          top: 120,
+          writingMode: 'vertical-rl',
+          fontFamily: 'var(--ab-font-mono)',
+          fontSize: 10,
+          letterSpacing: '0.32em',
+          color: 'var(--ab-text-4)',
+          textTransform: 'uppercase',
+          zIndex: 3,
+        }}>
+          MULTI-AGENT · LLM-NATIVE · v2026
+        </div>
+
+        <div style={{ maxWidth: 980, margin: '0 auto', position: 'relative', zIndex: 3 }}>
+          <div className="ab-mono-label ab-reveal ab-reveal-1" style={{ marginBottom: 32 }}>
+            INTELLIGENCE PLATFORM / EST. 2026
+          </div>
+
+          <h1 className="ab-display ab-reveal ab-reveal-2" style={{
+            fontSize: 'clamp(48px, 7vw, 88px)',
+            margin: '0 0 28px',
+            fontWeight: 300,
+            letterSpacing: '-0.03em',
           }}>
-            AutoBot - 智能多 Agent 协作平台
-          </Title>
-          <Paragraph style={{
-            color: '#888',
-            fontSize: '18px',
-            lineHeight: 1.8,
-            marginBottom: 40
+            Multi-agent<br />
+            intelligence,<br />
+            <em>orchestrated</em>.
+          </h1>
+
+          <p className="ab-reveal ab-reveal-3" style={{
+            color: 'var(--ab-text-2)',
+            fontSize: 17,
+            lineHeight: 1.7,
+            maxWidth: 580,
+            margin: '0 0 44px',
+            fontFamily: 'var(--ab-font-body)',
           }}>
-            基于大语言模型的多 Agent 系统，实现代码开发、数据分析、文档处理等任务的自动化执行
-          </Paragraph>
-          <Button
-            type="primary"
-            size="large"
-            icon={<LoginOutlined />}
-            onClick={onLoginClick}
-            style={{
-              fontSize: '18px',
-              padding: '16px 64px',
-              borderRadius: 8,
-              background: '#1677ff',
-              border: 'none'
-            }}
-          >
-            立即登录
-          </Button>
+            基于大语言模型的多 Agent 协作平台 — 代码工程、数据分析、文档编排与
+            ERP 进销存任务在同一控制中心内自动化执行。
+          </p>
+
+          <div className="ab-reveal ab-reveal-4" style={{ display: 'flex', alignItems: 'center', gap: 24, flexWrap: 'wrap' }}>
+            <Button
+              type="primary"
+              size="large"
+              icon={<LoginOutlined />}
+              onClick={onLoginClick}
+              className="ab-btn-copper"
+              style={{
+                fontSize: 13,
+                height: 48,
+                padding: '0 36px',
+                borderRadius: 3,
+                letterSpacing: '0.08em',
+              }}
+            >
+              AUTHENTICATE & ENTER
+            </Button>
+            <button
+              onClick={() => {
+                const el = document.getElementById('modules')
+                if (el) el.scrollIntoView({ behavior: 'smooth' })
+              }}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                fontFamily: 'var(--ab-font-mono)',
+                fontSize: 11,
+                letterSpacing: '0.16em',
+                textTransform: 'uppercase',
+                color: 'var(--ab-text-3)',
+                padding: '6px 0',
+                position: 'relative',
+                transition: 'color 0.2s',
+              }}
+              onMouseEnter={e => e.currentTarget.style.color = 'var(--ab-copper)'}
+              onMouseLeave={e => e.currentTarget.style.color = 'var(--ab-text-3)'}
+            >
+              EXPLORE MODULES ↓
+            </button>
+          </div>
+
+          {/* Hero metadata strip */}
+          <div className="ab-reveal ab-reveal-5" style={{
+            display: 'flex',
+            gap: 48,
+            marginTop: 80,
+            paddingTop: 28,
+            borderTop: '1px solid var(--ab-line)',
+            flexWrap: 'wrap',
+          }}>
+            {[
+              { k: 'AGENTS', v: '15+' },
+              { k: 'CHANNELS', v: '05' },
+              { k: 'TASK TYPES', v: '04 + ERP' },
+              { k: 'LANGUAGES', v: 'JAVA / TS / GO' },
+            ].map(s => (
+              <div key={s.k}>
+                <div className="ab-mono-dim" style={{ fontSize: 10, marginBottom: 6 }}>{s.k}</div>
+                <div style={{
+                  fontFamily: 'var(--ab-font-display)',
+                  fontSize: 28,
+                  fontWeight: 300,
+                  color: 'var(--ab-text)',
+                  letterSpacing: '-0.01em',
+                }}>{s.v}</div>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 
+      <div className="ab-hairline" style={{ maxWidth: 1240, margin: '0 auto' }} />
+
       {/* Agent Categories */}
-      <div id="modules" style={{ maxWidth: 1200, margin: '0 auto', padding: '60px 20px', scrollMarginTop: 64 }}>
-        <Title level={2} style={{
-          color: '#fff',
-          textAlign: 'center',
-          marginBottom: 48,
-          fontSize: '32px'
-        }}>
-          核心功能模块
-        </Title>
+      <div id="modules" style={{ maxWidth: 1240, margin: '0 auto', padding: '88px 32px', scrollMarginTop: 64, position: 'relative', zIndex: 2 }}>
+        <div style={{ marginBottom: 56, maxWidth: 720 }}>
+          <div className="ab-mono-label" style={{ marginBottom: 18 }}>03 / Modules</div>
+          <h2 className="ab-display" style={{ fontSize: 'clamp(36px, 5vw, 56px)', fontWeight: 300, margin: '0 0 16px' }}>
+            Core <em>capability</em> matrix
+          </h2>
+          <p style={{ color: 'var(--ab-text-3)', fontSize: 15, lineHeight: 1.7, fontFamily: 'var(--ab-font-body)' }}>
+            五个任务域, 每个域由专职 Agent 编排执行 — 从推理、检索到代码生成与 SQL 执行,
+            端到端无需人工切换工具。
+          </p>
+        </div>
 
         {loading ? (
-          <div style={{ textAlign: 'center', padding: '60px' }}>
+          <div style={{ textAlign: 'center', padding: '80px 0' }}>
             <Spin size="large" />
           </div>
         ) : (
-          <Row gutter={[32, 32]}>
-            {agentCategories.map((category) => (
-              <Col xs={24} md={12} lg={8} key={category.id}>
-                <Card style={{
-                  background: 'rgba(30, 30, 50, 0.5)',
-                  border: '1px solid #2a2a2a',
-                  borderRadius: 12,
-                  height: '100%'
-                }}>
-                  <div style={{ marginBottom: 24 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12 }}>
-                      {category.icon}
-                      <Title level={4} style={{
-                        color: '#fff',
-                        fontSize: '18px',
-                        marginLeft: 12,
-                        marginBottom: 0
+          <Row gutter={[28, 28]}>
+            {agentCategories.map((category, idx) => {
+              const accent = ACCENT_COLOR[category.accent] || 'var(--ab-copper)'
+              return (
+                <Col xs={24} md={12} lg={8} key={category.id}>
+                  <div
+                    className="ab-surface ab-reveal"
+                    style={{
+                      padding: '28px 28px 24px',
+                      height: '100%',
+                      transition: 'border-color 0.3s, transform 0.3s',
+                      animationDelay: `${0.08 * idx + 0.1}s`,
+                    }}
+                    onMouseEnter={e => {
+                      e.currentTarget.style.borderColor = 'var(--ab-line-bold)'
+                      e.currentTarget.style.transform = 'translateY(-2px)'
+                    }}
+                    onMouseLeave={e => {
+                      e.currentTarget.style.borderColor = 'var(--ab-line)'
+                      e.currentTarget.style.transform = 'translateY(0)'
+                    }}
+                  >
+                    {/* Header row */}
+                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20 }}>
+                      <div style={{
+                        width: 44, height: 44,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        border: `1px solid ${accent}`,
+                        color: accent,
+                        fontSize: 22,
+                        background: 'var(--ab-bg)',
+                        borderRadius: 3,
                       }}>
-                        {category.title}
-                      </Title>
+                        {category.icon}
+                      </div>
+                      <span className="ab-mono-dim" style={{ fontSize: 10 }}>
+                        {String(idx + 1).padStart(2, '0')} / 05
+                      </span>
                     </div>
-                    <Text style={{ color: '#888', fontSize: '14px' }}>
+
+                    <h3 className="ab-display" style={{ fontSize: 26, fontWeight: 400, margin: '0 0 4px', color: 'var(--ab-text)' }}>
+                      {category.title}
+                    </h3>
+                    <div className="ab-mono-dim" style={{ fontSize: 10, marginBottom: 10, color: accent }}>
+                      {category.subtitle}
+                    </div>
+                    <p style={{ color: 'var(--ab-text-2)', fontSize: 13, lineHeight: 1.65, marginBottom: 16, fontFamily: 'var(--ab-font-body)' }}>
                       {category.description}
-                    </Text>
+                    </p>
+
                     {category.channels && category.channels.length > 0 && (
-                      <div style={{ marginTop: 8 }}>
-                        <Text style={{ color: '#666', fontSize: '11px', marginRight: 6 }}>入口：</Text>
+                      <div style={{ marginBottom: 18, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                         {category.channels.map((ch) => (
-                          <Tag
-                            key={ch.key}
-                            style={{
-                              fontSize: '11px',
-                              padding: '2px 8px',
-                              borderRadius: 4,
-                              background: 'rgba(82, 196, 26, 0.1)',
-                              color: '#52c41a',
-                              border: '1px solid rgba(82, 196, 26, 0.3)'
-                            }}
-                          >
+                          <span key={ch.key} className="ab-tag ab-tag-teal" style={{ fontSize: 9 }}>
                             {ch.icon} {ch.label}
-                          </Tag>
+                          </span>
                         ))}
                       </div>
                     )}
-                  </div>
 
-                  <List
-                    size="small"
-                    dataSource={category.agents}
-                    renderItem={(agent) => (
-                      <List.Item>
-                        <List.Item.Meta
-                          title={
-                            <Space>
-                              <Avatar
-                                icon={<RobotOutlined />}
-                                style={{ background: '#1677ff', color: '#fff' }}
-                                size="small"
-                              />
-                              <Text style={{ color: '#e3e3e3', fontWeight: 500 }}>
-                                {agent.name}
-                              </Text>
-                            </Space>
-                          }
-                          description={
-                            <div>
-                              <Text style={{ color: '#888', fontSize: '12px', display: 'block', marginBottom: 8 }}>
-                                {agent.desc}
-                              </Text>
-                              <Space wrap>
-                                {agent.features.map((feature, idx) => (
-                                  <Tag
-                                    key={idx}
-                                    style={{
-                                      fontSize: '10px',
-                                      padding: '2px 8px',
-                                      borderRadius: 4,
-                                      background: 'rgba(22, 119, 255, 0.1)',
-                                      color: '#1677ff',
-                                      border: '1px solid rgba(22, 119, 255, 0.3)'
-                                    }}
-                                  >
-                                    {feature}
-                                  </Tag>
-                                ))}
-                              </Space>
-                            </div>
-                          }
-                        />
-                      </List.Item>
-                    )}
-                  />
-                </Card>
-              </Col>
-            ))}
+                    <div style={{ borderTop: '1px solid var(--ab-line)', paddingTop: 16, marginTop: 'auto' }}>
+                      {category.agents.map((agent, aIdx) => (
+                        <div key={agent.name} style={{
+                          padding: '10px 0',
+                          borderBottom: aIdx < category.agents.length - 1 ? '1px dashed var(--ab-line)' : 'none',
+                        }}>
+                          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10, marginBottom: 4 }}>
+                            <span style={{
+                              fontFamily: 'var(--ab-font-mono)',
+                              fontSize: 12.5,
+                              color: 'var(--ab-text)',
+                              fontWeight: 500,
+                            }}>
+                              {agent.name}
+                            </span>
+                          </div>
+                          <div style={{ color: 'var(--ab-text-3)', fontSize: 11.5, fontFamily: 'var(--ab-font-body)', marginBottom: 8 }}>
+                            {agent.desc}
+                          </div>
+                          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                            {agent.features.map((feature, fIdx) => (
+                              <span key={fIdx} className="ab-tag" style={{ fontSize: 9 }}>
+                                {feature}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </Col>
+              )
+            })}
           </Row>
         )}
       </div>
 
+      <div className="ab-hairline" style={{ maxWidth: 1240, margin: '0 auto' }} />
+
       {/* How It Works */}
-      <Divider style={{ borderColor: '#2a2a2a', margin: '60px 0' }} />
+      <div id="workflow" style={{ maxWidth: 1240, margin: '0 auto', padding: '88px 32px', scrollMarginTop: 64, position: 'relative', zIndex: 2 }}>
+        <div style={{ marginBottom: 56, maxWidth: 720 }}>
+          <div className="ab-mono-label" style={{ marginBottom: 18 }}>04 / Workflow</div>
+          <h2 className="ab-display" style={{ fontSize: 'clamp(36px, 5vw, 56px)', fontWeight: 300, margin: '0 0 16px' }}>
+            From intent to <em>artifact</em>
+          </h2>
+          <p style={{ color: 'var(--ab-text-3)', fontSize: 15, lineHeight: 1.7, fontFamily: 'var(--ab-font-body)' }}>
+            四阶段编排: 自然语言输入 → 智能规划 → 多 Agent 协同执行 → 结果汇总呈现。
+          </p>
+        </div>
 
-      <div id="workflow" style={{ maxWidth: 1200, margin: '0 auto', padding: '40px 20px', scrollMarginTop: 64 }}>
-        <Title level={2} style={{
-          color: '#fff',
-          textAlign: 'center',
-          marginBottom: 48,
-          fontSize: '32px'
-        }}>
-          工作流程
-        </Title>
+        <div style={{ position: 'relative' }}>
+          {/* connecting line */}
+          <div style={{
+            position: 'absolute',
+            top: 32,
+            left: '8%',
+            right: '8%',
+            height: 1,
+            background: 'linear-gradient(90deg, transparent, var(--ab-line-bold), var(--ab-line-bold), transparent)',
+            display: 'none',
+          }} />
 
-        <Row gutter={[40, 40]} style={{ marginTop: 40 }}>
-          {[
-            {
-              step: '1',
-              title: '用户输入需求',
-              desc: '通过聊天界面描述任务目标，可上传文档、图片等辅助材料',
-              icon: <LayoutOutlined style={{ fontSize: 24, color: '#1677ff' }} />
-            },
-            {
-              step: '2',
-              title: '智能规划分解',
-              desc: 'PlannerAgent 分析需求，分解为多个可执行步骤并分配给相应 Agent',
-              icon: <SettingOutlined style={{ fontSize: 24, color: '#52c41a' }} />
-            },
-            {
-              step: '3',
-              title: '多 Agent 协同执行',
-              desc: '各专业 Agent 并行或串行执行任务，实时交换上下文信息',
-              icon: <RobotOutlined style={{ fontSize: 24, color: '#faad14' }} />
-            },
-            {
-              step: '4',
-              title: '结果汇总呈现',
-              desc: 'SummaryAgent 整合执行结果，生成报告或可视化图表展示给用户',
-              icon: <LineChartOutlined style={{ fontSize: 24, color: '#eb2f96' }} />
-            }
-          ].map((item, idx) => (
-            <Col xs={24} md={6} key={idx}>
-              <div style={{
-                textAlign: 'center',
-                padding: '24px',
-                background: 'rgba(26, 26, 46, 0.5)',
-                borderRadius: 12,
-                border: '1px solid #2a2a2a'
-              }}>
-                <div style={{
-                  width: 56,
-                  height: 56,
-                  borderRadius: '50%',
-                  background: 'linear-gradient(135deg, #1677ff, #0d5ebf)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  margin: '0 auto 16px',
-                  boxShadow: '0 4px 12px rgba(22, 119, 255, 0.3)'
-                }}>
-                  {item.icon}
+          <Row gutter={[24, 32]} style={{ marginTop: 16 }}>
+            {[
+              {
+                step: '01',
+                title: 'Intent Capture',
+                subtitle: '用户输入需求',
+                desc: '通过聊天界面描述任务目标, 可上传文档、图片等辅助材料',
+                icon: <LayoutOutlined />,
+              },
+              {
+                step: '02',
+                title: 'Planning',
+                subtitle: '智能规划分解',
+                desc: 'PlannerAgent 分析需求, 分解为多个可执行步骤并分配给相应 Agent',
+                icon: <SettingOutlined />,
+              },
+              {
+                step: '03',
+                title: 'Execution',
+                subtitle: '多 Agent 协同',
+                desc: '各专业 Agent 并行或串行执行任务, 实时交换上下文信息',
+                icon: <RobotOutlined />,
+              },
+              {
+                step: '04',
+                title: 'Synthesis',
+                subtitle: '结果汇总呈现',
+                desc: 'SummaryAgent 整合执行结果, 生成报告或可视化图表展示给用户',
+                icon: <LineChartOutlined />,
+              }
+            ].map((item, idx) => (
+              <Col xs={24} md={12} lg={6} key={idx}>
+                <div
+                  className="ab-reveal"
+                  style={{
+                    animationDelay: `${0.1 * idx + 0.1}s`,
+                    padding: '32px 24px 28px',
+                    background: 'var(--ab-surface)',
+                    border: '1px solid var(--ab-line)',
+                    borderRadius: 4,
+                    height: '100%',
+                    position: 'relative',
+                    transition: 'border-color 0.3s',
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.borderColor = 'var(--ab-line-bold)'}
+                  onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--ab-line)'}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+                    <span style={{
+                      fontFamily: 'var(--ab-font-display)',
+                      fontSize: 44,
+                      fontWeight: 300,
+                      color: 'var(--ab-copper)',
+                      lineHeight: 1,
+                      letterSpacing: '-0.03em',
+                    }}>
+                      {item.step}
+                    </span>
+                    <span style={{
+                      width: 36, height: 36,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      color: 'var(--ab-text-2)',
+                      fontSize: 18,
+                      border: '1px solid var(--ab-line)',
+                      borderRadius: '50%',
+                    }}>
+                      {item.icon}
+                    </span>
+                  </div>
+                  <h4 className="ab-display" style={{ fontSize: 22, fontWeight: 400, margin: '0 0 4px', color: 'var(--ab-text)' }}>
+                    {item.title}
+                  </h4>
+                  <div className="ab-mono-dim" style={{ fontSize: 10, marginBottom: 12 }}>
+                    {item.subtitle}
+                  </div>
+                  <p style={{ color: 'var(--ab-text-3)', fontSize: 12.5, lineHeight: 1.7, fontFamily: 'var(--ab-font-body)' }}>
+                    {item.desc}
+                  </p>
                 </div>
-                <Title level={5} style={{
-                  color: '#fff',
-                  fontSize: '16px',
-                  marginBottom: 12
-                }}>
-                  {item.title}
-                </Title>
-                <Text style={{ color: '#888', fontSize: '13px', lineHeight: 1.8 }}>
-                  {item.desc}
-                </Text>
-              </div>
-            </Col>
-          ))}
-        </Row>
+              </Col>
+            ))}
+          </Row>
+        </div>
       </div>
 
       {/* CTA Section */}
       <div id="cta" style={{
-        maxWidth: 900,
-        margin: '80px auto 60px',
-        padding: '60px 40px',
-        background: 'linear-gradient(135deg, rgba(22, 119, 255, 0.1), rgba(26, 115, 232, 0.1))',
-        borderRadius: 16,
-        border: '1px solid rgba(22, 119, 255, 0.3)',
-        textAlign: 'center',
+        maxWidth: 1240,
+        margin: '60px auto 80px',
+        padding: '0 32px',
         scrollMarginTop: 64,
+        position: 'relative',
+        zIndex: 2,
       }}>
-        <Title level={3} style={{
-          color: '#fff',
-          fontSize: '28px',
-          marginBottom: 16
+        <div className="ab-surface ab-reveal" style={{
+          padding: '88px 56px',
+          textAlign: 'center',
+          position: 'relative',
+          overflow: 'hidden',
+          background: 'var(--ab-surface)',
         }}>
-          准备好开始使用 AutoBot 了吗？
-        </Title>
-        <Paragraph style={{
-          color: '#888',
-          fontSize: '16px',
-          marginBottom: 32
-        }}>
-          登录系统，体验智能代理带来的高效工作流
-        </Paragraph>
-        <Button
-          type="primary"
-          size="large"
-          icon={<LoginOutlined />}
-          onClick={onLoginClick}
-          style={{
-            fontSize: '16px',
-            padding: '12px 48px',
-            borderRadius: 8,
-            background: '#1677ff',
-            border: 'none'
-          }}
-        >
-          立即登录
-        </Button>
+          <div className="ab-grid-bg" style={{ opacity: 0.4 }} />
+          <div style={{ position: 'relative', zIndex: 2 }}>
+            <div className="ab-mono-label" style={{ justifyContent: 'center', marginBottom: 24 }}>
+              05 / Begin
+            </div>
+            <h2 className="ab-display" style={{
+              fontSize: 'clamp(40px, 6vw, 64px)',
+              fontWeight: 300,
+              margin: '0 0 20px',
+              letterSpacing: '-0.025em',
+            }}>
+              Ready to <em>orchestrate</em>?
+            </h2>
+            <p style={{
+              color: 'var(--ab-text-2)',
+              fontSize: 16,
+              lineHeight: 1.7,
+              maxWidth: 520,
+              margin: '0 auto 40px',
+              fontFamily: 'var(--ab-font-body)',
+            }}>
+              登录系统, 体验智能代理带来的高效工作流。
+            </p>
+            <Button
+              type="primary"
+              size="large"
+              icon={<LoginOutlined />}
+              onClick={onLoginClick}
+              className="ab-btn-copper"
+              style={{
+                fontSize: 13,
+                height: 48,
+                padding: '0 40px',
+                borderRadius: 3,
+                letterSpacing: '0.08em',
+              }}
+            >
+              AUTHENTICATE & ENTER
+            </Button>
+          </div>
+        </div>
       </div>
 
       {/* Footer */}
       <div style={{
-        textAlign: 'center',
-        padding: '40px 20px',
-        borderTop: '1px solid #1f1f1f'
+        borderTop: '1px solid var(--ab-line)',
+        padding: '32px',
       }}>
-        <Text style={{ color: '#555', fontSize: '12px' }}>
-          AutoBot © 2026 | Powered by LLM & Multi-Agent Architecture
-        </Text>
+        <div style={{
+          maxWidth: 1240,
+          margin: '0 auto',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: 12,
+        }}>
+          <span style={{
+            fontFamily: 'var(--ab-font-mono)',
+            fontSize: 10,
+            letterSpacing: '0.2em',
+            color: 'var(--ab-text-4)',
+            textTransform: 'uppercase',
+          }}>
+            AUTOBOT © 2026 · LLM × MULTI-AGENT
+          </span>
+          <span style={{
+            fontFamily: 'var(--ab-font-mono)',
+            fontSize: 10,
+            letterSpacing: '0.2em',
+            color: 'var(--ab-text-4)',
+            textTransform: 'uppercase',
+          }}>
+            ATELIER / COMMAND CENTER
+          </span>
+        </div>
       </div>
     </div>
   )

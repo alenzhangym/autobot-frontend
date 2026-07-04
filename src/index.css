@@ -1,64 +1,124 @@
-/* Global dark canvas — 消除浏览器默认 8px body margin 顶部露白,
-   防止主页 min-height: 100vh 之外滚动区显示白色.
-   主页 HomeContent 已自带 linear-gradient, 这里是兜底, 不影响深色主题其他页面. */
+/* ============================================================
+   AutoBot — Atelier Command Center Design System
+   Industrial Editorial Brutalism: serif gravitas × mono technicality
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600;9..144,700;9..144,900&family=Hanken+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600;700&display=swap');
+
+/* ── Design Tokens ─────────────────────────────────────────── */
+:root {
+  /* Base — deep obsidian with warm undertone */
+  --ab-bg:           #0a0a0a;
+  --ab-bg-1:         #0e0e0e;
+  --ab-bg-2:         #121212;
+  --ab-bg-3:         #161616;
+  --ab-surface:      #181613;
+  --ab-surface-2:    #1f1c18;
+  --ab-line:        #2a2620;
+  --ab-line-soft:   rgba(212, 165, 116, 0.14);
+  --ab-line-bold:   rgba(212, 165, 116, 0.32);
+
+  /* Text — warm off-white */
+  --ab-text:        #e8e3d8;
+  --ab-text-2:      #b8b1a3;
+  --ab-text-3:      #807a6e;
+  --ab-text-4:      #524d44;
+
+  /* Accent — copper / amber (CRT phosphor / brass) */
+  --ab-copper:      #d4a574;
+  --ab-copper-2:    #c89770;
+  --ab-copper-hi:   #e8b886;
+  --ab-copper-glow: rgba(212, 165, 116, 0.18);
+
+  /* Secondary — muted teal (live/data) */
+  --ab-teal:        #5a9a96;
+  --ab-teal-hi:     #7ab5b0;
+
+  /* Tertiary signal colors — desaturated for harmony */
+  --ab-rose:        #c97a6b;
+  --ab-moss:        #8a9a6e;
+  --ab-iris:        #8a7aa8;
+
+  /* Fonts */
+  --ab-font-display: 'Fraunces', 'Times New Roman', Georgia, serif;
+  --ab-font-body:    'Hanken Grotesk', system-ui, sans-serif;
+  --ab-font-mono:    'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  /* Shadows — warm, low-spread */
+  --ab-shadow-1: 0 1px 0 rgba(255, 235, 200, 0.02) inset;
+  --ab-shadow-2: 0 8px 32px rgba(0, 0, 0, 0.55), 0 1px 0 rgba(212, 165, 116, 0.04) inset;
+  --ab-shadow-glow: 0 0 24px rgba(212, 165, 116, 0.12);
+}
+
+/* ── Global Canvas ──────────────────────────────────────────── */
 html, body {
     margin: 0;
     padding: 0;
-    background: #0d0d0d;
+    background: var(--ab-bg);
     color-scheme: dark;
+    font-family: var(--ab-font-body);
+    color: var(--ab-text);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
 }
 
 #root {
     min-height: 100vh;
-    background: #0d0d0d;
+    background: var(--ab-bg);
 }
 
-/* Custom Scrollbar */
+/* ── Typography Defaults ────────────────────────────────────── */
+h1, h2, h3, h4, h5, h6 {
+    font-family: var(--ab-font-display);
+    font-weight: 400;
+    letter-spacing: -0.01em;
+}
+
+/* ── Custom Scrollbar ────────────────────────────────────────── */
 .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
 .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-.custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
-.custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.15); }
+.custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(212, 165, 116, 0.12); border-radius: 3px; }
+.custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(212, 165, 116, 0.28); }
 
-/* Markdown prose */
+/* ── Markdown prose ──────────────────────────────────────────── */
 .prose p { margin-bottom: 0.75em; }
 .prose p:last-child { margin-bottom: 0; }
-.prose pre { margin: 0.5em 0; border-radius: 8px; overflow: hidden; }
-.prose code { font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 0.88em; }
+.prose pre { margin: 0.5em 0; border-radius: 6px; overflow: hidden; }
+.prose code { font-family: var(--ab-font-mono); font-size: 0.86em; }
 .prose ul, .prose ol { padding-left: 1.5em; margin-bottom: 0.75em; }
 .prose li { margin-bottom: 0.25em; }
-.prose h1, .prose h2, .prose h3 { color: #e3e3e3; margin: 1em 0 0.5em; }
-.prose blockquote { border-left: 3px solid #333; padding-left: 12px; color: #888; margin: 0.5em 0; }
-.prose table { border-collapse: collapse; width: 100%; margin: 0.75em 0; }
-.prose th, .prose td { border: 1px solid #2a2a2a; padding: 6px 10px; font-size: 13px; }
-.prose th { background: #1a1a1a; color: #aaa; }
+.prose h1, .prose h2, .prose h3 { color: var(--ab-text); margin: 1em 0 0.5em; }
+.prose blockquote { border-left: 2px solid var(--ab-copper); padding-left: 14px; color: var(--ab-text-2); margin: 0.5em 0; font-style: italic; }
+.prose table { border-collapse: collapse; width: 100%; margin: 0.75em 0; font-family: var(--ab-font-mono); }
+.prose th, .prose td { border: 1px solid var(--ab-line); padding: 7px 12px; font-size: 12.5px; }
+.prose th { background: var(--ab-bg-2); color: var(--ab-copper); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 500; font-size: 11px; }
 
-/* Spin animation for loading icons */
+/* ── Spin animation ─────────────────────────────────────────── */
 .spin-animation { animation: spin 1s linear infinite; }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
-/* Log panel tabs fill height */
+/* ── Log panel tabs ──────────────────────────────────────────── */
 .log-panel-tabs { height: 100%; }
 .log-panel-tabs .ant-tabs-content-holder { flex: 1; overflow: hidden; }
 .log-panel-tabs .ant-tabs-content { height: 100%; }
 .log-panel-tabs .ant-tabs-tabpane { height: 100%; display: flex; flex-direction: column; }
 
-/* Session delete button: only show on hover */
+/* ── Session delete button: hover only ──────────────────────── */
 .session-delete-btn, .session-actions { display: none !important; }
 .ant-menu-item:hover .session-delete-btn, .ant-menu-item:hover .session-actions { display: inline-flex !important; }
 
-/* AntD dark overrides */
-/* Removed hardcoded .ant-input overrides to let ConfigProvider handle dark mode natively */
-
-/* Global Dark Theme Overrides for Inputs */
+/* ── Global Dark Theme Overrides for Inputs ─────────────────── */
 .ant-input-affix-wrapper {
-    background-color: #161616 !important;
-    border-color: #2a2a2a !important;
+    background-color: var(--ab-bg-2) !important;
+    border-color: var(--ab-line) !important;
 }
 
 .ant-input {
-    background-color: #161616 !important;
-    color: #e3e3e3 !important;
-    border-color: #2a2a2a !important;
+    background-color: var(--ab-bg-2) !important;
+    color: var(--ab-text) !important;
+    border-color: var(--ab-line) !important;
+    font-family: var(--ab-font-body) !important;
 }
 
 .ant-input-affix-wrapper .ant-input {
@@ -68,37 +128,296 @@ html, body {
 
 .ant-input-password input {
     background-color: transparent !important;
-    color: #e3e3e3 !important;
+    color: var(--ab-text) !important;
 }
 
 .ant-input-affix-wrapper-focused, .ant-input:focus {
-    border-color: #1677ff !important;
+    border-color: var(--ab-copper) !important;
+    box-shadow: 0 0 0 2px var(--ab-copper-glow) !important;
 }
 
 .ant-input::placeholder {
-    color: #555 !important;
+    color: var(--ab-text-4) !important;
 }
 
 /* Fix Webkit Autofill in dark mode */
 input:-webkit-autofill,
-input:-webkit-autofill:hover, 
-input:-webkit-autofill:focus, 
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
 input:-webkit-autofill:active {
-    -webkit-box-shadow: 0 0 0 1000px #161616 inset !important;
-    -webkit-text-fill-color: #e3e3e3 !important;
+    -webkit-box-shadow: 0 0 0 1000px var(--ab-bg-2) inset !important;
+    -webkit-text-fill-color: var(--ab-text) !important;
     transition: background-color 5000s ease-in-out 0s;
-    caret-color: #e3e3e3 !important;
+    caret-color: var(--ab-text) !important;
 }
 
-/* Selection Highlight */
+/* ── Selection Highlight ────────────────────────────────────── */
 ::selection {
-    background-color: #1677ff;
-    color: #ffffff;
-    -webkit-text-fill-color: #ffffff;
+    background-color: var(--ab-copper);
+    color: #1a1308;
+    -webkit-text-fill-color: #1a1308;
 }
 
 input::selection, textarea::selection, .ant-input::selection {
-    background-color: #1677ff;
-    color: #ffffff;
-    -webkit-text-fill-color: #ffffff;
+    background-color: var(--ab-copper);
+    color: #1a1308;
+    -webkit-text-fill-color: #1a1308;
+}
+
+/* ============================================================
+   AutoBot — Atelier Surfaces & Effects
+   ============================================================ */
+
+/* ── Grid Background — animated technical mesh ─────────────── */
+.ab-grid-bg {
+    position: absolute;
+    inset: 0;
+    background-image:
+        linear-gradient(rgba(212, 165, 116, 0.045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(212, 165, 116, 0.045) 1px, transparent 1px);
+    background-size: 56px 56px;
+    background-position: -1px -1px;
+    mask-image: radial-gradient(ellipse 80% 60% at 50% 35%, #000 30%, transparent 75%);
+    -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 35%, #000 30%, transparent 75%);
+    pointer-events: none;
+    z-index: 0;
+}
+
+.ab-grid-bg::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(circle at 20% 20%, rgba(212, 165, 116, 0.06), transparent 50%),
+                radial-gradient(circle at 80% 60%, rgba(90, 154, 150, 0.05), transparent 50%);
+    animation: ab-mesh-drift 24s ease-in-out infinite alternate;
+}
+
+@keyframes ab-mesh-drift {
+    0%   { transform: translate3d(0, 0, 0); opacity: 0.7; }
+    50%  { opacity: 1; }
+    100% { transform: translate3d(20px, -10px, 0); opacity: 0.7; }
+}
+
+/* ── Grain Overlay — film texture ──────────────────────────── */
+.ab-grain::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 9999;
+    opacity: 0.035;
+    mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* ── Mono Label — technical eyebrow text ────────────────────── */
+.ab-mono-label {
+    font-family: var(--ab-font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--ab-copper);
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.ab-mono-label::before {
+    content: '';
+    width: 18px;
+    height: 1px;
+    background: var(--ab-copper);
+    opacity: 0.6;
+}
+
+.ab-mono-dim {
+    font-family: var(--ab-font-mono);
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--ab-text-3);
+}
+
+/* ── Display Heading — Fraunces editorial ──────────────────── */
+.ab-display {
+    font-family: var(--ab-font-display);
+    font-weight: 300;
+    letter-spacing: -0.025em;
+    line-height: 1.02;
+    color: var(--ab-text);
+}
+
+.ab-display em {
+    font-style: italic;
+    font-weight: 400;
+    color: var(--ab-copper);
+}
+
+/* ── Reveal Animation — staggered fade-up ───────────────────── */
+@keyframes ab-reveal {
+    from { opacity: 0; transform: translate3d(0, 14px, 0); }
+    to   { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+.ab-reveal {
+    animation: ab-reveal 0.9s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.ab-reveal-1 { animation-delay: 0.05s; }
+.ab-reveal-2 { animation-delay: 0.18s; }
+.ab-reveal-3 { animation-delay: 0.32s; }
+.ab-reveal-4 { animation-delay: 0.46s; }
+.ab-reveal-5 { animation-delay: 0.60s; }
+.ab-reveal-6 { animation-delay: 0.74s; }
+
+/* ── Hairline Divider ───────────────────────────────────────── */
+.ab-hairline {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--ab-line-bold) 20%, var(--ab-line-bold) 80%, transparent);
+    border: none;
+    margin: 0;
+}
+
+/* ── Surface Card ───────────────────────────────────────────── */
+.ab-surface {
+    background: var(--ab-surface);
+    border: 1px solid var(--ab-line);
+    border-radius: 4px;
+    position: relative;
+}
+
+.ab-surface::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 12px;
+    height: 12px;
+    border-top: 1px solid var(--ab-copper);
+    border-left: 1px solid var(--ab-copper);
+    opacity: 0.5;
+}
+
+/* ── Pill Tag (mono) ────────────────────────────────────────── */
+.ab-tag {
+    font-family: var(--ab-font-mono);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 2px 8px;
+    border: 1px solid var(--ab-line);
+    border-radius: 2px;
+    color: var(--ab-text-2);
+    background: var(--ab-bg-2);
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+}
+
+.ab-tag-copper {
+    color: var(--ab-copper);
+    border-color: var(--ab-line-bold);
+    background: rgba(212, 165, 116, 0.06);
+}
+
+.ab-tag-teal {
+    color: var(--ab-teal-hi);
+    border-color: rgba(90, 154, 150, 0.32);
+    background: rgba(90, 154, 150, 0.06);
+}
+
+/* ── Blinking Cursor — live indicator ──────────────────────── */
+.ab-cursor-blink::after {
+    content: '_';
+    color: var(--ab-copper);
+    animation: ab-blink 1.1s steps(2) infinite;
+    margin-left: 2px;
+}
+
+@keyframes ab-blink {
+    50% { opacity: 0; }
+}
+
+/* ── AntD Button copper override ────────────────────────────── */
+.ab-btn-copper.ant-btn-primary {
+    background: var(--ab-copper) !important;
+    border-color: var(--ab-copper) !important;
+    color: #1a1308 !important;
+    font-weight: 600;
+    font-family: var(--ab-font-body);
+    letter-spacing: 0.01em;
+    box-shadow: 0 0 0 0 var(--ab-copper-glow);
+    transition: box-shadow 0.3s, transform 0.2s, background 0.2s;
+}
+
+.ab-btn-copper.ant-btn-primary:hover {
+    background: var(--ab-copper-hi) !important;
+    border-color: var(--ab-copper-hi) !important;
+    box-shadow: 0 0 28px var(--ab-copper-glow);
+    transform: translateY(-1px);
+}
+
+.ab-btn-copper.ant-btn-primary:active {
+    transform: translateY(0);
+}
+
+/* ── Nav link ───────────────────────────────────────────────── */
+.ab-nav-link {
+    font-family: var(--ab-font-mono);
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ab-text-3);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 6px 0;
+    position: relative;
+    transition: color 0.2s;
+}
+
+.ab-nav-link::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 0;
+    height: 1px;
+    background: var(--ab-copper);
+    transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.ab-nav-link:hover {
+    color: var(--ab-text);
+}
+
+.ab-nav-link:hover::after,
+.ab-nav-link.is-active::after {
+    width: 100%;
+}
+
+.ab-nav-link.is-active {
+    color: var(--ab-copper);
+}
+
+/* ── Code block (mono) ───────────────────────────────────────── */
+.ab-code {
+    font-family: var(--ab-font-mono);
+    font-size: 12.5px;
+    background: var(--ab-bg);
+    border: 1px solid var(--ab-line);
+    border-radius: 3px;
+    color: var(--ab-copper-hi);
+    padding: 1px 6px;
+}
+
+/* ── Vignette overlay (hero depth) ──────────────────────────── */
+.ab-vignette {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: radial-gradient(ellipse 70% 70% at 50% 50%, transparent 30%, var(--ab-bg) 95%);
+    z-index: 1;
 }

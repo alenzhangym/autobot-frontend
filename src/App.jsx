@@ -165,7 +165,7 @@ function UsersManagementModal({ open, onClose, users, companies, onAddUser, onDe
       onCancel={onClose}
       footer={null}
       width={700}
-      styles={{ body: { background: '#1a1a1a', padding: '24px' }, header: { background: '#1a1a1a', borderBottom: '1px solid #2a2a2a', padding: '16px 24px' } }}
+      styles={{ body: { background: '#181613', padding: '24px' }, header: { background: '#181613', borderBottom: '1px solid #2a2620', padding: '16px 24px' } }}
     >
       <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Text style={{ color: '#888', fontSize: 12 }}>Manage users in the system.</Text>
@@ -239,12 +239,12 @@ function UsersManagementModal({ open, onClose, users, companies, onAddUser, onDe
       >
         <div style={{ display: 'flex', gap: '12px' }}>
           <Form.Item name="username" rules={[{ required: true, message: 'Please input username' }]} style={{ flex: 1 }}>
-            <Input placeholder="Username" style={{ background: '#111', borderColor: '#333', color: '#e3e3e3' }} />
+            <Input placeholder="Username" style={{ background: '#0e0e0e', borderColor: '#2a2620', color: '#e8e3d8' }} />
           </Form.Item>
         </div>
         <div style={{ display: 'flex', gap: '12px' }}>
           <Form.Item name="password" rules={[{ required: true, message: 'Please input password' }, { min: 6, message: 'Password must be at least 6 characters' }]} style={{ flex: 1 }}>
-            <Input.Password placeholder="Password" style={{ background: '#111', borderColor: '#333', color: '#e3e3e3' }} />
+            <Input.Password placeholder="Password" style={{ background: '#0e0e0e', borderColor: '#2a2620', color: '#e8e3d8' }} />
           </Form.Item>
           <Form.Item
             name="confirmPassword"
@@ -262,7 +262,7 @@ function UsersManagementModal({ open, onClose, users, companies, onAddUser, onDe
               }),
             ]}
           >
-            <Input.Password placeholder="Confirm Password" style={{ background: '#111', borderColor: '#333', color: '#e3e3e3' }} />
+            <Input.Password placeholder="Confirm Password" style={{ background: '#0e0e0e', borderColor: '#2a2620', color: '#e8e3d8' }} />
           </Form.Item>
         </div>
         <div style={{ display: 'flex', gap: '12px' }}>
@@ -371,10 +371,10 @@ function SettingsModal({ open, onClose, user, dbConfigs, onDeleteDbConfig, onAdd
           profileForm.setFieldsValue({ password: '', confirmPassword: '' });
         }}>
           <Form.Item name="username" label={<span style={{ color: '#e3e3e3' }}>Username</span>}>
-            <Input disabled placeholder="Username" style={{ background: '#111', borderColor: '#333', color: '#666' }} />
+            <Input disabled placeholder="Username" style={{ background: '#0e0e0e', borderColor: '#2a2620', color: '#807a6e' }} />
           </Form.Item>
           <Form.Item name="password" label={<span style={{ color: '#e3e3e3' }}>New Password</span>} rules={[{ min: 6, message: 'Password must be at least 6 characters' }]}>
-            <Input.Password placeholder="Leave blank to keep current password" style={{ background: '#111', borderColor: '#333', color: '#e3e3e3' }} />
+            <Input.Password placeholder="Leave blank to keep current password" style={{ background: '#0e0e0e', borderColor: '#2a2620', color: '#e8e3d8' }} />
           </Form.Item>
           <Form.Item
             name="confirmPassword"
@@ -391,7 +391,7 @@ function SettingsModal({ open, onClose, user, dbConfigs, onDeleteDbConfig, onAdd
               }),
             ]}
           >
-            <Input.Password placeholder="Confirm New Password" style={{ background: '#111', borderColor: '#333', color: '#e3e3e3' }} />
+            <Input.Password placeholder="Confirm New Password" style={{ background: '#0e0e0e', borderColor: '#2a2620', color: '#e8e3d8' }} />
           </Form.Item>
           <Button type="primary" htmlType="submit">Save Changes</Button>
         </Form>
@@ -475,7 +475,7 @@ function SettingsModal({ open, onClose, user, dbConfigs, onDeleteDbConfig, onAdd
                 return (ta - tb) * order
               })
               .map(s => (
-              <div key={s.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, padding: 10, background: '#1a1a1a', borderRadius: 8, border: '1px solid #2a2a2a' }}>
+              <div key={s.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, padding: 10, background: '#161613', borderRadius: 3, border: '1px solid #2a2620' }}>
                 <div style={{ maxWidth: '70%' }}>
                   <Text style={{ color: '#e3e3e3', fontSize: 13, fontWeight: 600 }}>{s.name}</Text>
                   <br />
@@ -576,7 +576,7 @@ function SettingsModal({ open, onClose, user, dbConfigs, onDeleteDbConfig, onAdd
           </Text>
           <Form form={companyForm} layout="vertical" onFinish={async (values) => { await onAddCompany(values); companyForm.resetFields(); }} style={{ marginTop: 12 }}>
             <Form.Item name="name" rules={[{ required: true, message: 'Please input company name' }]}>
-              <Input placeholder="Company Name" style={{ background: '#111', borderColor: '#333', color: '#e3e3e3' }} />
+              <Input placeholder="Company Name" style={{ background: '#0e0e0e', borderColor: '#2a2620', color: '#e8e3d8' }} />
             </Form.Item>
             <Form.Item name="channelAccess" label={<span style={{ color: '#aaa', fontSize: 12 }}>可用频道（不选则全部可用）</span>}>
               <Checkbox.Group>
@@ -613,7 +613,7 @@ function SettingsModal({ open, onClose, user, dbConfigs, onDeleteDbConfig, onAdd
             <Text style={{ color: '#555', fontSize: 13 }}>No database configurations saved.</Text>
           ) : (
             dbConfigs.map(db => (
-              <div key={db.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, padding: 10, background: '#1a1a1a', borderRadius: 8, border: '1px solid #2a2a2a' }}>
+              <div key={db.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, padding: 10, background: '#161613', borderRadius: 3, border: '1px solid #2a2620' }}>
                 <div style={{ maxWidth: '70%' }}>
                   <Text style={{ color: '#e3e3e3', fontSize: 13, fontWeight: 600 }}>{db.name}</Text>
                   <br />
@@ -3049,10 +3049,29 @@ const handleDeleteSession = (id) => {
     <ConfigProvider
       theme={{
         algorithm: theme.darkAlgorithm,
-        token: { colorPrimary: '#1677ff', borderRadius: 8, colorBgContainer: '#161616', colorBgElevated: '#1a1a1a', colorBorder: '#2a2a2a' },
+        token: {
+          colorPrimary: '#d4a574',
+          borderRadius: 3,
+          colorBgContainer: '#0e0e0e',
+          colorBgElevated: '#181613',
+          colorBorder: '#2a2620',
+          colorText: '#e8e3d8',
+          colorTextSecondary: '#b8b1a3',
+          colorTextTertiary: '#807a6e',
+          fontFamily: "'Hanken Grotesk', system-ui, sans-serif",
+        },
         components: {
-          Layout: { siderBg: '#111', headerBg: '#111', bodyBg: '#0d0d0d' },
-          Menu: { darkItemBg: '#111', darkSubMenuItemBg: '#111', itemHeight: 36 },
+          Layout: { siderBg: '#0e0e0e', headerBg: '#0e0e0e', bodyBg: '#0a0a0a' },
+          Menu: {
+            darkItemBg: '#0e0e0e',
+            darkSubMenuItemBg: '#0a0a0a',
+            itemHeight: 36,
+            darkItemColor: '#b8b1a3',
+            darkItemSelectedBg: 'rgba(212, 165, 116, 0.08)',
+            darkItemSelectedColor: '#d4a574',
+            darkItemHoverBg: 'rgba(212, 165, 116, 0.05)',
+          },
+          Card: { colorBgContainer: '#181613', colorBorderSecondary: '#2a2620' },
         }
       }}
       locale={i18n.language === 'en-US' ? enUS : zhCN}
@@ -3114,7 +3133,7 @@ const handleDeleteSession = (id) => {
         <Sider
           collapsible collapsed={siderCollapsed} onCollapse={setSiderCollapsed}
           trigger={null} width={240} collapsedWidth={0}
-          style={{ background: '#111', borderRight: '1px solid #1f1f1f', overflow: 'hidden' }}
+          style={{ background: '#0e0e0e', borderRight: '1px solid #2a2620', overflow: 'hidden' }}
 >
           <SessionSidebar
             sessions={sessions}
@@ -3137,31 +3156,31 @@ const handleDeleteSession = (id) => {
         </Sider>
 
         {/* ── Main ── */}
-        <Layout style={{ background: '#0d0d0d' }}>
+        <Layout style={{ background: '#0a0a0a' }}>
           {/* Header */}
           <Header style={{
-            background: '#111', borderBottom: '1px solid #1f1f1f', padding: '0 16px',
+            background: '#0e0e0e', borderBottom: '1px solid #2a2620', padding: '0 16px',
             display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 52
           }}>
             <Space>
               <Button type="text" icon={siderCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
                 onClick={() => setSiderCollapsed(!siderCollapsed)}
-                style={{ color: '#888' }} />
+                style={{ color: '#807a6e' }} />
               {activeTab === 'chat' ? (() => {
                 const curSess = sessions.find(s => s.id === sessionId)
                 const chKey = curSess?.channel || currentChannel
                 const chDef = CHANNELS.find(c => c.key === chKey)
                 return (
                   <>
-                    {chDef?.icon && <span style={{ color: '#1677ff', fontSize: 15, display: 'inline-flex', alignItems: 'center' }}>{chDef.icon}</span>}
-                    <Text style={{ color: '#e3e3e3', fontSize: 14, fontWeight: 500 }}>
+                    {chDef?.icon && <span style={{ color: '#d4a574', fontSize: 15, display: 'inline-flex', alignItems: 'center' }}>{chDef.icon}</span>}
+                    <Text style={{ color: '#e8e3d8', fontSize: 14, fontWeight: 500, fontFamily: "'Hanken Grotesk', system-ui, sans-serif" }}>
                       {curSess?.title || t('nav.newChat')}
                     </Text>
-                    {chDef && <Tag style={{ fontSize: 11, marginInlineEnd: 0, color: '#888', borderColor: '#333', background: '#1a1a1a' }}>({chDef.label})</Tag>}
+                    {chDef && <Tag style={{ fontSize: 11, marginInlineEnd: 0, color: '#807a6e', borderColor: '#2a2620', background: '#161613', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.05em' }}>({chDef.label})</Tag>}
                   </>
                 )
               })() : (
-                <Text style={{ color: '#888', fontSize: 14 }}>
+                <Text style={{ color: '#807a6e', fontSize: 14, fontFamily: "'Hanken Grotesk', system-ui, sans-serif" }}>
                   {activeTab === 'documents' ? t('nav.companyDocuments') : activeTab === 'sales_orders' ? '销售单管理' : activeTab === 'purchase_orders' ? '采购单管理' : activeTab === 'reconciliations' ? '对账单管理' : activeTab === 'erp' ? t('erp.dataManagement') : activeTab === 'outbound_orders' ? t('erp.outboundOrders') : activeTab === 'inbound_orders' ? t('erp.inboundOrders') : activeTab === 'parts' ? t('erp.parts') : activeTab === 'customers' ? t('erp.customers') : activeTab === 'suppliers' ? t('erp.suppliers') : activeTab === 'customer_part_mappings' ? '客户料号映射' : activeTab === 'import_product_relation' ? '导入产品关系' : activeTab === 'dashboard' ? t('erp.dashboard') : activeTab === 'databases' ? t('nav.databases') : activeTab === 'monitor' ? 'autobot-monitor' : (sessions.find(s => s.id === sessionId)?.title || t('nav.newChat'))}
                 </Text>
               )}
@@ -3195,7 +3214,7 @@ const handleDeleteSession = (id) => {
                 <Tooltip title={liveLogActive ? (showLogs ? 'Hide live logs' : 'Show live logs') : 'No active logs'}>
                   <Button type="text" icon={<CodeOutlined />}
                     onClick={() => setShowLogs(!showLogs)}
-                    style={{ color: showLogs && liveLogActive ? '#1677ff' : '#888' }}
+                    style={{ color: showLogs && liveLogActive ? '#d4a574' : '#807a6e' }}
                     disabled={!liveLogActive} />
                 </Tooltip>
                 </Space>
@@ -3208,7 +3227,7 @@ const handleDeleteSession = (id) => {
               selectedKeys: [i18n.language]
             }}>
               <Tooltip title={t('language.switchTo')}>
-                <Button type="text" icon={<GlobalOutlined />} style={{ color: '#888' }} />
+                <Button type="text" icon={<GlobalOutlined />} style={{ color: '#807a6e' }} />
               </Tooltip>
             </Dropdown>
           </Header>
@@ -3249,12 +3268,12 @@ const handleDeleteSession = (id) => {
           ) : activeTab === 'databases' ? (
               <DatabaseManagement dbConfigs={dbConfigs} fetchDbConfigs={fetchDbConfigs} onAddDbConfig={addDbConfig} onUpdateDbConfig={updateDbConfig} user={user} />
           ) : activeTab === 'monitor' && isSuperAdmin ? (
-            <Content style={{ background: '#0d0d0d', overflow: 'auto' }}>
+            <Content style={{ background: '#0a0a0a', overflow: 'auto' }}>
               <MonitorPanel />
             </Content>
           ) : (
 
-          <Layout style={{ background: '#0d0d0d', overflow: 'hidden', flexDirection: 'row', position: 'relative' }}>
+          <Layout style={{ background: '#0a0a0a', overflow: 'hidden', flexDirection: 'row', position: 'relative' }}>
             {/* Chat area */}
             <Content style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', flex: 1 }}>
               {/* Messages */}
@@ -3264,14 +3283,14 @@ const handleDeleteSession = (id) => {
                     {isLoading ? (
                       <SessionSkeleton />
                     ) : activeScheduledTask ? (
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '50vh', color: '#444' }}>
-                        <ClockCircleOutlined style={{ fontSize: 48, marginBottom: 16, color: '#1677ff', opacity: 0.6 }} />
-                        <Title level={4} style={{ color: '#666', margin: 0 }}>Waiting for the first execution...</Title>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '50vh', color: '#524d44' }}>
+                        <ClockCircleOutlined style={{ fontSize: 48, marginBottom: 16, color: '#d4a574', opacity: 0.7 }} />
+                        <Title level={4} style={{ color: '#807a6e', margin: 0, fontFamily: "'Fraunces', serif", fontWeight: 300, letterSpacing: '-0.01em' }}>Waiting for the first execution...</Title>
                       </div>
                     ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '50vh', color: '#444' }}>
-                        <ThunderboltOutlined style={{ fontSize: 48, marginBottom: 16, color: '#1677ff', opacity: 0.6 }} />
-                        <Title level={4} style={{ color: '#666', margin: 0 }}>{t('chat.greeting')}</Title>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '50vh', color: '#524d44' }}>
+                        <ThunderboltOutlined style={{ fontSize: 48, marginBottom: 16, color: '#d4a574', opacity: 0.7 }} />
+                        <Title level={4} style={{ color: '#807a6e', margin: 0, fontFamily: "'Fraunces', serif", fontWeight: 300, letterSpacing: '-0.01em' }}>{t('chat.greeting')}</Title>
                       </div>
                     )}
                   </div>
@@ -3329,11 +3348,11 @@ const handleDeleteSession = (id) => {
 
               {/* Input */}
               {activeScheduledTask ? (
-                <div style={{ padding: '16px 24px', background: '#111', borderTop: '1px solid #1a1a1a', display: 'flex', justifyContent: 'center' }}>
-                  <div style={{ maxWidth: 760, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#1a1a1a', padding: '12px 24px', borderRadius: 12, border: '1px solid #2a2a2a' }}>
+                <div style={{ padding: '16px 24px', background: '#0e0e0e', borderTop: '1px solid #2a2620', display: 'flex', justifyContent: 'center' }}>
+                  <div style={{ maxWidth: 760, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#161613', padding: '12px 24px', borderRadius: 4, border: '1px solid #2a2620' }}>
                     <Space size="large">
                       <div>
-                        <Text style={{ color: '#888', fontSize: 11, display: 'block', marginBottom: 4, textTransform: 'uppercase' }}>Frequency</Text>
+                        <Text style={{ color: '#807a6e', fontSize: 11, display: 'block', marginBottom: 4, textTransform: 'uppercase', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.1em' }}>Frequency</Text>
                         {editingTask === activeScheduledTask.id ? (
                           <Select
                             size="small"
@@ -3347,11 +3366,11 @@ const handleDeleteSession = (id) => {
                             style={{ width: 100 }}
                           />
                         ) : (
-                          <Text style={{ color: '#e3e3e3', fontSize: 14 }}>{activeScheduledTask.scheduleType === 'daily' ? 'Daily' : activeScheduledTask.scheduleType === 'weekly' ? 'Weekly' : 'Monthly'}</Text>
+                          <Text style={{ color: '#e8e3d8', fontSize: 14 }}>{activeScheduledTask.scheduleType === 'daily' ? 'Daily' : activeScheduledTask.scheduleType === 'weekly' ? 'Weekly' : 'Monthly'}</Text>
                         )}
                       </div>
                       <div>
-                        <Text style={{ color: '#888', fontSize: 11, display: 'block', marginBottom: 4, textTransform: 'uppercase' }}>Time</Text>
+                        <Text style={{ color: '#807a6e', fontSize: 11, display: 'block', marginBottom: 4, textTransform: 'uppercase', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.1em' }}>Time</Text>
                         {editingTask === activeScheduledTask.id ? (
                           <TimePicker
                             size="small"
@@ -3361,20 +3380,20 @@ const handleDeleteSession = (id) => {
                             style={{ width: 90 }}
                           />
                         ) : (
-                          <Text style={{ color: '#e3e3e3', fontSize: 14 }}>{activeScheduledTask.scheduleTime}</Text>
+                          <Text style={{ color: '#e8e3d8', fontSize: 14 }}>{activeScheduledTask.scheduleTime}</Text>
                         )}
                       </div>
                       <div>
-                        <Text style={{ color: '#888', fontSize: 11, display: 'block', marginBottom: 4, textTransform: 'uppercase' }}>Execution Count</Text>
-                        <Text style={{ color: '#e3e3e3', fontSize: 14 }}>{messages.filter(m => m.role === 'user').length}</Text>
+                        <Text style={{ color: '#807a6e', fontSize: 11, display: 'block', marginBottom: 4, textTransform: 'uppercase', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.1em' }}>Execution Count</Text>
+                        <Text style={{ color: '#e8e3d8', fontSize: 14 }}>{messages.filter(m => m.role === 'user').length}</Text>
                       </div>
                       <div>
-                        <Text style={{ color: '#888', fontSize: 11, display: 'block', marginBottom: 4, textTransform: 'uppercase' }}>Created At</Text>
-                        <Text style={{ color: '#e3e3e3', fontSize: 14 }}>{new Date(activeScheduledTask.createdAt).toLocaleString()}</Text>
+                        <Text style={{ color: '#807a6e', fontSize: 11, display: 'block', marginBottom: 4, textTransform: 'uppercase', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.1em' }}>Created At</Text>
+                        <Text style={{ color: '#e8e3d8', fontSize: 14 }}>{new Date(activeScheduledTask.createdAt).toLocaleString()}</Text>
                       </div>
                     </Space>
                     <Space>
-                      <Tag color="blue" style={{ margin: 0, border: 'none', background: '#1677ff22', color: '#1677ff' }}>Active</Tag>
+                      <Tag color="blue" style={{ margin: 0, border: 'none', background: 'rgba(212, 165, 116, 0.12)', color: '#d4a574', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.05em' }}>Active</Tag>
                       {editingTask === activeScheduledTask.id ? (
                         <Space>
                           <Button size="small" onClick={cancelEditTask}>Cancel</Button>
@@ -3392,7 +3411,7 @@ const handleDeleteSession = (id) => {
                   </div>
                 </div>
               ) : (
-                <div style={{ padding: '0 24px 20px', background: '#0d0d0d', borderTop: '1px solid #1a1a1a' }}>
+                <div style={{ padding: '0 24px 20px', background: '#0a0a0a', borderTop: '1px solid #2a2620' }}>
                   <div style={{ maxWidth: 760, margin: '0 auto' }}>
                     {/* ── ERP 快速操作栏 (始终在输入框上方, 不管当前 tab) ──
                         跳过 LLM 意图识别, 直接进入订单录入/数据分析/主数据流程.
@@ -3408,33 +3427,33 @@ const handleDeleteSession = (id) => {
                     {/* ── A 方案：code 会话移除「分析/构建」toggle，意图由后端基于消息+状态推断。
                           状态栏保留 codeMode='auto' 默认值；高级用户可通过 devtools 临时改 state 强制锁定。 */}
                     <div style={{
-                      background: '#1a1a1a', borderRadius: 24, border: '1px solid #2a2a2a',
+                      background: '#161613', borderRadius: 4, border: '1px solid #2a2620',
                       padding: '10px 14px', display: 'flex', alignItems: 'flex-end', gap: 8,
-                      transition: 'border-color 0.2s'
+                      transition: 'border-color 0.2s, box-shadow 0.2s'
                     }}
-                      onFocus={e => e.currentTarget.style.borderColor = '#1677ff'}
-                      onBlur={e => e.currentTarget.style.borderColor = '#2a2a2a'}
+                      onFocus={e => { e.currentTarget.style.borderColor = '#d4a574'; e.currentTarget.style.boxShadow = '0 0 0 3px rgba(212, 165, 116, 0.12)' }}
+                      onBlur={e => { e.currentTarget.style.borderColor = '#2a2620'; e.currentTarget.style.boxShadow = 'none' }}
                     >
                       <Tooltip title="Attach image or document">
                         <Button type="text" icon={<PaperClipOutlined />}
                           onClick={() => fileInputRef.current?.click()}
-                          style={{ color: '#666', padding: '4px 6px' }} />
+                          style={{ color: '#524d44', padding: '4px 6px' }} />
                       </Tooltip>
                       <input type="file" ref={fileInputRef} style={{ display: 'none' }} onChange={handleFileUpload} accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.md,.csv,.dxf,.dwg,.step,.stp,.iges,.igs" />
 
                       {selectedImage && (
-                        <div style={{ display: 'flex', alignItems: 'center', background: '#333', padding: '2px 8px', borderRadius: 4, marginRight: 8, gap: 4 }}>
-                          <FileImageOutlined style={{ color: '#13c2c2', fontSize: 12 }} />
-                          <Text style={{ color: '#e3e3e3', fontSize: 12, maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedImage}</Text>
-                          <CloseOutlined style={{ fontSize: 10, color: '#999', cursor: 'pointer' }} onClick={() => { setSelectedImage(null); setSelectedImageBase64(null); }} />
+                        <div style={{ display: 'flex', alignItems: 'center', background: '#0e0e0e', padding: '2px 8px', borderRadius: 2, marginRight: 8, gap: 4, border: '1px solid #2a2620' }}>
+                          <FileImageOutlined style={{ color: '#7ab5b0', fontSize: 12 }} />
+                          <Text style={{ color: '#e8e3d8', fontSize: 12, maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedImage}</Text>
+                          <CloseOutlined style={{ fontSize: 10, color: '#807a6e', cursor: 'pointer' }} onClick={() => { setSelectedImage(null); setSelectedImageBase64(null); }} />
                         </div>
                       )}
 
                       {uploadedDocuments.map((doc, idx) => (
-                        <div key={idx} style={{ display: 'flex', alignItems: 'center', background: '#333', padding: '2px 8px', borderRadius: 4, marginRight: 8, gap: 4 }}>
-                          <FileTextOutlined style={{ color: '#1677ff', fontSize: 12 }} />
-                          <Text style={{ color: '#e3e3e3', fontSize: 12, maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.name}</Text>
-                          <CloseOutlined style={{ fontSize: 10, color: '#999', cursor: 'pointer' }} onClick={() => { setUploadedDocuments(prev => prev.filter(d => d.id !== doc.id)); }} />
+                        <div key={idx} style={{ display: 'flex', alignItems: 'center', background: '#0e0e0e', padding: '2px 8px', borderRadius: 2, marginRight: 8, gap: 4, border: '1px solid #2a2620' }}>
+                          <FileTextOutlined style={{ color: '#d4a574', fontSize: 12 }} />
+                          <Text style={{ color: '#e8e3d8', fontSize: 12, maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.name}</Text>
+                          <CloseOutlined style={{ fontSize: 10, color: '#807a6e', cursor: 'pointer' }} onClick={() => { setUploadedDocuments(prev => prev.filter(d => d.id !== doc.id)); }} />
                         </div>
                       ))}
 
@@ -3498,25 +3517,26 @@ const handleDeleteSession = (id) => {
                             : 'Ask AutoBot... (Shift+Enter to break line)'
                         }
                         autoSize={{ minRows: 1, maxRows: 6 }}
-                        style={{ background: 'transparent', border: 'none', color: '#e3e3e3', resize: 'none', flex: 1, padding: '4px 0', fontSize: 14 }}
+                        style={{ background: 'transparent', border: 'none', color: '#e8e3d8', resize: 'none', flex: 1, padding: '4px 0', fontSize: 14, fontFamily: "'Hanken Grotesk', system-ui, sans-serif" }}
                         variant="borderless"
                       />
 
                       <Space style={{ paddingBottom: 2 }}>
                         <Tooltip title={isRecording ? 'Stop recording' : 'Voice input'}>
                           <Button type="text"
-                            icon={isRecording ? <StopOutlined style={{ color: '#ff4d4f' }} /> : <AudioOutlined />}
+                            icon={isRecording ? <StopOutlined style={{ color: '#c97a6b' }} /> : <AudioOutlined />}
                             onClick={isRecording ? stopRecording : startRecording}
-                            style={{ color: isRecording ? '#ff4d4f' : '#666', padding: '4px 6px' }} />
+                            style={{ color: isRecording ? '#c97a6b' : '#524d44', padding: '4px 6px' }} />
                         </Tooltip>
                         {(input.trim() || selectedImageBase64 || selectedQuickAction) && (
                           <Button type="primary" shape="circle" icon={<SendOutlined />}
-                            onClick={() => handleSendWithQuickAction()} size="small" />
+                            onClick={() => handleSendWithQuickAction()} size="small"
+                            style={{ background: '#d4a574', borderColor: '#d4a574' }} />
                         )}
                       </Space>
                     </div>
-                    <div style={{ textAlign: 'center', marginTop: 8, color: '#444', fontSize: 11 }}>
-                      AutoBot may make mistakes. Verify important information.
+                    <div style={{ textAlign: 'center', marginTop: 8, color: '#524d44', fontSize: 10.5, fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                      AutoBot may make mistakes · Verify important information
                     </div>
                   </div>
                 </div>
@@ -3531,8 +3551,8 @@ const handleDeleteSession = (id) => {
             {activeTab === 'chat' && sessionId && (
               <div style={{
                 width: 320, flexShrink: 0,
-                borderLeft: '1px solid #1f1f1f',
-                background: '#0d0d0d',
+                borderLeft: '1px solid #2a2620',
+                background: '#0a0a0a',
                 overflowY: 'auto'
               }}>
                 <InteractivePanel sessionId={sessionId} />
@@ -3702,7 +3722,7 @@ const handleDeleteSession = (id) => {
               renderItem={item => (
                 <List.Item
                   onClick={() => { if (item.isDir) loadWsBrowse(item.path) }}
-                  style={{ cursor: 'pointer', padding: '4px 12px', borderBottom: '1px solid #1a1a1a', color: '#ccc', fontSize: 12 }}
+                  style={{ cursor: 'pointer', padding: '4px 12px', borderBottom: '1px solid #2a2620', color: '#b8b1a3', fontSize: 12 }}
                 >
                   <Space>
                     <FolderOpenOutlined style={{color:'#faad14'}} />
