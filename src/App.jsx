@@ -868,6 +868,12 @@ function App() {
   const [selectedQuickAction, setSelectedQuickAction] = useState(null)
   const chatInputRef = useRef(null)
 
+  // 2026-07-05: 学术任务会话的「启用网络搜索」勾选项。
+  // 默认 true (启用) — 保持与原行为一致。
+  // 取消勾选时, 后端 AcademicOrchestrator 跳过 Perplexity 调用,
+  // 仅基于本地知识库 + 会话内存生成总结。
+  const [academicSearchEnabled, setAcademicSearchEnabled] = useState(true)
+
   // Keep session cache in sync with live messages so tab switches don't lose content
   useEffect(() => {
     if (sessionId && messages.length > 0) {
@@ -2406,6 +2412,10 @@ function App() {
       if (session && session.channel) {
         payload.channel = session.channel;
       }
+      // 2026-07-05: 学术任务 — 传递「启用网络搜索」勾选状态给后端
+      if (session && session.channel === 'academic') {
+        payload.enable_search = !!academicSearchEnabled;
+      }
       // Include workspace directory for code sessions
       if (workspaceDir) {
         payload.workspace_dir = workspaceDir;
@@ -3413,17 +3423,51 @@ const handleDeleteSession = (id) => {
               ) : (
                 <div style={{ padding: '0 24px 20px', background: '#0a0a0a', borderTop: '1px solid #2a2620' }}>
                   <div style={{ maxWidth: 760, margin: '0 auto' }}>
-                    {/* ── ERP 快速操作栏 (始终在输入框上方, 不管当前 tab) ──
+                    {/* ── ERP 快速操作栏 — 仅 ERP channel 显示 ──
                         跳过 LLM 意图识别, 直接进入订单录入/数据分析/主数据流程.
-                        用户粘贴大段 CSV 时, 点标签比让 LLM 解析快 10x+ */}
-                    <ErpQuickActions
-                      selected={selectedQuickAction}
-                      onSelect={setSelectedQuickAction}
-                      onClear={() => setSelectedQuickAction(null)}
-                      currentInput={input}
-                      inputRef={chatInputRef}
-                      disabled={isLoading}
-                    />
+                        用户粘贴大段 CSV 时, 点标签比让 LLM 解析快 10x+
+                        2026-07-05: 非 ERP channel (学术任务/code/general 等) 不再渲染 ERP 专属标签. */}
+                    {(() => {
+                      const curSess = sessions.find(s => s.id === sessionId)
+                      const sessChannel = curSess?.channel || currentChannel
+                      return sessChannel === 'erp'
+                    })() && (
+                      <ErpQuickActions
+                        selected={selectedQuickAction}
+                        onSelect={setSelectedQuickAction}
+                        onClear={() => setSelectedQuickAction(null)}
+                        currentInput={input}
+                        inputRef={chatInputRef}
+                        disabled={isLoading}
+                      />
+                    )}
+
+                    {/* ── 学术任务：启用网络搜索勾选 ──
+                        2026-07-05: 取消勾选时后端跳过 Perplexity 调用,
+                        仅基于本地知识库 + 会话内存生成总结. */}
+                    {(() => {
+                      const curSess = sessions.find(s => s.id === sessionId)
+                      const sessChannel = curSess?.channel || currentChannel
+                      return sessChannel === 'academic'
+                    })() && (
+                      <div style={{ display: 'flex', alignItems: 'center', padding: '4px 0 6px', gap: 6 }}>
+                        <Checkbox
+                          checked={academicSearchEnabled}
+                          onChange={e => setAcademicSearchEnabled(e.target.checked)}
+                          disabled={isLoading}
+                          style={{ color: '#e8e3d8', fontSize: 12 }}
+                        >
+                          启用网络搜索
+                        </Checkbox>
+                        <Tooltip title={academicSearchEnabled
+                          ? '已启用: 报告生成前会调用 Perplexity 检索最新网络资料 (中英文)'
+                          : '已关闭: 仅使用本地知识库 + 会话内存生成总结, 不调用外部搜索'}>
+                          <span style={{ color: '#807a6e', fontSize: 11, cursor: 'help' }}>
+                            {academicSearchEnabled ? '(检索最新网络资料)' : '(仅本地知识库 + 会话内存)'}
+                          </span>
+                        </Tooltip>
+                      </div>
+                    )}
                     {/* ── A 方案：code 会话移除「分析/构建」toggle，意图由后端基于消息+状态推断。
                           状态栏保留 codeMode='auto' 默认值；高级用户可通过 devtools 临时改 state 强制锁定。 */}
                     <div style={{

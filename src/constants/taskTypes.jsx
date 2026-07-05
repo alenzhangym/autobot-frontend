@@ -23,6 +23,7 @@ import {
   DatabaseOutlined,
   ShopOutlined,
   SearchOutlined,
+  ReadOutlined,
 } from '@ant-design/icons';
 
 // 任务类型 key（与后端 TaskType 枚举值完全一致）
@@ -90,6 +91,17 @@ export const CHANNELS = [
     subType: null,
     capabilities: ['采购单', '入库单', '出库单', '销售单', '对账单'],
     agentNames: ['ERPAgent'],
+  },
+  {
+    key: 'academic',
+    label: '学术任务',
+    desc: '检索最新知识 + 生成咨政报告',
+    icon: '🎓',
+    antIcon: <ReadOutlined />,
+    taskType: null, // 独立分支，对标 ERP
+    subType: null,
+    capabilities: ['网络检索', '咨政报告', '知识库结合', '中英文过滤'],
+    agentNames: ['AcademicOrchestrator'],
   },
 ];
 
