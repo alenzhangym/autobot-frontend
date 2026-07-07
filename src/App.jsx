@@ -58,6 +58,8 @@ import { useUserStore } from './store/useUserStore'
 import { useDataStore } from './store/useDataStore'
 import { useConfigStore } from './store/useConfigStore'
 import { useUIStore } from './store/useUIStore'
+import ThemeSwitcher from './components/ThemeSwitcher'
+import { THEMES, getThemeId, getTheme, initTheme } from './themes'
 import { useTranslation } from 'react-i18next'
 import { probeToolchain, getClientInfo, clearToolchainCache } from './utils/probeTools'
 import zhCN from 'antd/es/locale/zh_CN'
@@ -843,6 +845,7 @@ function App() {
   const [updateAvailable, setUpdateAvailable] = useState(null)
   const [updating, setUpdating] = useState(false)
   const [activeTab, setActiveTab] = useState('chat')
+  const [themeId, setThemeId] = useState(getThemeId())
   const [uploadedDocuments, setUploadedDocuments] = useState([])
   const [probeResult, setProbeResult] = useState(null)
   const [currentChannel, setCurrentChannel] = useState('general')
@@ -884,6 +887,14 @@ function App() {
       }
     }
   }, [messages, sessionId])
+
+  // Listen for theme changes from ThemeSwitcher
+  useEffect(() => {
+    const handler = (e) => setThemeId(e.detail)
+    window.addEventListener('theme-change', handler)
+    initTheme()
+    return () => window.removeEventListener('theme-change', handler)
+  }, [])
 
   useEffect(() => {
     const bootstrap = async () => {
@@ -3055,34 +3066,15 @@ const handleDeleteSession = (id) => {
 
   const activeScheduledTask = sessionId?.startsWith('sched-') ? scheduledTasks.find(t => 'sched-' + t.id === sessionId) : null;
 
+  const currentTheme = getTheme(themeId)
+  const antAlgorithm = currentTheme.ant.algorithm === 'light' ? theme.defaultAlgorithm : theme.darkAlgorithm
+
   return (
     <ConfigProvider
       theme={{
-        algorithm: theme.darkAlgorithm,
-        token: {
-          colorPrimary: '#d4a574',
-          borderRadius: 3,
-          colorBgContainer: '#0e0e0e',
-          colorBgElevated: '#181613',
-          colorBorder: '#2a2620',
-          colorText: '#e8e3d8',
-          colorTextSecondary: '#b8b1a3',
-          colorTextTertiary: '#807a6e',
-          fontFamily: "'Hanken Grotesk', system-ui, sans-serif",
-        },
-        components: {
-          Layout: { siderBg: '#0e0e0e', headerBg: '#0e0e0e', bodyBg: '#0a0a0a' },
-          Menu: {
-            darkItemBg: '#0e0e0e',
-            darkSubMenuItemBg: '#0a0a0a',
-            itemHeight: 36,
-            darkItemColor: '#b8b1a3',
-            darkItemSelectedBg: 'rgba(212, 165, 116, 0.08)',
-            darkItemSelectedColor: '#d4a574',
-            darkItemHoverBg: 'rgba(212, 165, 116, 0.05)',
-          },
-          Card: { colorBgContainer: '#181613', colorBorderSecondary: '#2a2620' },
-        }
+        algorithm: antAlgorithm,
+        token: currentTheme.ant.token,
+        components: currentTheme.ant.components,
       }}
       locale={i18n.language === 'en-US' ? enUS : zhCN}
     >
@@ -3143,7 +3135,7 @@ const handleDeleteSession = (id) => {
         <Sider
           collapsible collapsed={siderCollapsed} onCollapse={setSiderCollapsed}
           trigger={null} width={240} collapsedWidth={0}
-          style={{ background: '#0e0e0e', borderRight: '1px solid #2a2620', overflow: 'hidden' }}
+          style={{ background: 'var(--ab-bg-1)', borderRight: '1px solid var(--ab-line)', overflow: 'hidden' }}
 >
           <SessionSidebar
             sessions={sessions}
@@ -3166,31 +3158,31 @@ const handleDeleteSession = (id) => {
         </Sider>
 
         {/* ── Main ── */}
-        <Layout style={{ background: '#0a0a0a' }}>
+        <Layout style={{ background: 'var(--ab-bg)' }}>
           {/* Header */}
           <Header style={{
-            background: '#0e0e0e', borderBottom: '1px solid #2a2620', padding: '0 16px',
+            background: 'var(--ab-bg-1)', borderBottom: '1px solid var(--ab-line)', padding: '0 16px',
             display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 52
           }}>
             <Space>
               <Button type="text" icon={siderCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
                 onClick={() => setSiderCollapsed(!siderCollapsed)}
-                style={{ color: '#807a6e' }} />
+                style={{ color: 'var(--ab-text-3)' }} />
               {activeTab === 'chat' ? (() => {
                 const curSess = sessions.find(s => s.id === sessionId)
                 const chKey = curSess?.channel || currentChannel
                 const chDef = CHANNELS.find(c => c.key === chKey)
                 return (
                   <>
-                    {chDef?.icon && <span style={{ color: '#d4a574', fontSize: 15, display: 'inline-flex', alignItems: 'center' }}>{chDef.icon}</span>}
-                    <Text style={{ color: '#e8e3d8', fontSize: 14, fontWeight: 500, fontFamily: "'Hanken Grotesk', system-ui, sans-serif" }}>
+                    {chDef?.icon && <span style={{ color: 'var(--ab-copper)', fontSize: 15, display: 'inline-flex', alignItems: 'center' }}>{chDef.icon}</span>}
+                    <Text style={{ color: 'var(--ab-text)', fontSize: 14, fontWeight: 500, fontFamily: "'Hanken Grotesk', system-ui, sans-serif" }}>
                       {curSess?.title || t('nav.newChat')}
                     </Text>
-                    {chDef && <Tag style={{ fontSize: 11, marginInlineEnd: 0, color: '#807a6e', borderColor: '#2a2620', background: '#161613', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.05em' }}>({chDef.label})</Tag>}
+                    {chDef && <Tag style={{ fontSize: 11, marginInlineEnd: 0, color: 'var(--ab-text-3)', borderColor: 'var(--ab-line)', background: 'var(--ab-bg-3)', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.05em' }}>({chDef.label})</Tag>}
                   </>
                 )
               })() : (
-                <Text style={{ color: '#807a6e', fontSize: 14, fontFamily: "'Hanken Grotesk', system-ui, sans-serif" }}>
+                <Text style={{ color: 'var(--ab-text-3)', fontSize: 14, fontFamily: "'Hanken Grotesk', system-ui, sans-serif" }}>
                   {activeTab === 'documents' ? t('nav.companyDocuments') : activeTab === 'sales_orders' ? '销售单管理' : activeTab === 'purchase_orders' ? '采购单管理' : activeTab === 'reconciliations' ? '对账单管理' : activeTab === 'erp' ? t('erp.dataManagement') : activeTab === 'outbound_orders' ? t('erp.outboundOrders') : activeTab === 'inbound_orders' ? t('erp.inboundOrders') : activeTab === 'parts' ? t('erp.parts') : activeTab === 'customers' ? t('erp.customers') : activeTab === 'suppliers' ? t('erp.suppliers') : activeTab === 'customer_part_mappings' ? '客户料号映射' : activeTab === 'import_product_relation' ? '导入产品关系' : activeTab === 'dashboard' ? t('erp.dashboard') : activeTab === 'databases' ? t('nav.databases') : activeTab === 'monitor' ? 'autobot-monitor' : (sessions.find(s => s.id === sessionId)?.title || t('nav.newChat'))}
                 </Text>
               )}
@@ -3224,7 +3216,7 @@ const handleDeleteSession = (id) => {
                 <Tooltip title={liveLogActive ? (showLogs ? 'Hide live logs' : 'Show live logs') : 'No active logs'}>
                   <Button type="text" icon={<CodeOutlined />}
                     onClick={() => setShowLogs(!showLogs)}
-                    style={{ color: showLogs && liveLogActive ? '#d4a574' : '#807a6e' }}
+                    style={{ color: showLogs && liveLogActive ? 'var(--ab-copper)' : 'var(--ab-text-3)' }}
                     disabled={!liveLogActive} />
                 </Tooltip>
                 </Space>
@@ -3237,9 +3229,10 @@ const handleDeleteSession = (id) => {
               selectedKeys: [i18n.language]
             }}>
               <Tooltip title={t('language.switchTo')}>
-                <Button type="text" icon={<GlobalOutlined />} style={{ color: '#807a6e' }} />
+                <Button type="text" icon={<GlobalOutlined />} style={{ color: 'var(--ab-text-3)' }} />
               </Tooltip>
             </Dropdown>
+            <ThemeSwitcher size="small" />
           </Header>
 
           {/* Content Area */}

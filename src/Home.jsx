@@ -18,14 +18,20 @@ import {
   LayoutOutlined,
   LineChartOutlined,
   GithubOutlined,
+  BgColorsOutlined,
   CopyOutlined,
   DesktopOutlined,
   WindowsOutlined,
   AppleOutlined,
   LinuxOutlined,
 } from '@ant-design/icons'
+import ThemeSwitcher from './components/ThemeSwitcher'
+import { initTheme } from './themes'
 
 const { Title, Text, Paragraph } = Typography
+
+// Apply saved theme on module load
+initTheme()
 
 // Default backend host. Must stay in sync with DEFAULT_BACKEND_HOST
 // in ./auth.js. We duplicate it here (rather than importing) so the
@@ -304,7 +310,7 @@ function DesktopClientCard() {
 // 主页 sticky 导航条. 锚点列表 + 当前激活 section 跟随滚动高亮.
 // 滚动用 element.scrollIntoView({behavior:'smooth', block:'start'}),
 // 各 section 已配 scrollMarginTop: 64 让 sticky 头不遮挡锚点标题.
-function HomeNavBar() {
+function HomeNavBar({ onLoginClick }) {
   const [active, setActive] = useState('hero')
   const items = [
     { id: 'install',  label: 'Install' },
@@ -397,6 +403,26 @@ function HomeNavBar() {
             </button>
           )
         })}
+        {/* Login button + Theme switcher */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginLeft: 'auto' }}>
+          <ThemeSwitcher size="small" />
+          <Button
+            type="primary"
+            size="small"
+            icon={<LoginOutlined />}
+            onClick={onLoginClick}
+            className="ab-btn-copper"
+            style={{
+              fontSize: 11,
+              height: 32,
+              padding: '0 20px',
+              borderRadius: 3,
+              letterSpacing: '0.08em',
+            }}
+          >
+            LOGIN
+          </Button>
+        </div>
       </div>
     </div>
   )
@@ -793,7 +819,7 @@ function HomeContent({ onLoginClick }) {
       position: 'relative',
       overflow: 'hidden',
     }}>
-      <HomeNavBar />
+      <HomeNavBar onLoginClick={onLoginClick} />
 
       {/* Install Section */}
       <div id="install" style={{ maxWidth: 1240, margin: '48px auto 0', padding: '0 32px', scrollMarginTop: 64, position: 'relative', zIndex: 2 }}>

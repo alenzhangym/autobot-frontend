@@ -55,7 +55,6 @@ html, body {
     margin: 0;
     padding: 0;
     background: var(--ab-bg);
-    color-scheme: dark;
     font-family: var(--ab-font-body);
     color: var(--ab-text);
     -webkit-font-smoothing: antialiased;
@@ -154,14 +153,14 @@ input:-webkit-autofill:active {
 /* ── Selection Highlight ────────────────────────────────────── */
 ::selection {
     background-color: var(--ab-copper);
-    color: #1a1308;
-    -webkit-text-fill-color: #1a1308;
+    color: var(--ab-bg);
+    -webkit-text-fill-color: var(--ab-bg);
 }
 
 input::selection, textarea::selection, .ant-input::selection {
     background-color: var(--ab-copper);
-    color: #1a1308;
-    -webkit-text-fill-color: #1a1308;
+    color: var(--ab-bg);
+    -webkit-text-fill-color: var(--ab-bg);
 }
 
 /* ============================================================
