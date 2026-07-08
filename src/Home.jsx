@@ -24,6 +24,9 @@ import {
   WindowsOutlined,
   AppleOutlined,
   LinuxOutlined,
+  TeamOutlined,
+  ShoppingCartOutlined,
+  SolutionOutlined,
 } from '@ant-design/icons'
 import ThemeSwitcher from './components/ThemeSwitcher'
 import { initTheme } from './themes'
@@ -121,7 +124,7 @@ function InstallCard() {
     <div className="ab-surface ab-reveal ab-reveal-2" style={{ padding: '28px 32px' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 6, flexWrap: 'wrap', gap: 12 }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 14 }}>
-          <span className="ab-mono-label">01 / Install</span>
+          <span className="ab-mono-label">06 / Install</span>
         </div>
         <span className="ab-mono-dim" style={{ fontSize: 10 }}>SPA · STATIC · LOCAL-RUN</span>
       </div>
@@ -313,11 +316,11 @@ function DesktopClientCard() {
 function HomeNavBar({ onLoginClick }) {
   const [active, setActive] = useState('hero')
   const items = [
-    { id: 'install',  label: 'Install' },
     { id: 'hero',     label: 'Platform' },
     { id: 'modules',  label: 'Modules' },
     { id: 'workflow', label: 'Workflow' },
     { id: 'cta',      label: 'Begin' },
+    { id: 'install',  label: 'Install' },
   ]
 
   // 跟随滚动 — IntersectionObserver 监听各 section
@@ -496,12 +499,24 @@ const agentCategories = [
     id: 'ERP',
     title: 'ERP 进销存',
     subtitle: 'Commerce Operations',
-    description: '采购 / 入库 / 出库 / 销售 / 对账',
+    description: '采购 / 入库 / 出库 / 销售 / 对账 / 库存',
     accent: 'teal',
-    icon: <GlobalOutlined />,
+    icon: <ShoppingCartOutlined />,
     channels: CHANNELS_BY_TASK_TYPE.OTHER || [],
     agents: [
-      { name: 'ERPOrchestrator', desc: 'ERP 流程编排与执行', features: ['订单处理', '库存管理', '财务对账'] },
+      { name: 'ERPOrchestrator', desc: 'ERP 流程编排与执行 (LLM ReAct)', features: ['采购单管理', '销售单管理', '入库 / 出库', '库存查询', '财务对账', '审计日志', '数据看板'] },
+    ]
+  },
+  {
+    id: 'CRM',
+    title: 'CRM 客户关系',
+    subtitle: 'Customer Relationship',
+    description: '客户 / 联系人 / 线索 / 商机 / 合同 / 回款 / 跟进',
+    accent: 'iris',
+    icon: <TeamOutlined />,
+    channels: [],
+    agents: [
+      { name: 'CRMOrchestrator', desc: 'CRM 流程编排与执行 (LLM ReAct)', features: ['客户与联系人', '线索与商机', '合同管理', '回款计划与记录', '跟进记录', '统一客户主数据'] },
     ]
   },
 ]
@@ -821,12 +836,6 @@ function HomeContent({ onLoginClick }) {
     }}>
       <HomeNavBar onLoginClick={onLoginClick} />
 
-      {/* Install Section */}
-      <div id="install" style={{ maxWidth: 1240, margin: '48px auto 0', padding: '0 32px', scrollMarginTop: 64, position: 'relative', zIndex: 2 }}>
-        <InstallCard />
-        <DesktopClientCard />
-      </div>
-
       {/* Hero Section */}
       <div id="hero" style={{
         padding: '120px 32px 80px',
@@ -877,8 +886,8 @@ function HomeContent({ onLoginClick }) {
             margin: '0 0 44px',
             fontFamily: 'var(--ab-font-body)',
           }}>
-            基于大语言模型的多 Agent 协作平台 — 代码工程、数据分析、文档编排与
-            ERP 进销存任务在同一控制中心内自动化执行。
+            基于大语言模型的多 Agent 协作平台 — 代码工程、数据分析、文档编排、
+            ERP 进销存与 CRM 客户关系任务在同一控制中心内自动化执行。
           </p>
 
           <div className="ab-reveal ab-reveal-4" style={{ display: 'flex', alignItems: 'center', gap: 24, flexWrap: 'wrap' }}>
@@ -935,7 +944,7 @@ function HomeContent({ onLoginClick }) {
             {[
               { k: 'AGENTS', v: '15+' },
               { k: 'CHANNELS', v: '05' },
-              { k: 'TASK TYPES', v: '04 + ERP' },
+              { k: 'TASK TYPES', v: '04 + ERP + CRM' },
               { k: 'LANGUAGES', v: 'JAVA / TS / GO' },
             ].map(s => (
               <div key={s.k}>
@@ -963,7 +972,7 @@ function HomeContent({ onLoginClick }) {
             Core <em>capability</em> matrix
           </h2>
           <p style={{ color: 'var(--ab-text-3)', fontSize: 15, lineHeight: 1.7, fontFamily: 'var(--ab-font-body)' }}>
-            五个任务域, 每个域由专职 Agent 编排执行 — 从推理、检索到代码生成与 SQL 执行,
+            六个任务域, 每个域由专职 Agent 编排执行 — 从推理、检索到代码生成、SQL 执行到 ERP/CRM 业务,
             端到端无需人工切换工具。
           </p>
         </div>
@@ -1238,6 +1247,12 @@ function HomeContent({ onLoginClick }) {
             </Button>
           </div>
         </div>
+      </div>
+
+      {/* Install Section — 移至页面底部 */}
+      <div id="install" style={{ maxWidth: 1240, margin: '0 auto 80px', padding: '0 32px', scrollMarginTop: 64, position: 'relative', zIndex: 2 }}>
+        <InstallCard />
+        <DesktopClientCard />
       </div>
 
       {/* Footer */}
