@@ -40,6 +40,14 @@ import ReconciliationManagement from './ReconciliationManagement'
 import CompanyManagement from './CompanyManagement'
 import InventoryManagement from './InventoryManagement'
 import AuditLogManagement from './AuditLogManagement'
+import CrmCustomerManagement from './CrmCustomerManagement'
+import CrmContactManagement from './CrmContactManagement'
+import CrmLeadManagement from './CrmLeadManagement'
+import CrmOpportunityManagement from './CrmOpportunityManagement'
+import CrmContractManagement from './CrmContractManagement'
+import CrmPaymentPlanManagement from './CrmPaymentPlanManagement'
+import CrmPaymentRecordManagement from './CrmPaymentRecordManagement'
+import CrmFollowUpManagement from './CrmFollowUpManagement'
 import DocumentPreviewModal from './DocumentPreviewModal'
 import SessionSidebar from './components/SessionSidebar'
 import { executeAgentCommands, appendStreamToken, tryStreamDispatch, resetStreamBuffer } from './components/WorkspacePanel'
@@ -3184,7 +3192,7 @@ const handleDeleteSession = (id) => {
                 )
               })() : (
                 <Text style={{ color: 'var(--ab-text-3)', fontSize: 14, fontFamily: "'Hanken Grotesk', system-ui, sans-serif" }}>
-                  {activeTab === 'documents' ? t('nav.companyDocuments') : activeTab === 'sales_orders' ? '销售单管理' : activeTab === 'purchase_orders' ? '采购单管理' : activeTab === 'reconciliations' ? '对账单管理' : activeTab === 'erp' ? t('erp.dataManagement') : activeTab === 'outbound_orders' ? t('erp.outboundOrders') : activeTab === 'inbound_orders' ? t('erp.inboundOrders') : activeTab === 'parts' ? t('erp.parts') : activeTab === 'customers' ? t('erp.customers') : activeTab === 'suppliers' ? t('erp.suppliers') : activeTab === 'customer_part_mappings' ? '客户料号映射' : activeTab === 'import_product_relation' ? '导入产品关系' : activeTab === 'dashboard' ? t('erp.dashboard') : activeTab === 'databases' ? t('nav.databases') : activeTab === 'monitor' ? 'autobot-monitor' : (sessions.find(s => s.id === sessionId)?.title || t('nav.newChat'))}
+                  {activeTab === 'documents' ? t('nav.companyDocuments') : activeTab === 'sales_orders' ? '销售单管理' : activeTab === 'purchase_orders' ? '采购单管理' : activeTab === 'reconciliations' ? '对账单管理' : activeTab === 'erp' ? t('erp.dataManagement') : activeTab === 'outbound_orders' ? t('erp.outboundOrders') : activeTab === 'inbound_orders' ? t('erp.inboundOrders') : activeTab === 'parts' ? t('erp.parts') : activeTab === 'customers' ? t('erp.customers') : activeTab === 'suppliers' ? t('erp.suppliers') : activeTab === 'customer_part_mappings' ? '客户料号映射' : activeTab === 'import_product_relation' ? '导入产品关系' : activeTab === 'crm_customers' ? 'CRM 客户管理' : activeTab === 'crm_contacts' ? 'CRM 联系人管理' : activeTab === 'crm_leads' ? 'CRM 线索管理' : activeTab === 'crm_opportunities' ? 'CRM 商机管理' : activeTab === 'crm_contracts' ? 'CRM 合同管理' : activeTab === 'crm_payment_plans' ? 'CRM 回款计划' : activeTab === 'crm_payment_records' ? 'CRM 回款记录' : activeTab === 'crm_follow_ups' ? 'CRM 跟进记录' : activeTab === 'dashboard' ? t('erp.dashboard') : activeTab === 'databases' ? t('nav.databases') : activeTab === 'monitor' ? 'autobot-monitor' : (sessions.find(s => s.id === sessionId)?.title || t('nav.newChat'))}
                 </Text>
               )}
               {activeTab === 'chat' && (sessions.find(s => s.id === sessionId)?.channel === 'code' || (!sessions.find(s => s.id === sessionId)?.channel && currentChannel === 'code')) && workspaceDir && (
@@ -3269,6 +3277,22 @@ const handleDeleteSession = (id) => {
             <InventoryManagement user={user} companies={companies} />
           ) : activeTab === 'audit_logs' ? (
             <AuditLogManagement user={user} />
+          ) : activeTab === 'crm_customers' ? (
+            <CrmCustomerManagement user={user} companies={companies} />
+          ) : activeTab === 'crm_contacts' ? (
+            <CrmContactManagement user={user} companies={companies} />
+          ) : activeTab === 'crm_leads' ? (
+            <CrmLeadManagement user={user} companies={companies} />
+          ) : activeTab === 'crm_opportunities' ? (
+            <CrmOpportunityManagement user={user} companies={companies} />
+          ) : activeTab === 'crm_contracts' ? (
+            <CrmContractManagement user={user} companies={companies} />
+          ) : activeTab === 'crm_payment_plans' ? (
+            <CrmPaymentPlanManagement user={user} companies={companies} />
+          ) : activeTab === 'crm_payment_records' ? (
+            <CrmPaymentRecordManagement user={user} companies={companies} />
+          ) : activeTab === 'crm_follow_ups' ? (
+            <CrmFollowUpManagement user={user} companies={companies} />
           ) : activeTab === 'databases' ? (
               <DatabaseManagement dbConfigs={dbConfigs} fetchDbConfigs={fetchDbConfigs} onAddDbConfig={addDbConfig} onUpdateDbConfig={updateDbConfig} user={user} />
           ) : activeTab === 'monitor' && isSuperAdmin ? (

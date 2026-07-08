@@ -37,6 +37,7 @@ export default function SessionSidebar({
     : ALL_CHANNELS.filter(ch => companyChannels.includes(ch.key))
   
   const hasErpChannel = CHANNELS.some(ch => ch.key === 'erp');
+  const hasCrmChannel = CHANNELS.some(ch => ch.key === 'crm');
   const hasDatabaseChannel = CHANNELS.some(ch => ch.key === 'database_analysis');
 
   // Probe monitor availability once on mount; cheap, no polling
@@ -210,12 +211,25 @@ export default function SessionSidebar({
                 { key: 'parts', icon: <ToolOutlined />, label: t('erp.parts') },
                 { key: 'inventory', icon: <ContainerOutlined />, label: '库存管理 (Admin)' },
                 { key: 'customers', icon: <TeamOutlined />, label: t('erp.customers') },
+                { key: 'crm_contacts', icon: <UsergroupAddOutlined />, label: '联系人管理' },
                 { key: 'suppliers', icon: <UsergroupAddOutlined />, label: t('erp.suppliers') },
                 { key: 'customer_part_mappings', icon: <LinkOutlined />, label: '客户料号映射' },
                 { key: 'import_product_relation', icon: <UploadOutlined />, label: '导入产品关系' },
                 { key: 'audit_logs', icon: <FileSearchOutlined />, label: '审计日志 (Admin)' },
                 { key: 'erp', icon: <ShopOutlined />, label: t('erp.dataManagement') },
                 { key: 'erp_metadata', icon: <ApiOutlined />, label: '元数据配置 (Admin)' },
+              ]
+            }
+          ] : []),
+          ...(((user?.role === 'SUPER_ADMIN' || user?.role === 'COMPANY_ADMIN') && hasCrmChannel) ? [
+            { key: 'crm', icon: <TeamOutlined />, label: '客户关系管理',
+              children: [
+                { key: 'crm_leads', icon: <CrownOutlined />, label: '线索管理' },
+                { key: 'crm_opportunities', icon: <ApiOutlined />, label: '商机管理' },
+                { key: 'crm_contracts', icon: <FileTextOutlined />, label: '合同管理' },
+                { key: 'crm_payment_plans', icon: <DashboardOutlined />, label: '回款计划' },
+                { key: 'crm_payment_records', icon: <AuditOutlined />, label: '回款记录' },
+                { key: 'crm_follow_ups', icon: <MessageOutlined />, label: '跟进记录' },
               ]
             }
           ] : []),

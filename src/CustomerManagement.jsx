@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { Layout, Table, Button, Modal, Form, Input, Tag, Space, message, Popconfirm, Typography } from 'antd'
+import { Layout, Table, Button, Modal, Form, Input, Select, Tag, Space, message, Popconfirm, Typography } from 'antd'
 import { PlusOutlined, SearchOutlined, EditOutlined, DeleteOutlined, ReloadOutlined } from '@ant-design/icons'
 import { Resizable } from 'react-resizable'
 import 'react-resizable/css/styles.css'
@@ -18,10 +18,18 @@ const ResizableTitle = (props) => {
   )
 }
 
+// 2026-07-08: 合并 CRM 客户模型 — 统一使用 crm_customer 表
+// 后端 /api/erp/customers 已改为查 crm_customer (CustomerProfileController 委托 CrmMapper)
+// 字段: id, name, phone, address, industry, source, level, status, remark, owner_user_id
+// 联系人信息已迁移到 crm_contact 表 (独立的"联系人管理"页面维护)
+const LEVEL_TAG = { normal: 'default', vip: 'gold', strategic: 'magenta' }
+const STATUS_TAG = { active: 'green', inactive: 'default' }
+
 export default function CustomerManagement({ user, companies = [] }) {
   const { t } = useTranslation()
   const isSuperAdmin = user?.role === 'SUPER_ADMIN'
-  const effectiveCompanyId = isSuperAdmin ? null : user?.companyId
+  const [selectedCompanyId, setSelectedCompanyId] = useState(companies[0]?.id || user?.companyId || 0)
+  const effectiveCompanyId = isSuperAdmin ? (selectedCompanyId || 0) : user?.companyId
 
   const [customers, setCustomers] = useState([])
   const [total, setTotal] = useState(0)
@@ -33,22 +41,22 @@ export default function CustomerManagement({ user, companies = [] }) {
   const [form] = Form.useForm()
   const [editing, setEditing] = useState(null)
   const [colWidths, setColWidths] = useState({
-    name: 160, contactPerson: 120, phone: 140, email: 200, address: 200, action: 160,
+    name: 160, industry: 120, source: 100, level: 90, status: 90, phone: 140, address: 200, action: 160,
   })
 
   const fetchCustomers = useCallback(async () => {
     setLoading(true)
     try {
-      const params = { page, size: pageSize, keyword: keyword || undefined }
-      if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
+      const params = { page, size: pageSize, keyword: keyword || undefined, companyId: effectiveCompanyId || 0 }
       const res = await api.get('/erp/customers', { params })
-      const custPayload = res.data?.data || res.data || {}
-      setCustomers(custPayload.customers || [])
-      setTotal(custPayload.total || 0)
+      // 后端返回 {data:{data:[...], total}} 或 {data:{customers:[...], total}}
+      const body = res.data?.data || res.data || {}
+      setCustomers(body.data || body.customers || [])
+      setTotal(body.total || 0)
     } catch (e) {
       message.error('加载客户失败: ' + (e.response?.data?.error || e.message))
     } finally { setLoading(false) }
-  }, [page, pageSize, keyword, effectiveCompanyId, isSuperAdmin])
+  }, [page, pageSize, keyword, effectiveCompanyId])
 
   useEffect(() => { fetchCustomers() }, [fetchCustomers])
 
@@ -62,10 +70,13 @@ export default function CustomerManagement({ user, companies = [] }) {
     setEditing(record)
     form.setFieldsValue({
       name: record.name,
-      contactPerson: record.contactPerson,
+      industry: record.industry,
+      source: record.source,
+      level: record.level,
+      status: record.status,
       phone: record.phone,
-      email: record.email,
       address: record.address,
+      remark: record.remark,
     })
     setShowModal(true)
   }
@@ -73,15 +84,11 @@ export default function CustomerManagement({ user, companies = [] }) {
   const handleSave = async () => {
     try {
       const values = await form.validateFields()
-      const body = {
-        name: values.name,
-        contactPerson: values.contactPerson || null,
-        phone: values.phone || null,
-        email: values.email || null,
-        address: values.address || null,
-      }
+      const body = { ...values, companyId: effectiveCompanyId || 0 }
       if (editing) {
-        await api.put(`/erp/customers/${editing.customerId}`, body)
+        // 兼容: editing.id 或 editing.customerId (后端返回可能含两者)
+        const id = editing.id || editing.customerId
+        await api.put(`/erp/customers/${id}`, body)
         message.success('已更新')
       } else {
         await api.post('/erp/customers', body)
@@ -95,11 +102,10 @@ export default function CustomerManagement({ user, companies = [] }) {
     }
   }
 
-  const handleDelete = async (id) => {
+  const handleDelete = async (record) => {
     try {
-      const params = {}
-      if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
-      await api.delete(`/erp/customers/${id}`, { params })
+      const id = record.id || record.customerId
+      await api.delete(`/erp/customers/${id}`, { params: { companyId: effectiveCompanyId || 0 } })
       message.success('已删除')
       fetchCustomers()
     } catch (e) {
@@ -112,24 +118,30 @@ export default function CustomerManagement({ user, companies = [] }) {
   }
 
   const mergedColumns = [
-    { title: t('erp.customerName'), dataIndex: 'name', key: 'name', width: colWidths.name,
+    { title: '客户名称', dataIndex: 'name', key: 'name', width: colWidths.name,
       onHeaderCell: (col) => ({ width: col.width, onResize: handleResize('name') }) },
-    { title: t('erp.contactPerson'), dataIndex: 'contactPerson', key: 'contactPerson', width: colWidths.contactPerson,
-      onHeaderCell: (col) => ({ width: col.width, onResize: handleResize('contactPerson') }) },
-    { title: t('erp.phone'), dataIndex: 'phone', key: 'phone', width: colWidths.phone,
+    { title: '行业', dataIndex: 'industry', key: 'industry', width: colWidths.industry,
+      onHeaderCell: (col) => ({ width: col.width, onResize: handleResize('industry') }) },
+    { title: '来源', dataIndex: 'source', key: 'source', width: colWidths.source,
+      onHeaderCell: (col) => ({ width: col.width, onResize: handleResize('source') }) },
+    { title: '等级', dataIndex: 'level', key: 'level', width: colWidths.level,
+      onHeaderCell: (col) => ({ width: col.width, onResize: handleResize('level') }),
+      render: v => v ? <Tag color={LEVEL_TAG[v] || 'default'}>{v}</Tag> : '-' },
+    { title: '状态', dataIndex: 'status', key: 'status', width: colWidths.status,
+      onHeaderCell: (col) => ({ width: col.width, onResize: handleResize('status') }),
+      render: v => v ? <Tag color={STATUS_TAG[v] || 'default'}>{v}</Tag> : '-' },
+    { title: '电话', dataIndex: 'phone', key: 'phone', width: colWidths.phone,
       onHeaderCell: (col) => ({ width: col.width, onResize: handleResize('phone') }) },
-    { title: t('erp.email'), dataIndex: 'email', key: 'email', width: colWidths.email, ellipsis: true,
-      onHeaderCell: (col) => ({ width: col.width, onResize: handleResize('email') }) },
-    { title: t('erp.address'), dataIndex: 'address', key: 'address', width: colWidths.address, ellipsis: true,
+    { title: '地址', dataIndex: 'address', key: 'address', width: colWidths.address, ellipsis: true,
       onHeaderCell: (col) => ({ width: col.width, onResize: handleResize('address') }) },
     {
-      title: t('erp.action.title'), key: 'action', width: colWidths.action,
+      title: '操作', key: 'action', width: colWidths.action,
       onHeaderCell: (col) => ({ width: col.width, onResize: handleResize('action') }),
       render: (_, record) => (
         <Space>
-          <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(record)}>{t('erp.action.edit')}</Button>
-          <Popconfirm title={t('erp.action.confirmDelete')} onConfirm={() => handleDelete(record.customerId)}>
-            <Button size="small" danger icon={<DeleteOutlined />}>{t('erp.action.delete')}</Button>
+          <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(record)}>编辑</Button>
+          <Popconfirm title="确认删除该客户?" onConfirm={() => handleDelete(record)}>
+            <Button size="small" danger icon={<DeleteOutlined />}>删除</Button>
           </Popconfirm>
         </Space>
       )
@@ -142,45 +154,75 @@ export default function CustomerManagement({ user, companies = [] }) {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
           <Space>
             <Input.Search
-              placeholder={t('erp.searchCustomer')}
+              placeholder="搜索客户名称/电话"
               value={keyword} onChange={e => setKeyword(e.target.value)}
               onSearch={() => { setPage(1); fetchCustomers() }}
               style={{ width: 320 }} allowClear
             />
-            <Button icon={<ReloadOutlined />} onClick={fetchCustomers}>{t('erp.action.refresh')}</Button>
+            <Button icon={<ReloadOutlined />} onClick={fetchCustomers}>刷新</Button>
+            {isSuperAdmin && companies.length > 0 && (
+              <Select
+                value={selectedCompanyId}
+                onChange={v => { setSelectedCompanyId(v); setPage(1) }}
+                style={{ width: 180 }}
+                placeholder="选择公司"
+              >
+                {companies.map(c => <Select.Option key={c.id} value={c.id}>{c.name}</Select.Option>)}
+              </Select>
+            )}
           </Space>
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('erp.action.createCustomer')}</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增客户</Button>
         </div>
 
         <Table
-          dataSource={customers} columns={mergedColumns} rowKey="customerId" loading={loading}
+          dataSource={customers} columns={mergedColumns} rowKey={r => r.id || r.customerId} loading={loading}
           pagination={{ current: page, pageSize, total, showSizeChanger: true,
             onChange: (p, ps) => { setPage(p); setPageSize(ps) }}}
           components={{ header: { cell: ResizableTitle } }}
           scroll={{ x: 'max-content' }}
           style={{ background: 'transparent' }}
-          locale={{ emptyText: t('erp.noData') }}
+          locale={{ emptyText: '暂无数据' }}
         />
 
         <Modal
-          title={editing ? t('erp.action.editCustomer') : t('erp.action.createCustomer')}
+          title={editing ? '编辑客户' : '新增客户'}
           open={showModal} onCancel={() => setShowModal(false)} onOk={handleSave}
-          width={500}
+          width={560}
         >
           <Form form={form} layout="vertical">
-            <Form.Item name="name" label={t('erp.customerName')} rules={[{ required: true, message: t('erp.validation.required') }]}>
+            <Form.Item name="name" label="客户名称" rules={[{ required: true, message: '请输入客户名称' }]}>
               <Input />
             </Form.Item>
-            <Form.Item name="contactPerson" label={t('erp.contactPerson')}>
+            <Space style={{ display: 'flex' }} >
+              <Form.Item name="industry" label="行业" style={{ flex: 1, marginRight: 8 }}>
+                <Input placeholder="如: 电子/汽车/医疗" />
+              </Form.Item>
+              <Form.Item name="source" label="来源" style={{ flex: 1 }}>
+                <Input placeholder="如: 展会/转介绍/广告" />
+              </Form.Item>
+            </Space>
+            <Space style={{ display: 'flex' }} >
+              <Form.Item name="level" label="等级" style={{ flex: 1, marginRight: 8 }}>
+                <Select placeholder="选择等级" allowClear>
+                  <Select.Option value="normal">普通</Select.Option>
+                  <Select.Option value="vip">VIP</Select.Option>
+                  <Select.Option value="strategic">战略</Select.Option>
+                </Select>
+              </Form.Item>
+              <Form.Item name="status" label="状态" style={{ flex: 1 }}>
+                <Select placeholder="选择状态" allowClear>
+                  <Select.Option value="active">活跃</Select.Option>
+                  <Select.Option value="inactive">停用</Select.Option>
+                </Select>
+              </Form.Item>
+            </Space>
+            <Form.Item name="phone" label="电话">
               <Input />
             </Form.Item>
-            <Form.Item name="phone" label={t('erp.phone')}>
-              <Input />
+            <Form.Item name="address" label="地址">
+              <Input.TextArea rows={2} />
             </Form.Item>
-            <Form.Item name="email" label={t('erp.email')}>
-              <Input type="email" />
-            </Form.Item>
-            <Form.Item name="address" label={t('erp.address')}>
+            <Form.Item name="remark" label="备注">
               <Input.TextArea rows={2} />
             </Form.Item>
           </Form>

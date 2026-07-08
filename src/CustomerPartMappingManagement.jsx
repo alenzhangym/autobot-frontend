@@ -33,7 +33,7 @@ export default function CustomerPartMappingManagement({ user, companies = [] }) 
           api.get('/erp/customers', { params }),
           api.get('/erp/parts', { params: { ...params, size: 999 } }),
         ])
-        setCustomers(custRes.data.customers || [])
+        setCustomers(custRes.data?.data?.customers || custRes.data?.customers || [])
         setParts(partRes.data.parts || [])
       } catch (e) { /* ignore */ }
     })()
