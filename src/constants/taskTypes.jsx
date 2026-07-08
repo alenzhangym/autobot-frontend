@@ -24,6 +24,7 @@ import {
   ShopOutlined,
   SearchOutlined,
   ReadOutlined,
+  TeamOutlined,
 } from '@ant-design/icons';
 
 // 任务类型 key（与后端 TaskType 枚举值完全一致）
@@ -102,6 +103,17 @@ export const CHANNELS = [
     subType: null,
     capabilities: ['网络检索', '咨政报告', '知识库结合', '中英文过滤'],
     agentNames: ['AcademicOrchestrator'],
+  },
+  {
+    key: 'crm',
+    label: 'CRM 客户',
+    desc: '客户/商机/合同/跟进管理',
+    icon: '👥',
+    antIcon: <TeamOutlined />,
+    taskType: null, // 独立分支，对标 ERP
+    subType: null,
+    capabilities: ['客户查询', '商机推进', '合同回款', '跟进记录'],
+    agentNames: ['CRMOrchestrator'],
   },
 ];
 

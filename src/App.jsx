@@ -48,6 +48,7 @@ import IssuesSidePanel from './components/IssuesSidePanel'
 import InteractivePanel from './components/InteractivePanel'
 import OrderFormModal from './components/OrderFormModal'
 import ErpQuickActions from './components/ErpQuickActions'
+import CrmQuickActions from './components/CrmQuickActions'
 import GraphStatusPanel from './components/GraphStatusPanel'
 import LspSettingsPanel from './components/LspSettingsPanel'
 import McpSettingsPanel from './components/McpSettingsPanel'
@@ -3460,6 +3461,24 @@ const handleDeleteSession = (id) => {
                           </span>
                         </Tooltip>
                       </div>
+                    )}
+
+                    {/* ── CRM 快速操作栏 — 仅 CRM channel 显示 ──
+                        2026-07-07: 对标 ERP, 标签作为意图声明前缀拼到用户输入前,
+                        CRMIntentDetector 看到关键词立即命中 (0 LLM 意图调用). */}
+                    {(() => {
+                      const curSess = sessions.find(s => s.id === sessionId)
+                      const sessChannel = curSess?.channel || currentChannel
+                      return sessChannel === 'crm'
+                    })() && (
+                      <CrmQuickActions
+                        selected={selectedQuickAction}
+                        onSelect={setSelectedQuickAction}
+                        onClear={() => setSelectedQuickAction(null)}
+                        currentInput={input}
+                        inputRef={chatInputRef}
+                        disabled={isLoading}
+                      />
                     )}
                     {/* ── A 方案：code 会话移除「分析/构建」toggle，意图由后端基于消息+状态推断。
                           状态栏保留 codeMode='auto' 默认值；高级用户可通过 devtools 临时改 state 强制锁定。 */}
