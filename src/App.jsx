@@ -57,6 +57,11 @@ import InteractivePanel from './components/InteractivePanel'
 import OrderFormModal from './components/OrderFormModal'
 import ErpQuickActions from './components/ErpQuickActions'
 import CrmQuickActions from './components/CrmQuickActions'
+import PlanPreviewCard from './components/PlanPreviewCard'
+import ClarifyQuestionModal from './components/ClarifyQuestionModal'
+import ResultExplanationCard from './components/ResultExplanationCard'
+import ParamSourceCard from './components/ParamSourceCard'
+import CrossDomainEntityCard from './components/CrossDomainEntityCard'
 import GraphStatusPanel from './components/GraphStatusPanel'
 import LspSettingsPanel from './components/LspSettingsPanel'
 import McpSettingsPanel from './components/McpSettingsPanel'
@@ -76,7 +81,7 @@ import enUS from 'antd/es/locale/en_US'
 import { Virtuoso } from 'react-virtuoso'
 import { extractTrailingStateJson, stripAgentMarkers, tryParseAnalysisResult, getLastParseError, decodeStateStringList, replaceTrailingAnalysisState, mergeAnalysisStateContent, extractAnalysisState } from './utils/helpers.jsx'
 import { createHealthPoller, probeHttp } from './utils/healthPoller.js'
-import { getTaskTypeByChannel, CHANNELS_BY_KEY } from './constants/taskTypes.jsx'
+import { getTaskTypeByChannel, CHANNELS_BY_KEY, CHANNELS as ALL_CHANNELS, LEGACY_BUSINESS_CHANNELS, detectDomainFromInput, isBusinessChannel } from './constants/taskTypes.jsx'
 
 // ── Web Worker for async profileData ─────────────────────────────────────────
 const profileDataWorker = new Worker(new URL('./workers/profileData.worker.js', import.meta.url), { type: 'module' });
@@ -302,7 +307,7 @@ const CHANNELS = [
   { key: 'document_qa', label: '文档问答', desc: '基于知识库的文档检索问答', icon: <SearchOutlined /> },
   { key: 'code', label: '代码任务', desc: '代码分析/生成/审查', icon: <CodeOutlined /> },
   { key: 'document_generation', label: '文档生成', desc: '创建文档/报告', icon: <FileTextOutlined /> },
-  { key: 'erp', label: 'ERP 进销存', desc: '库存/订单/客户管理', icon: <ShopOutlined /> },
+  { key: 'cross', label: 'ERP/CRM 业务', desc: '进销存 + 客户关系管理', icon: <ShopOutlined /> },
   { key: 'database_analysis', label: '数据库分析', desc: '查询公司数据库', icon: <DatabaseOutlined /> },
 ]
 
@@ -536,7 +541,9 @@ function SettingsModal({ open, onClose, user, dbConfigs, onDeleteDbConfig, onAdd
                       <Text style={{ color: '#666', fontSize: 11 }}>ID: {c.id}</Text>
                       <div style={{ marginTop: 4, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                         {(c.channelAccess || []).map(ch => {
-                          const def = CHANNELS.find(d => d.key === ch)
+                          // Phase 4 兼容: 旧 erp/crm 显示为 cross label
+                          const normalizedCh = LEGACY_BUSINESS_CHANNELS.includes(ch) ? 'cross' : ch
+                          const def = ALL_CHANNELS.find(d => d.key === normalizedCh)
                           return <Tag key={ch} color="blue" style={{ fontSize: 10 }}>{def ? def.label : ch}</Tag>
                         })}
                         {(!c.channelAccess || c.channelAccess.length === 0) && (
@@ -835,6 +842,10 @@ function App() {
   const [orderFormOpen, setOrderFormOpen] = useState(false)
   const [orderFormSpec, setOrderFormSpec] = useState(null)
   const [orderFormHint, setOrderFormHint] = useState('')
+  // Phase 4: 结构化澄清 / 执行前预览 (pause/clarify 承接)
+  const [pendingPause, setPendingPause] = useState(null)   // {preview, reason, sessionId}
+  const [pendingClarify, setPendingClarify] = useState(null) // {clarifyQuestion, sessionId}
+  const [clarifyLoading, setClarifyLoading] = useState(false)
   const [isResumingCodeSession, setIsResumingCodeSession] = useState(false)
   const [graphDrawerOpen, setGraphDrawerOpen] = useState(false) // P7-6: 会话内图知识库 Drawer
   const [isParsingHistory, setIsParsingHistory] = useState(false)
@@ -862,8 +873,7 @@ function App() {
   const [selectedImage, setSelectedImage] = useState(null)
   const [selectedImageBase64, setSelectedImageBase64] = useState(null)
 
-  const mediaRecorderRef = useRef(null)
-  const chunksRef = useRef([])
+  const recognitionRef = useRef(null)
 
 
   const fileInputRef = useRef(null)
@@ -2031,7 +2041,9 @@ function App() {
   )
 
   const startNewSession = (channelType) => {
-    const ch = channelType || currentChannel
+    // Phase 4: 历史 erp/crm channel 自动映射到 cross (已合并)
+    let ch = channelType || currentChannel
+    if (LEGACY_BUSINESS_CHANNELS.includes(ch)) ch = 'cross'
     setCurrentChannel(ch)
     if (ch === 'code') {
       // 浏览器模式已支持 tree-sitter wasm 解析 (通过本机 agent 读文件),
@@ -2243,7 +2255,10 @@ function App() {
       });
       
       if (res.data.status === 'success') {
-        setMessages(prev => [...prev, normalizeMessage({ role: 'assistant', content: res.data.response })]);
+        const explanation = res.data?.metadata?.explanation
+        const paramSources = res.data?.metadata?.paramSources
+        const crossDomainEntities = res.data?.metadata?.crossDomainEntities
+        setMessages(prev => [...prev, normalizeMessage({ role: 'assistant', content: res.data.response, explanation, paramSources, crossDomainEntities })]);
         fetchSessions();
       } else {
         // 防御性: 与 /chat 同样, message 缺失时回退到 response
@@ -2449,8 +2464,13 @@ function App() {
       //     触发条件：用户非确认型 query + 分类结果不是 CONVERSATIONAL
       //     code 任务静默 (isCodeSess=true) —— 后端自行处理 intent 推断, 不弹浮层
       maybeShowIntentFloater(res.data, text, isCodeSess)
-      if (res.data.status === 'success' || res.data.status === 'clarify') {
-        setMessages(prev => [...prev, normalizeMessage({ id: nextMsgId(), role: 'assistant', content: res.data.response })])
+      if (res.data.status === 'success') {
+        // §9.6 P2-3: 提取结构化结果解释, 附加到消息对象供 ResultExplanationCard 渲染
+        const explanation = res.data?.metadata?.explanation
+        // §7.6 方案七 (P2): 提取参数来源 + 跨域实体聚合, 供 ParamSourceCard / CrossDomainEntityCard 渲染
+        const paramSources = res.data?.metadata?.paramSources
+        const crossDomainEntities = res.data?.metadata?.crossDomainEntities
+        setMessages(prev => [...prev, normalizeMessage({ id: nextMsgId(), role: 'assistant', content: res.data.response, explanation, paramSources, crossDomainEntities })])
         fetchSessions()
         // 阶段5: ERP 订单表单 — 收到 reply_context.formSpec 时弹窗
         tryOpenOrderFormModal(res.data)
@@ -2461,6 +2481,35 @@ function App() {
           window.dispatchEvent(new CustomEvent('agent-issue-ops-applied', {
             detail: { sessionId, source: 'chat' }
           }))
+        }
+      } else if (res.data.status === 'pause') {
+        // Phase 4: HIGH 风险写操作暂停 — 解析 reply_context 中的 planPreview + clarifyQuestion
+        let pauseCtx = null
+        try {
+          pauseCtx = res.data.reply_context ? JSON.parse(res.data.reply_context) : null
+        } catch (e) { /* ignore parse error */ }
+        const preview = pauseCtx?.planPreview || null
+        const clarifyQuestion = pauseCtx?.clarifyQuestion || null
+        // 先把暂停原因作为普通消息展示
+        setMessages(prev => [...prev, normalizeMessage({ id: nextMsgId(), role: 'assistant', content: res.data.response || '⚠️ 高风险操作需要确认' })])
+        // 弹出结构化确认 UI
+        setPendingPause({ preview, clarifyQuestion, reason: res.data.response, sessionId })
+      } else if (res.data.status === 'clarify') {
+        // Phase 4: 结构化澄清 — 解析 reply_context 中的 clarifyQuestion
+        let clarifyCtx = null
+        try {
+          clarifyCtx = res.data.reply_context ? JSON.parse(res.data.reply_context) : null
+        } catch (e) { /* ignore parse error */ }
+        const clarifyQuestion = clarifyCtx?.clarifyQuestion || null
+        if (clarifyQuestion) {
+          // 有结构化 ClarifyQuestion → 弹出结构化澄清 UI
+          setMessages(prev => [...prev, normalizeMessage({ id: nextMsgId(), role: 'assistant', content: res.data.response || clarifyQuestion.question || '请补充信息' })])
+          setPendingClarify({ clarifyQuestion, sessionId })
+        } else {
+          // 无结构化 ClarifyQuestion → 退化为纯文本展示
+          setMessages(prev => [...prev, normalizeMessage({ id: nextMsgId(), role: 'assistant', content: res.data.response })])
+          fetchSessions()
+          tryOpenOrderFormModal(res.data)
         }
       } else if (res.data.status === 'plan_generated') {
         const planData = { ...res.data.plan, status: 'executing' }
@@ -2893,37 +2942,45 @@ function App() {
   }
 
   const startRecording = async () => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SpeechRecognition) {
+      message.error('当前浏览器不支持语音识别, 请使用 Chrome 或 Edge 浏览器')
+      return
+    }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      mediaRecorderRef.current = new MediaRecorder(stream)
-      chunksRef.current = []
-      mediaRecorderRef.current.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data) }
-      mediaRecorderRef.current.onstop = async () => {
-        const blob = new Blob(chunksRef.current, { type: 'audio/webm' })
-        const formData = new FormData()
-        formData.append('file', blob, 'recording.webm')
-        formData.append('session_id', sessionId)
-        formData.append('type', 'audio')
-        setMessages(prev => [...prev, { role: 'user', content: '🎤 Sending audio...' }])
-        try {
-          const res = await api.post('/upload', formData)
-          if (res.data.status === 'success') {
-            const text = res.data.transcription
-            setMessages(prev => { const m = [...prev]; m.pop(); return [...m, { role: 'user', content: `🎤 ${text}` }] })
-            sendMessage(text)
-          }
-        } catch (err) {}
+      const recognition = new SpeechRecognition()
+      recognition.lang = 'zh-CN'
+      recognition.continuous = false
+      recognition.interimResults = false
+      let finalText = ''
+      recognition.onresult = (event) => {
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          if (event.results[i].isFinal) finalText += event.results[i][0].transcript
+        }
       }
-      mediaRecorderRef.current.start()
+      recognition.onerror = (event) => {
+        setIsRecording(false)
+        message.error('语音识别失败: ' + (event.error || '未知错误'))
+      }
+      recognition.onend = () => {
+        setIsRecording(false)
+        if (finalText.trim()) {
+          setMessages(prev => [...prev, { role: 'user', content: `🎤 ${finalText.trim()}` }])
+          sendMessage(finalText.trim())
+        } else {
+          message.warning('未识别到语音内容')
+        }
+      }
+      recognitionRef.current = recognition
+      recognition.start()
       setIsRecording(true)
-    } catch (err) { alert('Could not access microphone') }
+    } catch (err) { alert('Could not access microphone: ' + err.message) }
   }
 
   const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop()
+    if (recognitionRef.current && isRecording) {
+      recognitionRef.current.stop()
       setIsRecording(false)
-      mediaRecorderRef.current.stream.getTracks().forEach(t => t.stop())
     }
   }
 
@@ -3180,7 +3237,9 @@ const handleDeleteSession = (id) => {
               {activeTab === 'chat' ? (() => {
                 const curSess = sessions.find(s => s.id === sessionId)
                 const chKey = curSess?.channel || currentChannel
-                const chDef = CHANNELS.find(c => c.key === chKey)
+                // Phase 4: 历史 erp/crm 会话映射到 cross
+                const normalizedChKey = LEGACY_BUSINESS_CHANNELS.includes(chKey) ? 'cross' : chKey
+                const chDef = ALL_CHANNELS.find(c => c.key === normalizedChKey)
                 return (
                   <>
                     {chDef?.icon && <span style={{ color: 'var(--ab-copper)', fontSize: 15, display: 'inline-flex', alignItems: 'center' }}>{chDef.icon}</span>}
@@ -3307,7 +3366,7 @@ const handleDeleteSession = (id) => {
               {/* Messages */}
               {messages.length === 0 ? (
                 <div style={{ flex: 1, overflow: 'auto', padding: '24px 0' }} className="custom-scrollbar">
-                  <div style={{ maxWidth: 760, margin: '0 auto', padding: '0 24px' }}>
+                  <div style={{ maxWidth: 1000, margin: '0 auto', padding: '0 24px' }}>
                     {isLoading ? (
                       <SessionSkeleton />
                     ) : activeScheduledTask ? (
@@ -3335,14 +3394,17 @@ const handleDeleteSession = (id) => {
                     itemContent={(index) => {
                       const msg = messages[index]
                       return (
-                        <div style={{ maxWidth: 760, margin: '0 auto', padding: '0 24px' }}>
+                        <div style={{ maxWidth: 1000, margin: '0 auto', padding: '0 24px' }}>
                           <MessageBubble msg={msg} onDelete={() => handleDeleteMessage(msg.id || msg._localId)} />
+                          {msg.explanation && <ResultExplanationCard explanation={msg.explanation} />}
+                          {msg.paramSources && <ParamSourceCard paramSources={msg.paramSources} />}
+                          {msg.crossDomainEntities && <CrossDomainEntityCard entities={msg.crossDomainEntities} />}
                         </div>
                       )
                     }}
                     components={{
                       Header: () => isParsingHistory && !isLoading ? (
-                        <div style={{ maxWidth: 760, margin: '0 auto', padding: '0 24px' }}>
+                        <div style={{ maxWidth: 1000, margin: '0 auto', padding: '0 24px' }}>
                           <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
                             <Avatar icon={<RobotOutlined />} size={32} style={{ background: '#1677ff', flexShrink: 0 }} />
                             <div>
@@ -3356,7 +3418,7 @@ const handleDeleteSession = (id) => {
                         </div>
                       ) : null,
                       Footer: () => isLoading && messages.length > 0 ? (
-                        <div style={{ maxWidth: 760, margin: '0 auto', padding: '0 24px' }}>
+                        <div style={{ maxWidth: 1000, margin: '0 auto', padding: '0 24px' }}>
                           <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
                             <Avatar icon={<RobotOutlined />} size={32} style={{ background: '#1677ff', flexShrink: 0 }} />
                             <div>
@@ -3441,14 +3503,20 @@ const handleDeleteSession = (id) => {
               ) : (
                 <div style={{ padding: '0 24px 20px', background: '#0a0a0a', borderTop: '1px solid #2a2620' }}>
                   <div style={{ maxWidth: 760, margin: '0 auto' }}>
-                    {/* ── ERP 快速操作栏 — 仅 ERP channel 显示 ──
-                        跳过 LLM 意图识别, 直接进入订单录入/数据分析/主数据流程.
-                        用户粘贴大段 CSV 时, 点标签比让 LLM 解析快 10x+
-                        2026-07-05: 非 ERP channel (学术任务/code/general 等) 不再渲染 ERP 专属标签. */}
+                    {/* ── ERP 快速操作栏 — 业务会话 (cross/erp) 显示 ──
+                        Phase 4: erp/crm 合并为 cross channel 后, 标签按域动态切换.
+                        - 历史 erp 会话 → 固定显示 ERP 标签
+                        - cross 会话 → 根据已选标签或输入框关键词检测域
+                        标签前缀仍命中后端 ERPIntentDetector 快速路径 (0 LLM 调用). */}
                     {(() => {
                       const curSess = sessions.find(s => s.id === sessionId)
                       const sessChannel = curSess?.channel || currentChannel
-                      return sessChannel === 'erp'
+                      if (!isBusinessChannel(sessChannel)) return false
+                      if (sessChannel === 'crm') return false
+                      if (sessChannel === 'erp') return true
+                      // cross: 已选标签时根据标签 text 锁定域, 否则根据输入框内容检测
+                      const probe = selectedQuickAction?.text || (typeof input === 'string' ? input : '')
+                      return detectDomainFromInput(probe) === 'erp'
                     })() && (
                       <ErpQuickActions
                         selected={selectedQuickAction}
@@ -3487,13 +3555,18 @@ const handleDeleteSession = (id) => {
                       </div>
                     )}
 
-                    {/* ── CRM 快速操作栏 — 仅 CRM channel 显示 ──
-                        2026-07-07: 对标 ERP, 标签作为意图声明前缀拼到用户输入前,
-                        CRMIntentDetector 看到关键词立即命中 (0 LLM 意图调用). */}
+                    {/* ── CRM 快速操作栏 — 业务会话 (cross/crm) 显示 ──
+                        Phase 4: 对标 ERP 标签逻辑, cross 会话时根据输入动态切换.
+                        标签前缀仍命中后端 CRMIntentDetector 快速路径 (0 LLM 调用). */}
                     {(() => {
                       const curSess = sessions.find(s => s.id === sessionId)
                       const sessChannel = curSess?.channel || currentChannel
-                      return sessChannel === 'crm'
+                      if (!isBusinessChannel(sessChannel)) return false
+                      if (sessChannel === 'erp') return false
+                      if (sessChannel === 'crm') return true
+                      // cross: 已选标签时根据标签 text 锁定域, 否则根据输入框内容检测
+                      const probe = selectedQuickAction?.text || (typeof input === 'string' ? input : '')
+                      return detectDomainFromInput(probe) === 'crm'
                     })() && (
                       <CrmQuickActions
                         selected={selectedQuickAction}
@@ -3645,6 +3718,100 @@ const handleDeleteSession = (id) => {
           hintText={orderFormHint}
           companyId={user?.companyId}
         />
+                {/* Phase 4: 结构化澄清弹窗 — 缺槽位/歧义/确认 */}
+                {pendingClarify && (
+                  <ClarifyQuestionModal
+                    clarify={pendingClarify.clarifyQuestion}
+                    loading={clarifyLoading}
+                    onResolve={async (result) => {
+                      setClarifyLoading(true)
+                      try {
+                        // 把用户的选择作为新消息发回后端
+                        let replyText = ''
+                        if (result.confirmed !== undefined) {
+                          replyText = result.confirmed ? '确认' : '取消'
+                        } else if (result.slot && result.value !== undefined) {
+                          replyText = `${result.slot}=${result.value}`
+                        }
+                        setPendingClarify(null)
+                        // 复用 sendMessage 逻辑发送回复
+                        if (replyText) {
+                          // 直接发送, 不走 quick action 拼装
+                          setInput(replyText)
+                          // 用 setTimeout 等状态更新后自动发送
+                          setTimeout(() => {
+                            sendMessage(replyText)
+                          }, 0)
+                        }
+                      } finally {
+                        setClarifyLoading(false)
+                      }
+                    }}
+                    onCancel={() => setPendingClarify(null)}
+                  />
+                )}
+                {/* Phase 4: HIGH 风险确认弹窗 — 执行前预览 + 确认/取消 */}
+                {pendingPause && (
+                  <>
+                    {/* §5.6.2 PlanPreviewCard: 有 preview 时渲染结构化预览, 无 preview 时降级到 ClarifyQuestionModal */}
+                    {pendingPause.preview ? (
+                      <PlanPreviewCard
+                        preview={pendingPause.preview}
+                        loading={clarifyLoading}
+                        onConfirm={async (editedParams) => {
+                          setClarifyLoading(true)
+                          try {
+                            // §9.2 若用户修改了参数, 以 "确认编辑 {json}" 格式回传后端
+                            const hasEdits = editedParams && Object.keys(editedParams).length > 0
+                            const replyText = hasEdits
+                              ? `确认编辑 ${JSON.stringify(editedParams)}`
+                              : '确认'
+                            setPendingPause(null)
+                            setInput(hasEdits ? '确认' : replyText)
+                            setTimeout(() => { sendMessage(replyText) }, 0)
+                          } finally {
+                            setClarifyLoading(false)
+                          }
+                        }}
+                        onCancel={async () => {
+                          setClarifyLoading(true)
+                          try {
+                            const replyText = '取消'
+                            setPendingPause(null)
+                            setInput(replyText)
+                            setTimeout(() => { sendMessage(replyText) }, 0)
+                          } finally {
+                            setClarifyLoading(false)
+                          }
+                        }}
+                      />
+                    ) : (
+                      <ClarifyQuestionModal
+                        clarify={pendingPause.clarifyQuestion || {
+                          clarifyType: 'POLICY_CONFIRMATION',
+                          question: pendingPause.reason || '此操作为高风险, 请确认是否执行.',
+                          blockingSlot: 'confirmation'
+                        }}
+                        loading={clarifyLoading}
+                        onResolve={async (result) => {
+                          setClarifyLoading(true)
+                          try {
+                            const replyText = result.confirmed ? '确认' : '取消'
+                            const pauseSessionId = pendingPause.sessionId
+                            setPendingPause(null)
+                            setInput(replyText)
+                            setTimeout(() => {
+                              sendMessage(replyText)
+                            }, 0)
+                          } finally {
+                            setClarifyLoading(false)
+                          }
+                        }}
+                        onCancel={() => setPendingPause(null)}
+                      />
+                    )}
+                  </>
+                )}
                 {(sessions.find(s => s.id === sessionId)?.channel === 'code' || (!sessions.find(s => s.id === sessionId)?.channel && currentChannel === 'code')) && (
                   <IssuesSidePanel
                     sessionId={sessionId}

@@ -341,8 +341,14 @@ export const extractTrailingStateJson = (content) => {
     let braceStart = -1;
     for (let i = idx; i >= 0; i -= 1) {
       if (content[i] === '{') {
-        braceStart = i;
-        break;
+        // 架构修复: 校验这个 { 是否是 __state 块的开头 (后端生成的是 {"__state": ...})
+        // 避免误提取 LLM 正文中不带引号的 {state: ...} 畸形块 — 那会导致
+        // JSON.parse "Expected property name or '}' at position 1" 错误.
+        // 只有 { 紧跟 "__state" 时才接受, 否则继续向前找下一个 {.
+        if (content.startsWith('{"__state"', i)) {
+          braceStart = i;
+          break;
+        }
       }
     }
     if (braceStart >= 0) {
@@ -872,16 +878,16 @@ export function MarkdownContent({ content }) {
           },
           table({ node, ...props }) {
             return (
-              <div style={{ overflowX: 'auto', margin: '12px 0' }}>
-                <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 13 }} {...props} />
+              <div style={{ overflowX: 'auto', margin: '12px 0', maxWidth: '100%' }}>
+                <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 13, tableLayout: 'auto' }} {...props} />
               </div>
             );
           },
           th({ node, ...props }) {
-            return <th style={{ border: '1px solid #333', padding: '8px', background: '#1a1a1a' }} {...props} />;
+            return <th style={{ border: '1px solid #333', padding: '8px 12px', background: '#1a1a1a', whiteSpace: 'nowrap', fontWeight: 600, textAlign: 'left' }} {...props} />;
           },
           td({ node, ...props }) {
-            return <td style={{ border: '1px solid #333', padding: '8px' }} {...props} />;
+            return <td style={{ border: '1px solid #333', padding: '8px 12px', whiteSpace: 'nowrap' }} {...props} />;
           },
           blockquote({ node, ...props }) {
             return <blockquote style={{ borderLeft: '3px solid #1677ff', paddingLeft: 12, margin: '12px 0', color: '#888' }} {...props} />;

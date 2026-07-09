@@ -4,10 +4,12 @@ import { PlusOutlined, FileTextOutlined, DatabaseOutlined, LogoutOutlined, Setti
 import { useTranslation } from 'react-i18next';
 import { useUserStore } from '../store/useUserStore';
 import api, { getLocalAgentBaseUrl } from '../auth';
-import { CHANNELS as ALL_CHANNELS, CHANNELS_BY_KEY, getTaskTypeByChannel } from '../constants/taskTypes.jsx';
+import { CHANNELS as ALL_CHANNELS, CHANNELS_BY_KEY, getTaskTypeByChannel, LEGACY_BUSINESS_CHANNELS } from '../constants/taskTypes.jsx';
 
 function getChannelIcon(channel) {
-  const ch = ALL_CHANNELS.find(c => c.key === channel);
+  // Phase 4: 历史 erp/crm 会话图标映射到 cross (ShopOutlined)
+  const normalized = LEGACY_BUSINESS_CHANNELS.includes(channel) ? 'cross' : channel;
+  const ch = ALL_CHANNELS.find(c => c.key === normalized);
   return ch ? ch.antIcon : <MessageOutlined />;
 }
 
@@ -32,12 +34,17 @@ export default function SessionSidebar({
   const { t } = useTranslation()
   const { companyChannels } = useUserStore()
   const isSuper = user?.role === 'SUPER_ADMIN' || user?.role?.toLowerCase() === 'admin' || user?.role?.toLowerCase() === 'superadmin'
-  const CHANNELS = isSuper || companyChannels.length === 0
+  // Phase 4 兼容: 旧公司配置 ['erp','crm'] 映射到 ['cross']
+  const normalizedCompanyChannels = (companyChannels || []).map(c =>
+    LEGACY_BUSINESS_CHANNELS.includes(c) ? 'cross' : c
+  )
+  const CHANNELS = isSuper || normalizedCompanyChannels.length === 0
     ? ALL_CHANNELS
-    : ALL_CHANNELS.filter(ch => companyChannels.includes(ch.key))
-  
-  const hasErpChannel = CHANNELS.some(ch => ch.key === 'erp');
-  const hasCrmChannel = CHANNELS.some(ch => ch.key === 'crm');
+    : ALL_CHANNELS.filter(ch => normalizedCompanyChannels.includes(ch.key))
+
+  // Phase 4: erp/crm 合并为 cross, 管理菜单入口在 cross 可用时都显示
+  const hasErpChannel = CHANNELS.some(ch => ch.key === 'cross');
+  const hasCrmChannel = CHANNELS.some(ch => ch.key === 'cross');
   const hasDatabaseChannel = CHANNELS.some(ch => ch.key === 'database_analysis');
 
   // Probe monitor availability once on mount; cheap, no polling

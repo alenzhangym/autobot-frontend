@@ -13,6 +13,8 @@
  *  - database_analysis   → DB_TASK   (subType: analysis)
  *  - general / null      → GENERAL_QUERY (ReAct 模式)
  *  - erp                 → ERP (独立分支，不属于这 4 个任务类型)
+ *  - crm                 → CRM (独立分支，对标 ERP)
+ *  - cross               → ERP/CRM 跨域 (Phase 4: 合并 erp/crm, 后端 CrossDomainRouter 自动分发)
  */
 
 import React from 'react';
@@ -24,7 +26,6 @@ import {
   ShopOutlined,
   SearchOutlined,
   ReadOutlined,
-  TeamOutlined,
 } from '@ant-design/icons';
 
 // 任务类型 key（与后端 TaskType 枚举值完全一致）
@@ -83,15 +84,15 @@ export const CHANNELS = [
     agentNames: ['DBInspectAgent', 'DBSqlAgent', 'DataProfilerAgent', 'SummaryAgent', 'UIAgent'],
   },
   {
-    key: 'erp',
-    label: 'ERP 进销存',
-    desc: '库存/订单/客户管理',
-    icon: '🏭',
+    key: 'cross',
+    label: 'ERP/CRM 业务',
+    desc: '进销存 + 客户关系管理 (跨域联动)',
+    icon: '🏢',
     antIcon: <ShopOutlined />,
-    taskType: null, // ERP 是独立分支
+    taskType: null, // 独立分支, 后端 CrossDomainOrchestrator 自动分发到 ERP/CRM
     subType: null,
-    capabilities: ['采购单', '入库单', '出库单', '销售单', '对账单'],
-    agentNames: ['ERPAgent'],
+    capabilities: ['采购单', '入库单', '出库单', '销售单', '库存', '客户查询', '商机推进', '合同回款', '跟进记录', '跨域联动'],
+    agentNames: ['CrossDomainOrchestrator'],
   },
   {
     key: 'academic',
@@ -99,23 +100,49 @@ export const CHANNELS = [
     desc: '检索最新知识 + 生成咨政报告',
     icon: '🎓',
     antIcon: <ReadOutlined />,
-    taskType: null, // 独立分支，对标 ERP
+    taskType: null, // 独立分支
     subType: null,
     capabilities: ['网络检索', '咨政报告', '知识库结合', '中英文过滤'],
     agentNames: ['AcademicOrchestrator'],
   },
-  {
-    key: 'crm',
-    label: 'CRM 客户',
-    desc: '客户/商机/合同/跟进管理',
-    icon: '👥',
-    antIcon: <TeamOutlined />,
-    taskType: null, // 独立分支，对标 ERP
-    subType: null,
-    capabilities: ['客户查询', '商机推进', '合同回款', '跟进记录'],
-    agentNames: ['CRMOrchestrator'],
-  },
 ];
+
+// ── 历史会话 channel 兼容 (Phase 4: erp/crm 合并为 cross) ──
+// 旧会话的 channel='erp' 或 'crm', 加载时需识别为业务会话并映射到 cross 标签逻辑.
+// 不改数据库, 仅前端识别.
+export const LEGACY_BUSINESS_CHANNELS = ['erp', 'crm'];
+
+// ── 域关键词 (与后端 CrossDomainRouter 对称, 用于快速标签动态切换) ──
+export const ERP_KEYWORDS = [
+  '采购', '入库', '出库', '销售单', '采购单', '库存', '对账', '物料', '供应商',
+  '备货', '报价单', '发货', '出货', '收货', '补货', '缺货', '安全库存'
+];
+export const CRM_KEYWORDS = [
+  '客户', '联系人', '线索', '商机', '合同', '回款', '跟进', '意向', '成交',
+  '客户流失', '客户价值', '客户画像'
+];
+
+/**
+ * 根据输入文本推断业务域 (用于合并会话后快速标签动态切换).
+ * @param {string} input 用户输入
+ * @returns {'erp'|'crm'} 默认 'erp' (ERP 是主业务)
+ */
+export function detectDomainFromInput(input) {
+  if (!input || typeof input !== 'string') return 'erp';
+  let hasErp = false, hasCrm = false;
+  for (const kw of ERP_KEYWORDS) { if (input.includes(kw)) { hasErp = true; break; } }
+  for (const kw of CRM_KEYWORDS) { if (input.includes(kw)) { hasCrm = true; break; } }
+  if (hasCrm && !hasErp) return 'crm';
+  return 'erp';
+}
+
+/**
+ * 判断 channel 是否为业务会话 (含历史 erp/crm 和新 cross).
+ * 用于快速标签渲染条件.
+ */
+export function isBusinessChannel(channel) {
+  return channel === 'cross' || LEGACY_BUSINESS_CHANNELS.includes(channel);
+}
 
 /**
  * 按 taskType 分组 channels（用于按任务类型展示）

@@ -1149,10 +1149,10 @@ function renderContent(content, preParsedAnalysis) {
         .panelTitle { font-size: 13px; font-weight: 700; margin: 0 0 8px 0; color: #e8eaed; }
         .panelSub { font-size: 11px; color: #9aa0a6; margin: 0 0 10px 0; }
         .chart { width: 100%; height: 320px; }
-        .tableWrap { background: #1d1d1d; border: 1px solid #2a2a2a; border-radius: 10px; overflow: auto; }
-        table { width: 100%; border-collapse: collapse; min-width: 680px; }
-        th, td { padding: 10px; border-bottom: 1px solid #2a2a2a; text-align: left; font-size: 12px; }
-        th { position: sticky; top: 0; background: #171717; color: #d7d7d7; }
+        .tableWrap { background: #1d1d1d; border: 1px solid #2a2a2a; border-radius: 10px; overflow: auto; max-width: 100%; }
+        table { width: 100%; border-collapse: collapse; min-width: 680px; table-layout: auto; }
+        th, td { padding: 10px 12px; border-bottom: 1px solid #2a2a2a; text-align: left; font-size: 12px; white-space: nowrap; }
+        th { position: sticky; top: 0; background: #171717; color: #d7d7d7; font-weight: 600; }
         .err { color: #ff7875; white-space: pre-wrap; }
         .hint { color: #9aa0a6; font-size: 12px; padding: 10px 12px; }
         .toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
