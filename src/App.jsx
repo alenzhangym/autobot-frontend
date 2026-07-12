@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import {
   Layout, Menu, Button, Input, Avatar, Typography, Space, Tooltip,
   Modal, Form, Tabs, Tag, Dropdown, Divider, ConfigProvider, theme, Badge, Select, InputNumber, TimePicker, message, Checkbox,
-  List, Spin, Drawer
+  List, Spin, Drawer, Segmented
 } from 'antd'
 import dayjs from 'dayjs'
 import {
@@ -896,6 +896,13 @@ function App() {
   // 仅基于本地知识库 + 会话内存生成总结。
   const [academicSearchEnabled, setAcademicSearchEnabled] = useState(true)
 
+  // 2026-07-11: 学术任务报告类型 — 4 tab 显式选择，不设默认，强制用户选择。
+  // null 表示未选择，发送时校验必须选一个。选项对应后端 4 类报告 prompt。
+  const [academicReportType, setAcademicReportType] = useState(null)
+
+  // 2026-07-12: 搜索配额 — company 级别 10000 次上限，超限禁用搜索
+  const [searchUsage, setSearchUsage] = useState(null) // {companyCount, userCount, limit, remaining, exceeded}
+
   // Keep session cache in sync with live messages so tab switches don't lose content
   useEffect(() => {
     if (sessionId && messages.length > 0) {
@@ -944,7 +951,20 @@ function App() {
     bootstrap()
   }, [])
 
-  // Probe toolchain once on mount (non-blocking, fire-and-forget, 1h cache)
+  // 2026-07-12: 学术频道时拉取搜索配额，学术请求完成后刷新
+  const fetchSearchUsage = async () => {
+    try {
+      const res = await api.get('/search-usage')
+      if (res.data) setSearchUsage(res.data)
+    } catch (e) { /* 静默失败，不阻塞 UI */ }
+  }
+  useEffect(() => {
+    const curSess = sessions.find(s => s.id === sessionId)
+    const sessChannel = curSess?.channel || currentChannel
+    if (sessChannel === 'academic' && user) {
+      fetchSearchUsage()
+    }
+  }, [sessionId, currentChannel, user, isLoading])
   useEffect(() => {
     probeToolchain().then(data => {
       if (data) setProbeResult(data);
@@ -2448,8 +2468,15 @@ function App() {
         payload.channel = session.channel;
       }
       // 2026-07-05: 学术任务 — 传递「启用网络搜索」勾选状态给后端
+      // 2026-07-11: 传递报告类型（4 tab 显式选择，强制必选）
       if (session && session.channel === 'academic') {
         payload.enable_search = !!academicSearchEnabled;
+        if (!academicReportType) {
+          message.warning('请先选择报告类型');
+          setInput(text);
+          return;
+        }
+        payload.report_type = academicReportType;
       }
       // Include workspace directory for code sessions
       if (workspaceDir) {
@@ -3528,7 +3555,8 @@ const handleDeleteSession = (id) => {
                       />
                     )}
 
-                    {/* ── 学术任务：启用网络搜索勾选 ──
+                    {/* ── 学术任务：报告类型选择 + 启用网络搜索勾选 ──
+                        2026-07-11: 新增 4 tab 报告类型显式选择（强制必选）。
                         2026-07-05: 取消勾选时后端跳过 Perplexity 调用,
                         仅基于本地知识库 + 会话内存生成总结. */}
                     {(() => {
@@ -3536,22 +3564,51 @@ const handleDeleteSession = (id) => {
                       const sessChannel = curSess?.channel || currentChannel
                       return sessChannel === 'academic'
                     })() && (
-                      <div style={{ display: 'flex', alignItems: 'center', padding: '4px 0 6px', gap: 6 }}>
-                        <Checkbox
-                          checked={academicSearchEnabled}
-                          onChange={e => setAcademicSearchEnabled(e.target.checked)}
-                          disabled={isLoading}
-                          style={{ color: '#e8e3d8', fontSize: 12 }}
-                        >
-                          启用网络搜索
-                        </Checkbox>
-                        <Tooltip title={academicSearchEnabled
-                          ? '已启用: 报告生成前会调用 Perplexity 检索最新网络资料 (中英文)'
-                          : '已关闭: 仅使用本地知识库 + 会话内存生成总结, 不调用外部搜索'}>
-                          <span style={{ color: '#807a6e', fontSize: 11, cursor: 'help' }}>
-                            {academicSearchEnabled ? '(检索最新网络资料)' : '(仅本地知识库 + 会话内存)'}
-                          </span>
-                        </Tooltip>
+                      <div style={{ padding: '4px 0 6px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                          <span style={{ color: '#e8e3d8', fontSize: 12 }}>报告类型:</span>
+                          <Segmented
+                            value={academicReportType || ''}
+                            onChange={setAcademicReportType}
+                            disabled={isLoading}
+                            options={[
+                              { label: '对策建议型', value: 'policy_advice' },
+                              { label: '预警研判型', value: 'forecast' },
+                              { label: '评估验证型', value: 'evaluation' },
+                              { label: '调研实证型', value: 'empirical' },
+                            ]}
+                          />
+                          <Tooltip title="必须选择一个报告类型才能发送。对策建议型: 痛点案例→原因剖析→机制设计→落地实操; 预警研判型: 时效数据→情境分析法推演三种走向; 评估验证型: 政策原文→执行偏差拆解→ROI评估; 调研实证型: 标杆案例→剔除不可复制因素→通用模型提炼">
+                            <span style={{ color: '#807a6e', fontSize: 11, cursor: 'help' }}>(鼠标悬停查看说明)</span>
+                          </Tooltip>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                          <Checkbox
+                            checked={academicSearchEnabled && !searchUsage?.exceeded}
+                            onChange={e => setAcademicSearchEnabled(e.target.checked)}
+                            disabled={isLoading || searchUsage?.exceeded}
+                            style={{ color: '#e8e3d8', fontSize: 12 }}
+                          >
+                            启用网络搜索
+                          </Checkbox>
+                          <Tooltip title={searchUsage?.exceeded
+                            ? '搜索配额已用尽（公司共 10000 次），请联系管理员'
+                            : (academicSearchEnabled
+                              ? '已启用: 报告生成前会调用 Perplexity 检索最新网络资料 (中英文)'
+                              : '已关闭: 仅使用本地知识库 + 会话内存生成总结, 不调用外部搜索')}>
+                            <span style={{ color: searchUsage?.exceeded ? '#ff6b6b' : '#807a6e', fontSize: 11, cursor: 'help' }}>
+                              {searchUsage?.exceeded
+                                ? '(配额已用尽)'
+                                : (academicSearchEnabled ? '(检索最新网络资料)' : '(仅本地知识库 + 会话内存)')}
+                            </span>
+                          </Tooltip>
+                          {searchUsage && (
+                            <span style={{ color: searchUsage.exceeded ? '#ff6b6b' : '#807a6e', fontSize: 11 }}>
+                              公司 {searchUsage.companyCount}/{searchUsage.limit} 次 | 您 {searchUsage.userCount} 次
+                              {!searchUsage.exceeded && ` | 剩余 ${searchUsage.remaining}`}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     )}
 
