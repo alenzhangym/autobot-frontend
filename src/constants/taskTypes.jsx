@@ -58,6 +58,7 @@ export const CHANNELS = [
     antIcon: <FileTextOutlined />,
     taskType: TASK_TYPE.DOC_TASK,
     subType: 'auto',
+    isBaseDefault: true, // 基础默认功能, 所有公司可用, 无需在频道勾选中配置
     capabilities: ['问答检索', '文档生成', '智能摘要', '多文档综合'],
     agentNames: ['RagAgent', 'DocumentArchitectAgent', 'ContentAgent', 'DocumentAssembler', 'SummaryAgent', 'UIAgent'],
   },

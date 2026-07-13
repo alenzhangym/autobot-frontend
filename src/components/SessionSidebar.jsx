@@ -41,7 +41,7 @@ export default function SessionSidebar({
   )
   const CHANNELS = isSuper || normalizedCompanyChannels.length === 0
     ? ALL_CHANNELS
-    : ALL_CHANNELS.filter(ch => normalizedCompanyChannels.includes(ch.key))
+    : ALL_CHANNELS.filter(ch => ch.isBaseDefault || normalizedCompanyChannels.includes(ch.key))
 
   // Phase 4: erp/crm 合并为 cross, 管理菜单入口在 cross 可用时都显示
   const hasErpChannel = CHANNELS.some(ch => ch.key === 'cross');

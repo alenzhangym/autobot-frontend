@@ -64,7 +64,7 @@ function CompanyManagement({ open, onClose, companies, onAddCompany, onUpdateCom
                   <span style={{ color: '#aaa', fontSize: 12, display: 'block', marginBottom: 6 }}>可用频道（不选则全部可用）</span>
                   <Checkbox.Group value={editChannels} onChange={(values) => setEditChannels(values)}>
                     <Space direction="vertical" style={{ gap: 4 }}>
-                      {CHANNELS.map(ch => (
+                      {CHANNELS.filter(ch => !ch.isBaseDefault).map(ch => (
                         <Checkbox key={ch.key} value={ch.key} style={{ color: '#ccc' }}>
                           <span style={{ color: '#ccc' }}>{ch.label}</span>
                           <span style={{ color: '#666', marginLeft: 6, fontSize: 11 }}>{ch.desc}</span>
@@ -109,7 +109,7 @@ function CompanyManagement({ open, onClose, companies, onAddCompany, onUpdateCom
         <Form.Item name="channelAccess" label={<span style={{ color: '#aaa', fontSize: 12 }}>可用频道（不选则全部可用）</span>} style={{ marginBottom: 12 }}>
           <Checkbox.Group>
             <Space direction="vertical" style={{ gap: 4 }}>
-              {CHANNELS.map(ch => (
+              {CHANNELS.filter(ch => !ch.isBaseDefault).map(ch => (
                 <Checkbox key={ch.key} value={ch.key} style={{ color: '#ccc' }}>
                   <span style={{ color: '#ccc' }}>{ch.label}</span>
                   <span style={{ color: '#666', marginLeft: 6, fontSize: 11 }}>{ch.desc}</span>
