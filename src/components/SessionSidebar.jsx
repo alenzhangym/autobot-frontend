@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Button, Menu, Avatar, Tooltip, Dropdown, Space, Tag } from 'antd';
-import { PlusOutlined, FileTextOutlined, DatabaseOutlined, LogoutOutlined, SettingOutlined, TeamOutlined, DeleteOutlined, PlayCircleOutlined, DownOutlined, ShopOutlined, FileSearchOutlined, CodeOutlined, MessageOutlined, SendOutlined, DashboardOutlined, InboxOutlined, ToolOutlined, UsergroupAddOutlined, CrownOutlined, LinkOutlined, UploadOutlined, SnippetsOutlined, ShoppingCartOutlined, AuditOutlined, SearchOutlined, ContainerOutlined, RocketOutlined, ApiOutlined } from '@ant-design/icons';
+import { PlusOutlined, FileTextOutlined, DatabaseOutlined, LogoutOutlined, SettingOutlined, TeamOutlined, DeleteOutlined, PlayCircleOutlined, DownOutlined, ShopOutlined, FileSearchOutlined, CodeOutlined, MessageOutlined, SendOutlined, DashboardOutlined, InboxOutlined, ToolOutlined, UsergroupAddOutlined, CrownOutlined, LinkOutlined, UploadOutlined, SnippetsOutlined, ShoppingCartOutlined, AuditOutlined, SearchOutlined, ContainerOutlined, RocketOutlined, ApiOutlined, ReadOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useUserStore } from '../store/useUserStore';
 import api, { getLocalAgentBaseUrl } from '../auth';
@@ -201,6 +201,7 @@ export default function SessionSidebar({
             { type: 'divider' }
           ] : []),
           { key: 'documents', icon: <FileTextOutlined />, label: t('nav.companyDocuments') },
+          { key: 'academic', icon: <ReadOutlined />, label: '学术分析' },
           ...(((user?.role === 'SUPER_ADMIN' || user?.role === 'COMPANY_ADMIN') && hasErpChannel) ? [
             { key: 'dashboard', icon: <DashboardOutlined />, label: t('erp.dashboard') },
             { type: 'divider' },
