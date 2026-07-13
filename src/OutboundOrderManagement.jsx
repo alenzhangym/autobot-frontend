@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Layout, Table, Button, Modal, Form, Input, InputNumber, Select, AutoComplete, Tag, Space, message, DatePicker, Upload, Descriptions, Popconfirm, Row, Col, Card } from 'antd'
 import { PlusOutlined, CameraOutlined, SendOutlined, ReloadOutlined, EyeOutlined, CheckOutlined, CloseOutlined, TruckOutlined, SearchOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons'
 import api from './auth'
+import { isSuperAdmin as isSuperAdminFn } from './utils/permissions.js'
 
 const { Content } = Layout
 const { RangePicker } = DatePicker
@@ -17,7 +18,7 @@ const STATUS_OPTIONS = Object.entries(STATUS_MAP).map(([k, v]) => ({ value: k, l
 const emptyItem = () => ({ key: Date.now(), customerPartNo: '', model: '', orderedQty: 0, shippedQty: 0, qty: null, unitPrice: null, dirty: true })
 
 export default function OutboundOrderManagement({ user, companies = [] }) {
-  const isSuperAdmin = user?.role === 'SUPER_ADMIN'
+  const isSuperAdmin = isSuperAdminFn(user)
   const effectiveCompanyId = isSuperAdmin ? null : user?.companyId
 
   const [orders, setOrders] = useState([])

@@ -3,12 +3,13 @@ import { Layout, Table, Pagination, Button, Tabs, Tag, Space, message, Popconfir
 import { CheckOutlined, ReloadOutlined, InboxOutlined, SendOutlined, SaveOutlined, DeleteOutlined, HistoryOutlined, DownloadOutlined, ExportOutlined } from '@ant-design/icons'
 import api from './auth'
 import dayjs from 'dayjs'
+import { isSuperAdmin as isSuperAdminFn } from './utils/permissions.js'
 
 const { Content } = Layout
 const { Text } = Typography
 
 export default function ReconciliationManagement({ user, companies = [] }) {
-  const isSuperAdmin = user?.role === 'SUPER_ADMIN'
+  const isSuperAdmin = isSuperAdminFn(user)
   const effectiveCompanyId = isSuperAdmin ? null : user?.companyId
 
   const [activeTab, setActiveTab] = useState('OUTBOUND')

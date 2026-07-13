@@ -5,6 +5,7 @@ import { Resizable } from 'react-resizable'
 import 'react-resizable/css/styles.css'
 import api from './auth'
 import { useTranslation } from 'react-i18next'
+import { isSuperAdmin as isSuperAdminFn } from './utils/permissions.js';
 
 const { Content } = Layout
 
@@ -27,7 +28,7 @@ const STATUS_TAG = { active: 'green', inactive: 'default' }
 
 export default function CustomerManagement({ user, companies = [] }) {
   const { t } = useTranslation()
-  const isSuperAdmin = user?.role === 'SUPER_ADMIN'
+  const isSuperAdmin = isSuperAdminFn(user)
   const [selectedCompanyId, setSelectedCompanyId] = useState(companies[0]?.id || user?.companyId || 0)
   const effectiveCompanyId = isSuperAdmin ? (selectedCompanyId || 0) : user?.companyId
 

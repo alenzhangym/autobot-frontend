@@ -3,6 +3,7 @@ import { Layout, Table, Button, Modal, Form, Input, Select, AutoComplete, Tag, S
 import { PlusOutlined, CameraOutlined, InboxOutlined, ReloadOutlined, CheckOutlined, CloseOutlined, SearchOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons'
 import api from './auth'
 import dayjs from 'dayjs'
+import { isSuperAdmin as isSuperAdminFn } from './utils/permissions.js';
 
 const { Content } = Layout
 const { RangePicker } = DatePicker
@@ -20,7 +21,7 @@ const STATUS_OPTIONS = Object.entries(STATUS_MAP).map(([k, v]) => ({ value: k, l
 const emptyItem = () => ({ key: Date.now(), partType: '', model: '', manufacturer: '', orderedQty: 0, receivedQty: 0, qty: null, unitPrice: null, location: '', notes: '', dirty: true })
 
 export default function InboundOrderManagement({ user, companies = [] }) {
-  const isSuperAdmin = user?.role === 'SUPER_ADMIN'
+  const isSuperAdmin = isSuperAdminFn(user)
   const effectiveCompanyId = isSuperAdmin ? null : user?.companyId
 
   const [orders, setOrders] = useState([])

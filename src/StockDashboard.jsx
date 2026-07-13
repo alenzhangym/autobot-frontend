@@ -3,6 +3,7 @@ import { Layout, Row, Col, Card, Statistic, Table, Tag, Spin, Empty } from 'antd
 import { ReloadOutlined, WarningOutlined, ShoppingCartOutlined, DollarOutlined, DatabaseOutlined, RiseOutlined } from '@ant-design/icons'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, Legend } from 'recharts'
 import api from './auth'
+import { isSuperAdmin as isSuperAdminFn } from './utils/permissions.js'
 
 const { Content } = Layout
 
@@ -17,7 +18,7 @@ const STATUS_MAP = {
 }
 
 export default function StockDashboard({ user, companies = [] }) {
-  const isSuperAdmin = user?.role === 'SUPER_ADMIN'
+  const isSuperAdmin = isSuperAdminFn(user)
   const effectiveCompanyId = isSuperAdmin ? null : user?.companyId
 
   const [summary, setSummary] = useState(null)

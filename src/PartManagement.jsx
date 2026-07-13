@@ -5,6 +5,7 @@ import { Resizable } from 'react-resizable'
 import 'react-resizable/css/styles.css'
 import api from './auth'
 import { useTranslation } from 'react-i18next'
+import { isSuperAdmin as isSuperAdminFn } from './utils/permissions.js'
 
 const { Content } = Layout
 const { Text } = Typography
@@ -24,7 +25,7 @@ const ResizableTitle = (props) => {
 
 export default function PartManagement({ user, companies = [] }) {
   const { t } = useTranslation()
-  const isSuperAdmin = user?.role === 'SUPER_ADMIN'
+  const isSuperAdmin = isSuperAdminFn(user)
   const effectiveCompanyId = isSuperAdmin ? null : user?.companyId
 
   const [parts, setParts] = useState([])

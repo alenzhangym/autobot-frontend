@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { Table, Button, Modal, Form, Input, Space, message, Popconfirm } from 'antd'
 import { PlusOutlined, EditOutlined, DeleteOutlined, ReloadOutlined } from '@ant-design/icons'
 import api from './auth'
+import { isSuperAdmin as isSuperAdminFn } from './utils/permissions.js'
 
 export default function SupplierManagement({ user, companies = [] }) {
   const [suppliers, setSuppliers] = useState([])
@@ -13,7 +14,7 @@ export default function SupplierManagement({ user, companies = [] }) {
   const [editing, setEditing] = useState(null)
   const [form] = Form.useForm()
 
-  const isSuperAdmin = user?.role === 'SUPER_ADMIN'
+  const isSuperAdmin = isSuperAdminFn(user)
   const effectiveCompanyId = isSuperAdmin ? (null) : user?.companyId
 
   const fetchSuppliers = useCallback(async (p = 1) => {

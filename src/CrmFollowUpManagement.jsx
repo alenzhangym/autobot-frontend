@@ -4,6 +4,7 @@ import { PlusOutlined, ReloadOutlined, EditOutlined, DeleteOutlined } from '@ant
 import api from './auth';
 import dayjs from 'dayjs';
 import EntityPicker from './components/EntityPicker';
+import { isSuperAdmin as isSuperAdminFn } from './utils/permissions.js';
 
 const ENTITY = 'follow-ups';
 
@@ -17,7 +18,7 @@ const TARGET_TYPE_MAP = {
 const FOLLOW_METHODS = ['电话', '微信', '邮件', '上门拜访', '视频会议'];
 
 export default function CrmFollowUpManagement({ user, companies = [] }) {
-  const isSuperAdmin = user?.role === 'SUPER_ADMIN';
+  const isSuperAdmin = isSuperAdminFn(user);
   const [selectedCompanyId, setSelectedCompanyId] = useState(companies[0]?.id || user?.companyId || 0);
   const effectiveCompanyId = isSuperAdmin ? (selectedCompanyId || 0) : user?.companyId;
 

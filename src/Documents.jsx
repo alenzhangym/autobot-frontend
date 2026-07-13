@@ -7,6 +7,7 @@ import dayjs from 'dayjs'
 import mammoth from 'mammoth'
 import * as XLSX from 'xlsx'
 import { useUIStore } from './store/useUIStore'
+import { isSuperAdmin as isSuperAdminFn, isCompanyAdmin as isCompanyAdminFn } from './utils/permissions.js';
 
 const { Content } = Layout
 const { Title } = Typography
@@ -63,8 +64,8 @@ const Documents = ({ user, companies = [], users = [] }) => {
     const [selectedCompanyId, setSelectedCompanyId] = useState('all')
     const [selectedUserId, setSelectedUserId] = useState('all')
 
-    const isSuperAdmin = user?.role === 'SUPER_ADMIN' || user?.role?.toLowerCase() === 'admin' || user?.role?.toLowerCase() === 'superadmin'
-    const isCompanyAdmin = user?.role === 'COMPANY_ADMIN' || user?.role?.toLowerCase() === 'company_admin'
+    const isSuperAdmin = isSuperAdminFn(user)
+    const isCompanyAdmin = isCompanyAdminFn(user)
 
     const fetchDocuments = async (showLoading = true) => {
         if (showLoading) setLoading(true)

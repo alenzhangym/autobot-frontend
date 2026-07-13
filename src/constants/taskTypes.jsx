@@ -25,6 +25,7 @@ import {
   DatabaseOutlined,
   ShopOutlined,
   SearchOutlined,
+  ReadOutlined,
 } from '@ant-design/icons';
 
 // 任务类型 key（与后端 TaskType 枚举值完全一致）
@@ -92,6 +93,18 @@ export const CHANNELS = [
     subType: null,
     capabilities: ['采购单', '入库单', '出库单', '销售单', '库存', '客户查询', '商机推进', '合同回款', '跟进记录', '跨域联动'],
     agentNames: ['CrossDomainOrchestrator'],
+  },
+  {
+    key: 'academic',
+    label: '学术分析',
+    desc: '学术论文检索与深度研究',
+    icon: '🔬',
+    antIcon: <ReadOutlined />,
+    taskType: null, // 页面型入口, 非会话 channel; 用于控制菜单可见性
+    subType: null,
+    isPageOnly: true, // 不出现在"新建会话"下拉, 仅作为菜单 tab
+    capabilities: ['论文检索', '深度研究', '报告生成'],
+    agentNames: [],
   },
 ];
 

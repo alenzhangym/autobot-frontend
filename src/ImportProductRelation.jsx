@@ -2,12 +2,13 @@ import React, { useState, useEffect } from 'react'
 import { Layout, Upload, Button, Table, message, Card, Row, Col, Select, Space, Statistic, Alert } from 'antd'
 import { UploadOutlined, InboxOutlined, ReloadOutlined } from '@ant-design/icons'
 import api from './auth'
+import { isSuperAdmin as isSuperAdminFn } from './utils/permissions.js';
 
 const { Content } = Layout
 const { Dragger } = Upload
 
 export default function ImportProductRelation({ user, companies = [] }) {
-  const isSuperAdmin = user?.role === 'SUPER_ADMIN'
+  const isSuperAdmin = isSuperAdminFn(user)
   const effectiveCompanyId = isSuperAdmin ? null : user?.companyId
 
   const [customers, setCustomers] = useState([])

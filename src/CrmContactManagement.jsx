@@ -3,11 +3,12 @@ import { Table, Button, Modal, Form, Input, Select, Switch, message, Space, Tag,
 import { PlusOutlined, ReloadOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
 import api from './auth';
 import EntityPicker from './components/EntityPicker';
+import { isSuperAdmin as isSuperAdminFn } from './utils/permissions.js';
 
 const ENTITY = 'contacts';
 
 export default function CrmContactManagement({ user, companies = [] }) {
-  const isSuperAdmin = user?.role === 'SUPER_ADMIN';
+  const isSuperAdmin = isSuperAdminFn(user);
   const [selectedCompanyId, setSelectedCompanyId] = useState(companies[0]?.id || user?.companyId || 0);
   const effectiveCompanyId = isSuperAdmin ? (selectedCompanyId || 0) : user?.companyId;
 

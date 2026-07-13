@@ -3,6 +3,7 @@ import { Table, Button, Modal, Form, Input, Select, InputNumber, message, Space,
 import { PlusOutlined, ReloadOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
 import api from './auth';
 import dayjs from 'dayjs';
+import { isSuperAdmin as isSuperAdminFn } from './utils/permissions.js';
 
 const ENTITY = 'customers';
 
@@ -18,7 +19,7 @@ const STATUS_MAP = {
 };
 
 export default function CrmCustomerManagement({ user, companies = [] }) {
-  const isSuperAdmin = user?.role === 'SUPER_ADMIN';
+  const isSuperAdmin = isSuperAdminFn(user);
   const [selectedCompanyId, setSelectedCompanyId] = useState(companies[0]?.id || user?.companyId || 0);
   const effectiveCompanyId = isSuperAdmin ? (selectedCompanyId || 0) : user?.companyId;
 

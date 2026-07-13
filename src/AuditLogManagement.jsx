@@ -4,6 +4,7 @@ import { ReloadOutlined, SearchOutlined, EyeOutlined, WarningOutlined } from '@a
 import { Resizable } from 'react-resizable'
 import 'react-resizable/css/styles.css'
 import api from './auth'
+import { isSuperAdmin as isSuperAdminFn, isCompanyAdmin as isCompanyAdminFn } from './utils/permissions.js';
 
 const { Content } = Layout
 const { Text } = Typography
@@ -30,8 +31,8 @@ const OP_COLORS = {
 }
 
 export default function AuditLogManagement({ user }) {
-  const isSuperAdmin = user?.role === 'SUPER_ADMIN'
-  const isCompanyAdmin = user?.role === 'COMPANY_ADMIN' || (user?.role || '').toLowerCase() === 'company_admin'
+  const isSuperAdmin = isSuperAdminFn(user)
+  const isCompanyAdmin = isCompanyAdminFn(user)
   const canView = isSuperAdmin || isCompanyAdmin
   const effectiveCompanyId = isSuperAdmin ? null : user?.companyId
 

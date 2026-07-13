@@ -2,11 +2,12 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { Layout, Table, Button, Modal, Form, Input, Select, Tag, Space, message, Popconfirm, Row, Col, Card, Switch } from 'antd'
 import { PlusOutlined, ReloadOutlined, SearchOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons'
 import api from './auth'
+import { isSuperAdmin as isSuperAdminFn } from './utils/permissions.js'
 
 const { Content } = Layout
 
 export default function CustomerPartMappingManagement({ user, companies = [] }) {
-  const isSuperAdmin = user?.role === 'SUPER_ADMIN'
+  const isSuperAdmin = isSuperAdminFn(user)
   const effectiveCompanyId = isSuperAdmin ? null : user?.companyId
 
   const [mappings, setMappings] = useState([])

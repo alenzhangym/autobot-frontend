@@ -3,6 +3,7 @@ import { Layout, Table, Button, Modal, Form, Input, Select, Tag, Space, message,
 import { PlusOutlined, ReloadOutlined, SearchOutlined, DeleteOutlined, EditOutlined, MinusCircleOutlined } from '@ant-design/icons'
 import api from './auth'
 import dayjs from 'dayjs'
+import { isSuperAdmin as isSuperAdminFn } from './utils/permissions.js';
 
 const { Content } = Layout
 const { Text } = Typography
@@ -18,7 +19,7 @@ const PART_TYPES = ['电容', '电感', '磁珠', '电阻', 'PCB板材', 'IC', '
 const emptyItem = () => ({ key: Date.now(), partType: null, partId: null, partLabel: '', orderedQty: null, estimatedUnitPrice: null })
 
 export default function PurchaseOrderManagement({ user, companies = [] }) {
-  const isSuperAdmin = user?.role === 'SUPER_ADMIN'
+  const isSuperAdmin = isSuperAdminFn(user)
   const effectiveCompanyId = isSuperAdmin ? null : user?.companyId
 
   const [orders, setOrders] = useState([])

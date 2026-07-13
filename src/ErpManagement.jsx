@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { Layout, Menu, Table, Button, Modal, Form, Input, Select, Tag, Space, message, Tabs, InputNumber, Checkbox } from 'antd'
 import { ShopOutlined, AuditOutlined, EditOutlined, DeleteOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import api from './auth'
+import { isSuperAdmin as isSuperAdminFn, isCompanyAdmin as isCompanyAdminFn } from './utils/permissions.js'
 
 const { Sider, Content } = Layout
 
@@ -17,7 +18,7 @@ export default function ErpManagement({ user, companies = [] }) {
   const [auditLoading, setAuditLoading] = useState(false)
   const [selectedCompanyId, setSelectedCompanyId] = useState(null)
 
-  const isSuperAdmin = user?.role === 'SUPER_ADMIN'
+  const isSuperAdmin = isSuperAdminFn(user)
   const effectiveCompanyId = isSuperAdmin ? (selectedCompanyId || 0) : user?.companyId
 
   // ── Fetch table names ──────────────────────────────────────────
@@ -87,7 +88,7 @@ export default function ErpManagement({ user, companies = [] }) {
     } catch (e) { message.error('删除失败') }
   }
 
-  const isAdmin = user?.role === 'SUPER_ADMIN' || user?.role === 'COMPANY_ADMIN'
+  const isAdmin = isSuperAdminFn(user) || isCompanyAdminFn(user)
 
   // ── Helpers ────────────────────────────────────────────────────
   const getTableIcon = (tableName) => {

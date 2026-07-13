@@ -12,7 +12,7 @@ import {
   CodeOutlined, MenuFoldOutlined, MenuUnfoldOutlined, RobotOutlined,
   StopOutlined, LoadingOutlined, ThunderboltOutlined, UserOutlined, TeamOutlined,
   DownOutlined, RightOutlined, CheckOutlined, EditOutlined, ClockCircleOutlined,
-  FileTextOutlined, PaperClipOutlined, AudioOutlined, CloseOutlined, FileImageOutlined, DownloadOutlined, DatabaseOutlined, GlobalOutlined,
+  FileTextOutlined, PaperClipOutlined, CloseOutlined, FileImageOutlined, DownloadOutlined, DatabaseOutlined, GlobalOutlined,
   FolderOpenOutlined, HomeOutlined, SearchOutlined, ShopOutlined,
   ApartmentOutlined
 } from '@ant-design/icons'
@@ -83,6 +83,7 @@ import { Virtuoso } from 'react-virtuoso'
 import { extractTrailingStateJson, stripAgentMarkers, tryParseAnalysisResult, getLastParseError, decodeStateStringList, replaceTrailingAnalysisState, mergeAnalysisStateContent, extractAnalysisState } from './utils/helpers.jsx'
 import { createHealthPoller, probeHttp } from './utils/healthPoller.js'
 import { getTaskTypeByChannel, CHANNELS_BY_KEY, CHANNELS as ALL_CHANNELS, LEGACY_BUSINESS_CHANNELS, detectDomainFromInput, isBusinessChannel } from './constants/taskTypes.jsx'
+import { isSuperAdmin as isSuperAdminFn, isCompanyAdmin as isCompanyAdminFn } from './utils/permissions.js'
 
 // ── Web Worker for async profileData ─────────────────────────────────────────
 const profileDataWorker = new Worker(new URL('./workers/profileData.worker.js', import.meta.url), { type: 'module' });
@@ -164,9 +165,8 @@ function extractCommandSignature(content) {
 function UsersManagementModal({ open, onClose, users, companies, onAddUser, onDeleteUser, onApproveUser, onRejectUser, user }) {
   const { t } = useTranslation()
   const [userForm] = Form.useForm()
-  const role = user?.role
-  const isSuperAdmin = role === 'SUPER_ADMIN' || role?.toLowerCase() === 'admin' || role?.toLowerCase() === 'superadmin'
-  const isCompanyAdmin = role === 'COMPANY_ADMIN' || role?.toLowerCase() === 'company_admin'
+  const isSuperAdmin = isSuperAdminFn(user)
+  const isCompanyAdmin = isCompanyAdminFn(user)
   
   const [selectedCompanyFilter, setSelectedCompanyFilter] = useState('all')
 
@@ -314,9 +314,8 @@ const CHANNELS = [
 
 function SettingsModal({ open, onClose, user, dbConfigs, onDeleteDbConfig, onAddDbConfig, onUpdateDbConfig, skills, onToggleSkill, companies, onAddCompany, onUpdateCompany, onDeleteCompany, users, onAddUser, onDeleteUser, onUpdateUser }) {
   const { t } = useTranslation()
-  const role = user?.role
-  const isSuperAdmin = role === 'SUPER_ADMIN' || role?.toLowerCase() === 'admin' || role?.toLowerCase() === 'superadmin'
-  const isCompanyAdmin = role === 'COMPANY_ADMIN' || role?.toLowerCase() === 'company_admin'
+  const isSuperAdmin = isSuperAdminFn(user)
+  const isCompanyAdmin = isCompanyAdminFn(user)
   const canManageDb = isSuperAdmin || isCompanyAdmin
 
   const [form] = Form.useForm()
@@ -787,7 +786,7 @@ function App() {
     showCompanyManagement, setShowCompanyManagement
   } = useUIStore()
 
-  const isSuperAdmin = user?.role === 'SUPER_ADMIN' || user?.role?.toLowerCase() === 'admin' || user?.role?.toLowerCase() === 'superadmin'
+  const isSuperAdmin = isSuperAdminFn(user)
 
   // ── Cross-platform workspace directory helpers ──
   const isWindows = () => {
@@ -834,7 +833,6 @@ function App() {
   // 保留 codeMode 状态变量是为未来可能的"高级用户强制锁定"留口子（UI 已不再暴露）。
   const [codeMode, setCodeMode] = useState('auto')  // 'auto' (默认) | 'plan' (强制只分析) | 'build' (强制实施)
   const [isLoading, setIsLoading] = useState(false)
-  const [isRecording, setIsRecording] = useState(false)
   const [workspaceDir, setWorkspaceDir] = useState('')
   const [showWsPicker, setShowWsPicker] = useState(false)
   const [wsPickerChannel, setWsPickerChannel] = useState(null)
@@ -873,9 +871,6 @@ function App() {
 
   const [selectedImage, setSelectedImage] = useState(null)
   const [selectedImageBase64, setSelectedImageBase64] = useState(null)
-
-  const recognitionRef = useRef(null)
-
 
   const fileInputRef = useRef(null)
   const chatWsRef = useRef(null)
@@ -1143,9 +1138,9 @@ function App() {
 
   useEffect(() => {
     if (user) {
-      const isSuper = user?.role === 'SUPER_ADMIN' || user?.role?.toLowerCase() === 'admin' || user?.role?.toLowerCase() === 'superadmin'
-      const isCompany = user?.role === 'COMPANY_ADMIN' || user?.role?.toLowerCase() === 'company_admin'
-      
+      const isSuper = isSuperAdminFn(user)
+      const isCompany = isCompanyAdminFn(user)
+
       if (isSuper) {
         fetchSkills()
         fetchCompanies()
@@ -2273,7 +2268,16 @@ function App() {
       await api.delete(`/sessions/${id}`)
       setSessions(prev => prev.filter(s => s.id !== id))
       sessionCacheRef.current.delete(id)
-      if (sessionId === id) startNewSession()
+      // 2026-07-13: 删除当前会话后, 不再自动调用 startNewSession() 创建新会话
+      // (旧逻辑: 删完立即开一个新会话, 体验上像是"删了又补一个"很奇怪)
+      // 改为: 清空 sessionId / messages, 关闭 live log, 切回 chat tab
+      // currentChannel 保留用户偏好, 后续主动点"新对话"时再创建
+      if (sessionId === id) {
+        endLiveLogSession()
+        setSessionId('')
+        setMessages([])
+        setActiveTab('chat')
+      }
     } catch (e) {}
   }
 
@@ -2931,49 +2935,6 @@ function App() {
     }
   }
 
-  const startRecording = async () => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
-    if (!SpeechRecognition) {
-      message.error('当前浏览器不支持语音识别, 请使用 Chrome 或 Edge 浏览器')
-      return
-    }
-    try {
-      const recognition = new SpeechRecognition()
-      recognition.lang = 'zh-CN'
-      recognition.continuous = false
-      recognition.interimResults = false
-      let finalText = ''
-      recognition.onresult = (event) => {
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          if (event.results[i].isFinal) finalText += event.results[i][0].transcript
-        }
-      }
-      recognition.onerror = (event) => {
-        setIsRecording(false)
-        message.error('语音识别失败: ' + (event.error || '未知错误'))
-      }
-      recognition.onend = () => {
-        setIsRecording(false)
-        if (finalText.trim()) {
-          setMessages(prev => [...prev, { role: 'user', content: `🎤 ${finalText.trim()}` }])
-          sendMessage(finalText.trim())
-        } else {
-          message.warning('未识别到语音内容')
-        }
-      }
-      recognitionRef.current = recognition
-      recognition.start()
-      setIsRecording(true)
-    } catch (err) { alert('Could not access microphone: ' + err.message) }
-  }
-
-  const stopRecording = () => {
-    if (recognitionRef.current && isRecording) {
-      recognitionRef.current.stop()
-      setIsRecording(false)
-    }
-  }
-
   if (!user) return <HomeWrapper onLoginSuccess={handleLoginSuccess} />
 
   const deleteScheduledTask = async (e, id) => {
@@ -3041,7 +3002,13 @@ const handleDeleteSession = (id) => {
     api.delete(`/sessions/${id}`).then(() => {
       setSessions(prev => prev.filter(s => s.id !== id))
       sessionCacheRef.current.delete(id)
-      if (sessionId === id) startNewSession()
+      // 2026-07-13: 同步 deleteSession() 的修复, 删除当前会话后不清空新建
+      if (sessionId === id) {
+        endLiveLogSession()
+        setSessionId('')
+        setMessages([])
+        setActiveTab('chat')
+      }
     }).catch(() => {})
   }
 
@@ -3358,7 +3325,90 @@ const handleDeleteSession = (id) => {
             {/* Chat area */}
             <Content style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', flex: 1 }}>
               {/* Messages */}
-              {messages.length === 0 ? (
+              {messages.length === 0 && !sessionId ? (
+                // 2026-07-13: 删除当前会话后, 改为"创建会话引导页"
+                // (旧逻辑: 复用 greeting 占位 + input 区仍显示, 体验割裂)
+                <div style={{ flex: 1, overflow: 'auto', padding: '40px 24px' }} className="custom-scrollbar">
+                  <div style={{ maxWidth: 880, margin: '0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                    <ThunderboltOutlined style={{ fontSize: 56, color: '#d4a574', opacity: 0.75, marginBottom: 20 }} />
+                    <Title level={2} style={{ color: '#e8e3d8', fontFamily: "'Fraunces', serif", fontWeight: 300, letterSpacing: '-0.02em', marginBottom: 8 }}>
+                      开始新对话
+                    </Title>
+                    <Text style={{ color: '#807a6e', fontSize: 14, marginBottom: 40, textAlign: 'center', fontFamily: "'Hanken Grotesk', system-ui, sans-serif" }}>
+                      选择一个对话类型, AutoBot 会按场景调度合适的 Agent
+                    </Text>
+
+                    {/* Channel 卡片网格 — 点击即 startNewSession(key) */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12, width: '100%', marginBottom: 28 }}>
+                      {ALL_CHANNELS.map(ch => (
+                        <div key={ch.key}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => startNewSession(ch.key)}
+                          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); startNewSession(ch.key) } }}
+                          style={{
+                            background: '#161613', border: '1px solid #2a2620', borderRadius: 6,
+                            padding: '16px 18px', cursor: 'pointer', transition: 'all 0.2s',
+                            display: 'flex', flexDirection: 'column', gap: 6, outline: 'none'
+                          }}
+                          onMouseEnter={e => { e.currentTarget.style.borderColor = '#d4a574'; e.currentTarget.style.background = '#1a1a17' }}
+                          onMouseLeave={e => { e.currentTarget.style.borderColor = '#2a2620'; e.currentTarget.style.background = '#161613' }}
+                          onFocus={e => e.currentTarget.style.borderColor = '#d4a574'}
+                          onBlur={e => e.currentTarget.style.borderColor = '#2a2620'}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 18 }}>
+                            <span style={{ color: '#d4a574', display: 'inline-flex' }}>{ch.antIcon}</span>
+                            <span style={{ color: '#e8e3d8', fontSize: 15, fontWeight: 500 }}>{ch.label}</span>
+                          </div>
+                          <Text style={{ color: '#807a6e', fontSize: 12, lineHeight: 1.5 }}>{ch.desc}</Text>
+                          {ch.capabilities && ch.capabilities.length > 0 && (
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+                              {ch.capabilities.slice(0, 3).map(c => (
+                                <Tag key={c} style={{ fontSize: 10, margin: 0, background: 'rgba(212, 165, 116, 0.08)', borderColor: 'rgba(212, 165, 116, 0.3)', color: '#d4a574' }}>{c}</Tag>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* 回到最近会话 — 从侧边栏点开过的 session, 一键恢复 */}
+                    {(() => {
+                      const recent = (sessions || []).filter(s => !s.id.startsWith('sched-')).slice(0, 5)
+                      if (recent.length === 0) return null
+                      return (
+                        <div style={{ width: '100%', borderTop: '1px solid #2a2620', paddingTop: 20 }}>
+                          <div style={{ fontSize: 11, color: '#555', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10, fontFamily: "'JetBrains Mono', monospace" }}>
+                            Recent Sessions
+                          </div>
+                          {recent.map(s => {
+                            const sessChKey = LEGACY_BUSINESS_CHANNELS.includes(s.channel) ? 'cross' : s.channel
+                            const chDef = ALL_CHANNELS.find(c => c.key === sessChKey)
+                            return (
+                              <div key={s.id}
+                                onClick={() => loadSession(s.id)}
+                                style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 12px', borderRadius: 4, cursor: 'pointer', color: '#b8b1a3', transition: 'background 0.15s' }}
+                                onMouseEnter={e => e.currentTarget.style.background = '#161613'}
+                                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                              >
+                                <span style={{ color: '#d4a574', display: 'inline-flex', fontSize: 14 }}>
+                                  {chDef ? chDef.antIcon : <MessageOutlined />}
+                                </span>
+                                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13 }}>
+                                  {s.title || t('nav.newChat')}
+                                </span>
+                                <span style={{ fontSize: 10, color: '#555', fontFamily: "'JetBrains Mono', monospace" }}>
+                                  {chDef ? chDef.label : ''}
+                                </span>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )
+                    })()}
+                  </div>
+                </div>
+              ) : messages.length === 0 ? (
                 <div style={{ flex: 1, overflow: 'auto', padding: '24px 0' }} className="custom-scrollbar">
                   <div style={{ maxWidth: 1000, margin: '0 auto', padding: '0 24px' }}>
                     {isLoading ? (
@@ -3430,8 +3480,8 @@ const handleDeleteSession = (id) => {
                 </div>
               )}
 
-              {/* Input */}
-              {activeScheduledTask ? (
+              {/* Input — 没有 sessionId 时不显示 (用户在"创建会话引导页"上, 见上方分支) */}
+              {!sessionId ? null : activeScheduledTask ? (
                 <div style={{ padding: '16px 24px', background: '#0e0e0e', borderTop: '1px solid #2a2620', display: 'flex', justifyContent: 'center' }}>
                   <div style={{ maxWidth: 760, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#161613', padding: '12px 24px', borderRadius: 4, border: '1px solid #2a2620' }}>
                     <Space size="large">
@@ -3642,12 +3692,6 @@ const handleDeleteSession = (id) => {
                       />
 
                       <Space style={{ paddingBottom: 2 }}>
-                        <Tooltip title={isRecording ? 'Stop recording' : 'Voice input'}>
-                          <Button type="text"
-                            icon={isRecording ? <StopOutlined style={{ color: '#c97a6b' }} /> : <AudioOutlined />}
-                            onClick={isRecording ? stopRecording : startRecording}
-                            style={{ color: isRecording ? '#c97a6b' : '#524d44', padding: '4px 6px' }} />
-                        </Tooltip>
                         {(() => {
                           const hasInput = input.trim() || selectedImageBase64 || selectedQuickAction
                           if (hasInput) {

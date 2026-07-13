@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { useUserStore } from '../store/useUserStore';
 import api, { getLocalAgentBaseUrl } from '../auth';
 import { CHANNELS as ALL_CHANNELS, CHANNELS_BY_KEY, getTaskTypeByChannel, LEGACY_BUSINESS_CHANNELS } from '../constants/taskTypes.jsx';
+import { isSuperAdmin as isSuperAdminFn, isCompanyAdmin as isCompanyAdminFn } from '../utils/permissions.js';
 
 function getChannelIcon(channel) {
   // Phase 4: 历史 erp/crm 会话图标映射到 cross (ShopOutlined)
@@ -33,7 +34,7 @@ export default function SessionSidebar({
 }) {
   const { t } = useTranslation()
   const { companyChannels } = useUserStore()
-  const isSuper = user?.role === 'SUPER_ADMIN' || user?.role?.toLowerCase() === 'admin' || user?.role?.toLowerCase() === 'superadmin'
+  const isSuper = isSuperAdminFn(user)
   // Phase 4 兼容: 旧公司配置 ['erp','crm'] 映射到 ['cross']
   const normalizedCompanyChannels = (companyChannels || []).map(c =>
     LEGACY_BUSINESS_CHANNELS.includes(c) ? 'cross' : c
@@ -46,6 +47,7 @@ export default function SessionSidebar({
   const hasErpChannel = CHANNELS.some(ch => ch.key === 'cross');
   const hasCrmChannel = CHANNELS.some(ch => ch.key === 'cross');
   const hasDatabaseChannel = CHANNELS.some(ch => ch.key === 'database_analysis');
+  const hasAcademicChannel = CHANNELS.some(ch => ch.key === 'academic');
 
   // Probe monitor availability once on mount; cheap, no polling
   const [monitorAvailable, setMonitorAvailable] = useState(false)
@@ -149,7 +151,7 @@ export default function SessionSidebar({
       <div style={{ padding: '16px 12px 8px' }}>
         <Dropdown
           menu={{
-            items: CHANNELS.map(ch => ({
+            items: CHANNELS.filter(ch => !ch.isPageOnly).map(ch => ({
               key: ch.key,
               icon: ch.antIcon,
               label: <div><span style={{ fontWeight: 500 }}>{ch.label}</span><div style={{ fontSize: 11, color: '#666', marginTop: 1 }}>{ch.desc}</div></div>,
@@ -201,8 +203,10 @@ export default function SessionSidebar({
             { type: 'divider' }
           ] : []),
           { key: 'documents', icon: <FileTextOutlined />, label: t('nav.companyDocuments') },
-          { key: 'academic', icon: <ReadOutlined />, label: '学术分析' },
-          ...(((user?.role === 'SUPER_ADMIN' || user?.role === 'COMPANY_ADMIN') && hasErpChannel) ? [
+          ...(hasAcademicChannel ? [
+            { key: 'academic', icon: <ReadOutlined />, label: '学术分析' },
+          ] : []),
+          ...(((isSuperAdminFn(user) || isCompanyAdminFn(user)) && hasErpChannel) ? [
             { key: 'dashboard', icon: <DashboardOutlined />, label: t('erp.dashboard') },
             { type: 'divider' },
             { key: 'erp_trade', icon: <ShopOutlined />, label: '进销存交易',
@@ -229,7 +233,7 @@ export default function SessionSidebar({
               ]
             }
           ] : []),
-          ...(((user?.role === 'SUPER_ADMIN' || user?.role === 'COMPANY_ADMIN') && hasCrmChannel) ? [
+          ...(((isSuperAdminFn(user) || isCompanyAdminFn(user)) && hasCrmChannel) ? [
             { key: 'crm', icon: <TeamOutlined />, label: '客户关系管理',
               children: [
                 { key: 'crm_leads', icon: <CrownOutlined />, label: '线索管理' },
@@ -241,7 +245,7 @@ export default function SessionSidebar({
               ]
             }
           ] : []),
-          ...(((user?.role === 'SUPER_ADMIN' || user?.role === 'COMPANY_ADMIN') && hasDatabaseChannel) ? [
+          ...(((isSuperAdminFn(user) || isCompanyAdminFn(user)) && hasDatabaseChannel) ? [
             { key: 'databases', icon: <DatabaseOutlined />, label: t('nav.databases') }
           ] : [])
         ]}
@@ -268,10 +272,10 @@ export default function SessionSidebar({
           </Tooltip>
         </div>
         <Button block type="text" icon={<SettingOutlined />} onClick={() => setShowSettings(true)} style={{ color: '#888', textAlign: 'left', justifyContent: 'flex-start', borderRadius: 8 }}>{t('nav.settings')}</Button>
-        {user?.role === 'SUPER_ADMIN' && (
+        {isSuperAdminFn(user) && (
           <Button block type="text" icon={<CrownOutlined />} onClick={() => setShowCompanyManagement(true)} style={{ color: '#888', textAlign: 'left', justifyContent: 'flex-start', borderRadius: 8, marginTop: 4 }}>公司管理</Button>
         )}
-        {(user?.role === 'SUPER_ADMIN' || user?.role === 'COMPANY_ADMIN') && (
+        {(isSuperAdminFn(user) || isCompanyAdminFn(user)) && (
           <Button block type="text" icon={<TeamOutlined />} onClick={() => setShowUsersManagement(true)} style={{ color: '#888', textAlign: 'left', justifyContent: 'flex-start', borderRadius: 8, marginTop: 4 }}>{t('nav.userManagement')}</Button>
         )}
       </div>

@@ -4,6 +4,7 @@ import { PlusOutlined, ReloadOutlined, EditOutlined, DeleteOutlined } from '@ant
 import api from './auth';
 import dayjs from 'dayjs';
 import EntityPicker from './components/EntityPicker';
+import { isSuperAdmin as isSuperAdminFn } from './utils/permissions.js';
 
 const ENTITY = 'opportunities';
 
@@ -17,7 +18,7 @@ const STAGE_MAP = {
 };
 
 export default function CrmOpportunityManagement({ user, companies = [] }) {
-  const isSuperAdmin = user?.role === 'SUPER_ADMIN';
+  const isSuperAdmin = isSuperAdminFn(user);
   const [selectedCompanyId, setSelectedCompanyId] = useState(companies[0]?.id || user?.companyId || 0);
   const effectiveCompanyId = isSuperAdmin ? (selectedCompanyId || 0) : user?.companyId;
 

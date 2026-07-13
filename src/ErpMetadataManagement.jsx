@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { Card, Table, Button, Modal, Form, Input, Select, Tag, Space, message, Tabs, Popconfirm, Tooltip, InputNumber, Switch, Alert } from 'antd'
 import { PlusOutlined, ReloadOutlined, EditOutlined, DeleteOutlined, ApiOutlined, ApartmentOutlined, DeploymentUnitOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import api from './auth'
+import { isSuperAdmin as isSuperAdminFn } from './utils/permissions.js';
 
 const { TextArea } = Input
 
@@ -15,7 +16,7 @@ const STATUS_COLORS = {
 export default function ErpMetadataManagement({ user, companies = [] }) {
   const [activeTab, setActiveTab] = useState('entities')
   const [loading, setLoading] = useState(false)
-  const isSuperAdmin = user?.role === 'SUPER_ADMIN'
+  const isSuperAdmin = isSuperAdminFn(user)
   const effectiveCompanyId = isSuperAdmin ? null : user?.companyId
 
   // ── Entity Registry ───────────────────────────────────────────

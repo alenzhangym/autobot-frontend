@@ -4,6 +4,7 @@ import { EditOutlined, ReloadOutlined, SearchOutlined, WarningOutlined, PlusOutl
 import { Resizable } from 'react-resizable'
 import 'react-resizable/css/styles.css'
 import api from './auth'
+import { isSuperAdmin as isSuperAdminFn, isCompanyAdmin as isCompanyAdminFn } from './utils/permissions.js'
 
 const { Content } = Layout
 const { Text } = Typography
@@ -19,8 +20,8 @@ const ResizableTitle = (props) => {
 }
 
 export default function InventoryManagement({ user, companies = [] }) {
-  const isSuperAdmin = user?.role === 'SUPER_ADMIN'
-  const isCompanyAdmin = user?.role === 'COMPANY_ADMIN' || (user?.role || '').toLowerCase() === 'company_admin'
+  const isSuperAdmin = isSuperAdminFn(user)
+  const isCompanyAdmin = isCompanyAdminFn(user)
   const canEdit = isSuperAdmin || isCompanyAdmin
   const effectiveCompanyId = isSuperAdmin ? null : user?.companyId
 
