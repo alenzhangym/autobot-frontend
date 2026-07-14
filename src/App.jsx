@@ -825,6 +825,8 @@ function App() {
   // 路线 B: re-verify 模式右下角 toast 开关 (命中"是否修复"语义 + 提交成功后置 true)
   const [reVerifyToastEnabled, setReVerifyToastEnabled] = useState(false)
   const lastUserQueryRef = useRef('')
+  // P0-4: 结构化恢复协议 — clarify/pause 恢复时携带 resumeContext + clarifyResponse
+  const pendingResumeRef = useRef(null)
   const msgIdCounter = useRef(Date.now())
   const nextMsgId = () => { msgIdCounter.current += 1; return msgIdCounter.current }
   const [input, setInput] = useState('')
@@ -2430,6 +2432,12 @@ function App() {
       }
 
       const payload = { message: text, session_id: sessionId };
+      // P0-4: 结构化恢复协议 — 携带 resumeContext + clarifyResponse 供后端恢复暂停的计划
+      if (pendingResumeRef.current) {
+        payload.resume_context = pendingResumeRef.current.resumeContext
+        payload.clarify_response = pendingResumeRef.current.clarifyResponse
+        pendingResumeRef.current = null
+      }
       // A 方案：code 会话意图由后端推断——前端不再发 code_mode（除非用户强制锁定）。
       // 旧 'plan' 锁定可通过 IssuesSidePanel 的修复按钮 + IssuesSidePanel "auto" 模式替代；
       // 旧 'build' 锁定 → 后端会基于 isImplementationContinuation 自动升级。
@@ -2464,7 +2472,9 @@ function App() {
         // §7.6 方案七 (P2): 提取参数来源 + 跨域实体聚合, 供 ParamSourceCard / CrossDomainEntityCard 渲染
         const paramSources = res.data?.metadata?.paramSources
         const crossDomainEntities = res.data?.metadata?.crossDomainEntities
-        setMessages(prev => [...prev, normalizeMessage({ id: nextMsgId(), role: 'assistant', content: res.data.response, explanation, paramSources, crossDomainEntities })])
+        // P0-4: 提取已抽取参数, 供前端结构化展示/恢复使用
+        const extractedParams = res.data?.metadata?.extractedParams
+        setMessages(prev => [...prev, normalizeMessage({ id: nextMsgId(), role: 'assistant', content: res.data.response, explanation, paramSources, crossDomainEntities, extractedParams })])
         fetchSessions()
         // 阶段5: ERP 订单表单 — 收到 reply_context.formSpec 时弹窗
         tryOpenOrderFormModal(res.data)
@@ -3743,16 +3753,22 @@ const handleDeleteSession = (id) => {
                     onResolve={async (result) => {
                       setClarifyLoading(true)
                       try {
-                        // 把用户的选择作为新消息发回后端
+                        // P0-4: 结构化恢复协议 — 携带 resumeContext + clarifyResponse
+                        // 仍生成文本回复供后端向后兼容, 但额外发送结构化字段
                         let replyText = ''
+                        let clarifyResponse = null
                         if (result.confirmed !== undefined) {
                           replyText = result.confirmed ? '确认' : '取消'
+                          clarifyResponse = { confirmed: result.confirmed }
                         } else if (result.slot && result.value !== undefined) {
                           replyText = `${result.slot}=${result.value}`
+                          clarifyResponse = { slot: result.slot, value: result.value }
                         }
+                        const resumeContext = pendingClarify.clarifyQuestion?.resumeContext || null
                         setPendingClarify(null)
                         // 复用 sendMessage 逻辑发送回复
                         if (replyText) {
+                          pendingResumeRef.current = { resumeContext, clarifyResponse }
                           // 直接发送, 不走 quick action 拼装
                           setInput(replyText)
                           // 用 setTimeout 等状态更新后自动发送
@@ -3783,7 +3799,11 @@ const handleDeleteSession = (id) => {
                             const replyText = hasEdits
                               ? `确认编辑 ${JSON.stringify(editedParams)}`
                               : '确认'
+                            // P0-4: 结构化恢复协议 — 携带 resumeContext + clarifyResponse
+                            const resumeContext = pendingPause.clarifyQuestion?.resumeContext || null
+                            const clarifyResponse = { confirmed: true, editedParams: hasEdits ? editedParams : null }
                             setPendingPause(null)
+                            pendingResumeRef.current = { resumeContext, clarifyResponse }
                             setInput(hasEdits ? '确认' : replyText)
                             setTimeout(() => { sendMessage(replyText) }, 0)
                           } finally {
@@ -3794,7 +3814,11 @@ const handleDeleteSession = (id) => {
                           setClarifyLoading(true)
                           try {
                             const replyText = '取消'
+                            // P0-4: 结构化恢复协议
+                            const resumeContext = pendingPause.clarifyQuestion?.resumeContext || null
+                            const clarifyResponse = { confirmed: false }
                             setPendingPause(null)
+                            pendingResumeRef.current = { resumeContext, clarifyResponse }
                             setInput(replyText)
                             setTimeout(() => { sendMessage(replyText) }, 0)
                           } finally {
@@ -3815,7 +3839,11 @@ const handleDeleteSession = (id) => {
                           try {
                             const replyText = result.confirmed ? '确认' : '取消'
                             const pauseSessionId = pendingPause.sessionId
+                            // P0-4: 结构化恢复协议
+                            const resumeContext = pendingPause.clarifyQuestion?.resumeContext || null
+                            const clarifyResponse = { confirmed: !!result.confirmed }
                             setPendingPause(null)
+                            pendingResumeRef.current = { resumeContext, clarifyResponse }
                             setInput(replyText)
                             setTimeout(() => {
                               sendMessage(replyText)
