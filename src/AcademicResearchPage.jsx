@@ -77,9 +77,14 @@ export default function AcademicResearchPage({ user }) {
   const [userPrompt, setUserPrompt] = useState('')
   const [report, setReport] = useState('')
   const [history, setHistory] = useState([])
+  // 2026-07-17: 报告生成的中间过程元数据（后端持久化，前端展示+编辑）
+  const [outlineText, setOutlineText] = useState('')
+  const [outlineDebate, setOutlineDebate] = useState('')
+  const [sections, setSections] = useState([])  // [{title, outline, draft, debate, refined}, ...]
 
-  // 搜索源：默认 Perplexity
-  const [sources, setSources] = useState({ perplexity: true, feedcoop: false, httpget: false, knowledge_base: false })
+  // 搜索源：默认 Perplexity + 本地知识库
+  // 2026-07-17: 本地知识库改为默认勾选（之前需手动勾选，认知负担高）
+  const [sources, setSources] = useState({ perplexity: true, feedcoop: false, httpget: false, knowledge_base: true })
 
   const [loadingSuggestions, setLoadingSuggestions] = useState(false)
   const [searching, setSearching] = useState(false)
@@ -142,6 +147,8 @@ export default function AcademicResearchPage({ user }) {
     setGenStatus('idle'); setGenerating(false)
     setProgress(0); setProgressMessage('')
     setSelectedHistoryId(null)
+    // 2026-07-17: 清空大纲/章节元数据
+    setOutlineText(''); setOutlineDebate(''); setSections([])
   }
 
   // 2026-07-17: 新建研究 — 重置表单并在左侧列表中不选中任何历史
@@ -180,10 +187,19 @@ export default function AcademicResearchPage({ user }) {
       let currentId = researchId
       if (currentId) {
         // 已有记录 → 更新主题和报告类型（覆盖旧记录，不新建）
+        // 2026-07-17: 主题或类型变化时后端会删除旧 search-items，
+        // 前端必须同步清空 searchResults，否则旧结果仍存在导致 canGenerate=true，
+        // 用户可跳过搜索直接生成（违反"必须先搜索"约束）。
         await api.put(`/academic/research/${currentId}`, {
           topic: topic.trim(),
           report_type: activeTab,
         })
+        // 清空旧搜索结果，强制用户基于新主题重新搜索
+        setSearchResults([]); setSearchHistory([])
+        setSelectedResultIdx(0)
+        // 旧报告也已失效（后端已清空 generatedReport），同步前端状态
+        setReport(''); setGenStatus('idle'); setGenerating(false)
+        setProgress(0); setProgressMessage('')
       } else {
         // 新建
         const createRes = await api.post('/academic/research', {
@@ -246,18 +262,46 @@ export default function AcademicResearchPage({ user }) {
   }
 
   // ── Step 4: 生成报告（异步模式） ───────────────────────────
+  // 2026-07-17: 生成报告的前置条件 — 必须等前面搜索完成
+  // 拦截规则：
+  //   1. 必须有 researchId（已完成主题+报告类型选择）
+  //   2. 不能正在获取搜索建议（loadingSuggestions）
+  //   3. 不能正在执行搜索（searching）
+  //   4. 必须有至少 1 条搜索结果（searchResults.length > 0）
+  const generateBlockReason = (() => {
+    if (!researchId) return '请先完成主题与搜索建议步骤'
+    if (loadingSuggestions) return '正在获取搜索建议，请等待…'
+    if (searching) return '正在执行搜索，请等待完成…'
+    if (!searchResults || searchResults.length === 0) return '请先执行搜索获取至少 1 条结果'
+    return null  // 无拦截原因，可生成
+  })()
+  const canGenerate = !generateBlockReason && !generating
+
   // 2026-07-17: 后端改为异步执行，/generate 立即返回 status=generating。
   // 此处只发起请求并切换到 generating 状态，实际进度通过下方 useEffect 轮询获取。
+  //
+  // 时序修复：必须先 await api.post 成功后再 setGenStatus('generating')。
+  // 若先 setGenStatus 再 await，useEffect 会立即 poll()，此时后端 status 可能还是 'draft'
+  // （/generate 请求未到达后端），轮询误判为失败，出现"一个开始提示+一个错误提示"。
   const handleGenerate = async () => {
-    if (!researchId) { message.warning('请先完成主题与搜索建议步骤'); return }
-    setGenerating(true); setGenStatus('generating'); setReport('')
-    setProgress(0); setProgressMessage('准备生成')
+    // 防御性检查：即使按钮 disabled 被绕过也拦截
+    if (generateBlockReason) {
+      message.warning(generateBlockReason)
+      return
+    }
+    // 进入"启动中"状态：禁用按钮但还不触发轮询（genStatus 仍为 idle）
+    setGenerating(true); setReport('')
+    setProgress(0); setProgressMessage('正在启动生成任务…')
+    // 2026-07-17: 清空旧的大纲/章节元数据，让新一轮生成重新跑全流程
+    setOutlineText(''); setOutlineDebate(''); setSections([])
     try {
       await api.post(`/academic/research/${researchId}/generate`, {
         user_prompt: userPrompt,
         template_id: templateId,
       })
-      // 立即返回，轮询 useEffect 会接管进度更新
+      // /generate 成功返回 → 后端 DB status 已为 'generating'，现在触发轮询安全
+      setGenStatus('generating')
+      setProgressMessage('准备生成')
       message.info('已开始异步生成，请等待进度更新')
     } catch (e) {
       message.error('启动生成失败: ' + (e.response?.data?.error || e.message))
@@ -266,12 +310,17 @@ export default function AcademicResearchPage({ user }) {
     }
   }
 
-  // 2026-07-17: 异步生成进度轮询。genStatus=generating 时每 2s 轮询一次。
+  // 2026-07-17: 异步生成进度轮询。genStatus=generating 时每 10s 轮询一次。
   // 读取 status/progress/progressMessage/generatedReport，终止条件：done/cancelled/draft/failed
+  //
+  // 宽容期机制：前 2 次轮询（约 10s 内）即使读到 status='draft' 也不立即判失败，
+  // 避免后端线程启动与 DB 状态更新的微小时间差导致误判。
   useEffect(() => {
     if (genStatus !== 'generating' || !researchId) return
     let cancelled = false
+    let pollCount = 0  // 宽容期计数
     const poll = async () => {
+      pollCount++
       try {
         const res = await api.get(`/academic/research/${researchId}`)
         if (cancelled) return
@@ -279,6 +328,15 @@ export default function AcademicResearchPage({ user }) {
         if (!r) return
         setProgress(r.progress || 0)
         setProgressMessage(r.progressMessage || '')
+        // 2026-07-17: 同步大纲/章节元数据（生成过程中可实时看到章节完成情况）
+        if (r.outlineText) setOutlineText(r.outlineText)
+        if (r.outlineDebate) setOutlineDebate(r.outlineDebate)
+        if (r.sectionsJson) {
+          try {
+            const parsed = JSON.parse(r.sectionsJson)
+            if (Array.isArray(parsed)) setSections(parsed)
+          } catch (e) { /* 忽略 JSON 解析错误 */ }
+        }
         if (r.status === 'done') {
           setReport(r.generatedReport || '')
           setGenStatus('done'); setGenerating(false)
@@ -290,6 +348,11 @@ export default function AcademicResearchPage({ user }) {
           fetchHistory()
         } else if (r.status === 'draft') {
           // 生成失败（后端异常时回退到 draft）
+          // 宽容期：前 2 次轮询（pollCount<=2，约 10s）跳过，避免启动竞态误判
+          if (pollCount <= 2) {
+            console.warn(`[poll] status=draft but in grace period (poll ${pollCount}/2), skip`)
+            return
+          }
           setGenStatus('failed'); setGenerating(false)
           message.error('生成失败: ' + (r.progressMessage || '未知错误'))
           fetchHistory()
@@ -350,6 +413,17 @@ export default function AcademicResearchPage({ user }) {
         }
         // 2026-07-12: 恢复模板选择状态
         setTemplateId(r.templateId || null)
+        // 2026-07-17: 恢复大纲/章节元数据
+        setOutlineText(r.outlineText || '')
+        setOutlineDebate(r.outlineDebate || '')
+        if (r.sectionsJson) {
+          try {
+            const parsed = JSON.parse(r.sectionsJson)
+            setSections(Array.isArray(parsed) ? parsed : [])
+          } catch (e) { setSections([]) }
+        } else {
+          setSections([])
+        }
         try {
           const tplRes = await api.get('/academic/report-templates', { params: { report_type: r.reportType || 'policy_advice' } })
           if (tplRes.data) setTemplates(tplRes.data)
@@ -631,7 +705,7 @@ export default function AcademicResearchPage({ user }) {
       <div className="arp-grain custom-scrollbar" style={{ flex: 1, height: '100%', overflow: 'auto', position: 'relative', zIndex: 1 }}>
         <motion.div
           initial="hidden" animate="show" variants={stagger}
-          style={{ maxWidth: 1180, margin: '0 auto', padding: '36px 32px 80px' }}
+          style={{ maxWidth: 1700, margin: '0 auto', padding: '36px 40px 80px' }}
         >
 
           {/* ── 页眉：标题（移除历史按钮，由左侧列表取代） ─────── */}
@@ -1273,21 +1347,35 @@ export default function AcademicResearchPage({ user }) {
               </motion.button>
             ) : (
               <motion.button
-                whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.99 }}
-                onClick={handleGenerate} disabled={!researchId}
+                whileHover={canGenerate ? { scale: 1.01 } : {}}
+                whileTap={canGenerate ? { scale: 0.99 } : {}}
+                onClick={handleGenerate} disabled={!canGenerate}
                 style={{
-                  cursor: researchId ? 'pointer' : 'not-allowed',
+                  cursor: canGenerate ? 'pointer' : 'not-allowed',
                   display: 'flex', alignItems: 'center', gap: 12,
-                  background: researchId ? 'var(--ab-copper)' : 'var(--ab-bg-3)',
+                  background: canGenerate ? 'var(--ab-copper)' : 'var(--ab-bg-3)',
                   border: 'none', borderRadius: 6, padding: '14px 28px',
-                  color: researchId ? 'var(--ab-bg)' : 'var(--ab-text-4)',
+                  color: canGenerate ? 'var(--ab-bg)' : 'var(--ab-text-4)',
                   ...serif, fontSize: 17, fontWeight: 500, letterSpacing: '0.01em',
-                  transition: 'all .25s', boxShadow: researchId ? 'var(--ab-shadow-glow)' : 'none',
+                  transition: 'all .25s', boxShadow: canGenerate ? 'var(--ab-shadow-glow)' : 'none',
                 }}>
                 <FileTextOutlined style={{ fontSize: 16 }} />
                 {genStatus === 'cancelled' ? '重新生成' : currentConfig.btnLabel}
                 <ArrowRightOutlined style={{ fontSize: 13, marginLeft: 2 }} />
               </motion.button>
+            )}
+
+            {/* 2026-07-17: 前置条件未满足时展示拦截原因，引导用户先完成搜索 */}
+            {!generating && generateBlockReason && (
+              <div style={{
+                marginTop: 12, padding: '10px 14px',
+                background: 'var(--ab-bg-2)', border: '1px dashed var(--ab-line)',
+                borderRadius: 6, display: 'flex', alignItems: 'center', gap: 8,
+                ...mono, fontSize: 11, color: 'var(--ab-text-3)',
+              }}>
+                <span style={{ color: 'var(--ab-copper)', fontSize: 13 }}>⏳</span>
+                <span>{generateBlockReason}</span>
+              </div>
             )}
 
             {/* 生成中：进度条 + 进度文字（2026-07-17 异步模式） */}
@@ -1411,15 +1499,16 @@ export default function AcademicResearchPage({ user }) {
                         复制
                       </Button>
                     </div>
-                    {/* 报告正文 */}
-                    <div style={{ padding: '28px 32px', maxWidth: 760 }}>
-                      <div style={{
-                        ...body, fontSize: 14.5, color: 'var(--ab-text)', lineHeight: 1.9,
-                        whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                      }} className="prose">
-                        {report}
-                      </div>
-                    </div>
+                    {/* 报告正文 — 左侧大纲 + 右侧章节正文（2026-07-17 分块显示） */}
+                    <ReportBody
+                      report={report}
+                      outlineText={outlineText}
+                      outlineDebate={outlineDebate}
+                      sections={sections}
+                      researchId={researchId}
+                      genStatus={genStatus}
+                      onOutlineUpdated={(text) => setOutlineText(text)}
+                    />
                     {/* 报告页脚 */}
                     <div style={{
                       padding: '12px 28px', borderTop: '1px solid var(--ab-line)',
@@ -1436,6 +1525,356 @@ export default function AcademicResearchPage({ user }) {
           </StepShell>
 
         </motion.div>
+      </div>
+    </div>
+  )
+}
+
+// ── 报告正文组件 ──────────────────────────────────────────────
+// 2026-07-17: 将报告拆分为"左侧大纲 + 右侧章节正文"两栏布局。
+// 优先使用后端持久化的 sections（含 title/outline/draft/debate/refined），
+// 兜底从 report 文本中正则切分 ## 章节。
+// - 顶部展示大纲（可编辑） + 大纲评审意见
+// - 每个章节：主标题 + refined 正文 + 折叠面板显示 draft/debate
+function ReportBody({ report, outlineText, outlineDebate, sections: sectionsFromProps, researchId, genStatus, onOutlineUpdated }) {
+  const serif = { fontFamily: 'var(--ab-font-display)' }
+  const mono = { fontFamily: 'var(--ab-font-mono)' }
+  const body = { fontFamily: 'var(--ab-font-body)' }
+  const sectionRefs = React.useRef({})
+  const [editingOutline, setEditingOutline] = React.useState(false)
+  const [editedOutline, setEditedOutline] = React.useState('')
+  const [savingOutline, setSavingOutline] = React.useState(false)
+  // 章节思考过程展开状态：key=sectionIdx, value=Record<"draft"|"debate", boolean>
+  const [expandedProcess, setExpandedProcess] = React.useState({})
+
+  // 2026-07-17: 优先使用后端持久化的 sections（含 draft/debate/refined 完整元数据），
+  // 兜底从 report 文本中按 ## 切分章节（保持向后兼容旧报告）。
+  const sections = useMemo(() => {
+    if (sectionsFromProps && sectionsFromProps.length > 0) {
+      return sectionsFromProps.map((s, i) => ({
+        idx: i,
+        title: s.title || `章节 ${i + 1}`,
+        outline: s.outline || '',
+        draft: s.draft || '',
+        debate: s.debate || '',
+        refined: s.refined || '',
+        hasProcess: !!(s.draft || s.debate),
+      }))
+    }
+    if (!report) return []
+    const lines = report.split('\n')
+    const out = []
+    let current = null
+    for (const line of lines) {
+      const m = line.match(/^##\s+(.+?)\s*$/)
+      if (m) {
+        if (current) out.push(current)
+        current = { title: m[1].trim(), body: '' }
+      } else if (current) {
+        current.body += line + '\n'
+      }
+    }
+    if (current) out.push(current)
+    return out.map((s, i) => ({
+      idx: i, title: s.title,
+      outline: '', draft: '', debate: '',
+      refined: s.body.trim(),
+      hasProcess: false,
+    }))
+  }, [report, sectionsFromProps])
+
+  const scrollToSection = (i) => {
+    const el = sectionRefs.current[`section-${i}`]
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }
+
+  const toggleProcess = (i, kind) => {
+    setExpandedProcess(prev => ({
+      ...prev,
+      [i]: { ...(prev[i] || {}), [kind]: !(prev[i] || {})[kind] },
+    }))
+  }
+
+  const startEditOutline = () => {
+    setEditedOutline(outlineText || '')
+    setEditingOutline(true)
+  }
+
+  const cancelEditOutline = () => {
+    setEditingOutline(false)
+    setEditedOutline('')
+  }
+
+  const saveOutline = async () => {
+    if (!researchId) return
+    if (!editedOutline.trim()) { message.warning('大纲不能为空'); return }
+    setSavingOutline(true)
+    try {
+      const res = await api.put(`/academic/research/${researchId}/outline`, {
+        outline_text: editedOutline.trim(),
+      })
+      if (res.data?.updated) {
+        onOutlineUpdated(editedOutline.trim())
+        setEditingOutline(false)
+        message.success('大纲已保存。点击"生成文档"将按新大纲重新生成。')
+      } else {
+        message.error('保存失败')
+      }
+    } catch (e) {
+      message.error('保存失败: ' + (e.response?.data?.error || e.message))
+    } finally {
+      setSavingOutline(false)
+    }
+  }
+
+  if (sections.length === 0 && !outlineText) {
+    // 兜底：未识别到任何 ## 章节且无大纲，直接显示原文
+    return (
+      <div style={{ padding: '28px 32px', maxWidth: 760 }}>
+        <div style={{
+          ...body, fontSize: 14.5, color: 'var(--ab-text)', lineHeight: 1.9,
+          whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+        }} className="prose">
+          {report}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      {/* ── 顶部：可编辑大纲 + 评审意见 ── */}
+      {(outlineText || outlineDebate) && (
+        <div style={{
+          borderBottom: '1px solid var(--ab-line)',
+          padding: '20px 32px',
+          background: 'var(--ab-bg-2)',
+        }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            marginBottom: 12,
+          }}>
+            <div style={{
+              ...mono, fontSize: 10, letterSpacing: '0.22em', textTransform: 'uppercase',
+              color: 'var(--ab-text-4)',
+            }}>
+              · 报告大纲（{editingOutline ? '编辑中' : '可编辑'}）·
+            </div>
+            {!editingOutline && outlineText && genStatus !== 'generating' && (
+              <Button size="small" onClick={startEditOutline}
+                style={{ ...mono, fontSize: 10, color: 'var(--ab-copper)',
+                  borderColor: 'var(--ab-copper)', background: 'transparent' }}>
+                编辑大纲
+              </Button>
+            )}
+          </div>
+          {editingOutline ? (
+            <div>
+              <TextArea
+                value={editedOutline}
+                onChange={e => setEditedOutline(e.target.value)}
+                autoSize={{ minRows: 8, maxRows: 20 }}
+                style={{ ...body, fontSize: 13, background: 'var(--ab-bg-3)',
+                  color: 'var(--ab-text)', border: '1px solid var(--ab-copper)' }}
+              />
+              <div style={{ marginTop: 10, display: 'flex', gap: 8 }}>
+                <Button type="primary" size="small" onClick={saveOutline} loading={savingOutline}
+                  style={{ background: 'var(--ab-copper)', borderColor: 'var(--ab-copper)' }}>
+                  保存大纲
+                </Button>
+                <Button size="small" onClick={cancelEditOutline}
+                  style={{ ...mono, fontSize: 11 }}>
+                  取消
+                </Button>
+                <span style={{ ...mono, fontSize: 10, color: 'var(--ab-text-4)',
+                  marginLeft: 'auto', alignSelf: 'center' }}>
+                  保存后需重新点击"生成文档"才能按新大纲重生成
+                </span>
+              </div>
+            </div>
+          ) : (
+            <div style={{
+              ...body, fontSize: 13, color: 'var(--ab-text)', lineHeight: 1.8,
+              whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+              maxHeight: 240, overflowY: 'auto',
+              padding: '8px 12px', background: 'var(--ab-bg-3)', borderRadius: 4,
+            }}>
+              {outlineText || '（无大纲）'}
+            </div>
+          )}
+          {/* 大纲评审意见 */}
+          {outlineDebate && !editingOutline && (
+            <div style={{ marginTop: 14 }}>
+              <div style={{
+                ...mono, fontSize: 10, color: 'var(--ab-copper)',
+                letterSpacing: '0.15em', textTransform: 'uppercase', marginBottom: 6,
+              }}>
+                ◇ 评审意见
+              </div>
+              <div style={{
+                ...body, fontSize: 12.5, color: 'var(--ab-text-2)', lineHeight: 1.7,
+                whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                padding: '8px 12px',
+                background: 'rgba(184, 115, 70, 0.06)',
+                borderLeft: '2px solid var(--ab-copper)',
+                borderRadius: 2,
+              }}>
+                {outlineDebate}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── 主区：左侧大纲 + 右侧章节正文 ── */}
+      <div style={{
+        display: 'grid', gridTemplateColumns: '260px 1fr', gap: 0,
+        minHeight: 400,
+      }}>
+        {/* 左：书纲式大纲（可点击跳转） */}
+        <div style={{
+          borderRight: '1px solid var(--ab-line)',
+          padding: '24px 18px',
+          background: 'var(--ab-bg-2)',
+          maxHeight: 900, overflowY: 'auto',
+        }}>
+          <div style={{
+            ...mono, fontSize: 10, letterSpacing: '0.22em', textTransform: 'uppercase',
+            color: 'var(--ab-text-4)', marginBottom: 16,
+          }}>
+            · 章节目录 ·
+          </div>
+          {sections.map(item => (
+            <div key={item.idx} style={{ marginBottom: 4 }}>
+              <div
+                onClick={() => scrollToSection(item.idx)}
+                style={{
+                  cursor: 'pointer', padding: '8px 10px', borderRadius: 4,
+                  display: 'flex', alignItems: 'flex-start', gap: 8,
+                  transition: 'background .15s',
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = 'var(--ab-bg-3)'}
+                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+              >
+                <span style={{
+                  ...mono, fontSize: 10, color: 'var(--ab-copper)', minWidth: 22,
+                  paddingTop: 2, letterSpacing: '0.05em',
+                }}>
+                  {String(item.idx + 1).padStart(2, '0')}
+                </span>
+                <span style={{
+                  ...serif, fontSize: 13.5, color: 'var(--ab-text)', lineHeight: 1.5,
+                  fontWeight: 500,
+                }}>
+                  {item.title}
+                </span>
+                {item.hasProcess && (
+                  <span style={{
+                    ...mono, fontSize: 8.5, color: 'var(--ab-copper)',
+                    marginLeft: 'auto', paddingTop: 2,
+                  }} title="本章有思考过程可查看">◆</span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* 右：章节正文 */}
+        <div style={{ padding: '32px 40px', overflow: 'hidden' }}>
+          {sections.map((s, i) => {
+            const exp = expandedProcess[i] || {}
+            return (
+              <div
+                key={i}
+                ref={el => sectionRefs.current[`section-${i}`] = el}
+                style={{ marginBottom: 40, scrollMarginTop: 20 }}
+              >
+                <h2 style={{
+                  ...serif, fontSize: 22, color: 'var(--ab-text)',
+                  fontWeight: 500, margin: '0 0 16px', paddingBottom: 10,
+                  borderBottom: '1px solid var(--ab-line)', letterSpacing: '-0.01em',
+                }}>
+                  <span style={{
+                    ...mono, fontSize: 11, color: 'var(--ab-copper)',
+                    marginRight: 12, letterSpacing: '0.1em',
+                  }}>
+                    {String(i + 1).padStart(2, '0')}
+                  </span>
+                  {s.title}
+                </h2>
+                {/* 最终 refined 正文 */}
+                <div style={{
+                  ...body, fontSize: 14.5, color: 'var(--ab-text)', lineHeight: 1.9,
+                  whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                }}>
+                  {s.refined || s.body || '（本章暂无内容）'}
+                </div>
+                {/* 章节大纲概要（来自后端） */}
+                {s.outline && (
+                  <div style={{
+                    ...mono, fontSize: 10, color: 'var(--ab-text-4)',
+                    marginTop: 16, padding: '6px 10px',
+                    background: 'var(--ab-bg-2)', borderRadius: 2,
+                    letterSpacing: '0.05em',
+                  }}>
+                    ◆ 大纲：{s.outline.length > 200 ? s.outline.slice(0, 200) + '…' : s.outline}
+                  </div>
+                )}
+                {/* 思考过程折叠面板 */}
+                {s.hasProcess && (
+                  <div style={{ marginTop: 16 }}>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      {s.debate && (
+                        <Button size="small"
+                          onClick={() => toggleProcess(i, 'debate')}
+                          style={{ ...mono, fontSize: 10, color: exp.debate ? 'var(--ab-copper)' : 'var(--ab-text-3)',
+                            borderColor: exp.debate ? 'var(--ab-copper)' : 'var(--ab-line)',
+                            background: exp.debate ? 'var(--ab-bg-2)' : 'transparent' }}>
+                          {exp.debate ? '▼' : '▶'} 评审意见
+                        </Button>
+                      )}
+                      {s.draft && (
+                        <Button size="small"
+                          onClick={() => toggleProcess(i, 'draft')}
+                          style={{ ...mono, fontSize: 10, color: exp.draft ? 'var(--ab-copper)' : 'var(--ab-text-3)',
+                            borderColor: exp.draft ? 'var(--ab-copper)' : 'var(--ab-line)',
+                            background: exp.draft ? 'var(--ab-bg-2)' : 'transparent' }}>
+                          {exp.draft ? '▼' : '▶'} 章节初稿
+                        </Button>
+                      )}
+                    </div>
+                    {exp.debate && s.debate && (
+                      <div style={{
+                        ...body, fontSize: 12.5, color: 'var(--ab-text-2)', lineHeight: 1.7,
+                        whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                        marginTop: 10, padding: '10px 14px',
+                        background: 'rgba(184, 115, 70, 0.05)',
+                        borderLeft: '2px solid var(--ab-copper)',
+                        borderRadius: 2,
+                      }}>
+                        {s.debate}
+                      </div>
+                    )}
+                    {exp.draft && s.draft && (
+                      <div style={{
+                        ...body, fontSize: 12.5, color: 'var(--ab-text-3)', lineHeight: 1.7,
+                        whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                        marginTop: 10, padding: '10px 14px',
+                        background: 'var(--ab-bg-2)',
+                        borderLeft: '2px solid var(--ab-line)',
+                        borderRadius: 2,
+                      }}>
+                        {s.draft}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
       </div>
     </div>
   )
