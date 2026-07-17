@@ -386,6 +386,84 @@ export default function AcademicResearchPage({ user }) {
     }
   }
 
+  // 2026-07-17: 导出为 Word 文档（.doc，纯 HTML→Blob 方式，无需第三方库）。
+  // Word 能识别 HTML 格式的 .doc 文件，通过 MIME 类型 application/msword 触发下载。
+  // 报告已是 markdown 风格（## 标题 + 正文），这里做简单的 markdown→HTML 转换：
+  //   - # 标题 → <h1>
+  //   - ## 标题 → <h2>
+  //   - ### 标题 → <h3>
+  //   - 引用标注【资料N｜标题】→ 加粗保留
+  //   - 其他行 → <p>
+  const exportToWord = () => {
+    if (!report) { message.warning('报告尚未生成'); return }
+    // markdown → HTML（简化版，只处理标题和段落）
+    const lines = report.split('\n')
+    const htmlParts = []
+    for (const line of lines) {
+      const trimmed = line.trim()
+      if (!trimmed) { htmlParts.push(''); continue }
+      if (trimmed.startsWith('### ')) {
+        htmlParts.push(`<h3>${escapeHtml(trimmed.slice(4))}</h3>`)
+      } else if (trimmed.startsWith('## ')) {
+        htmlParts.push(`<h2>${escapeHtml(trimmed.slice(3))}</h2>`)
+      } else if (trimmed.startsWith('# ')) {
+        htmlParts.push(`<h1>${escapeHtml(trimmed.slice(2))}</h1>`)
+      } else {
+        // 段落正文 — 保留引用标注的加粗样式
+        const withRefs = escapeHtml(trimmed).replace(
+          /【资料([^】]+)】/g,
+          '<b>【资料$1】</b>'
+        )
+        htmlParts.push(`<p style="line-height:1.8;">${withRefs}</p>`)
+      }
+    }
+    const title = topic || '学术研究报告'
+    const fullHtml = `<!DOCTYPE html>
+<html xmlns:o="urn:schemas-microsoft-com:office:office"
+      xmlns:w="urn:schemas-microsoft-com:office:word"
+      xmlns="http://www.w3.org/TR/REC-html40">
+<head>
+  <meta charset="utf-8">
+  <title>${escapeHtml(title)}</title>
+  <style>
+    body { font-family: '宋体', SimSun, serif; font-size: 12pt; }
+    h1 { font-size: 22pt; color: #2c2c2c; border-bottom: 1px solid #ccc; padding-bottom: 6px; }
+    h2 { font-size: 16pt; color: #b87346; margin-top: 24px; }
+    h3 { font-size: 13pt; color: #555; margin-top: 18px; }
+    p { text-indent: 2em; margin: 8px 0; }
+  </style>
+</head>
+<body>
+  ${htmlParts.join('\n  ')}
+</body>
+</html>`
+    // Blob → 下载
+    const blob = new Blob(['\ufeff' + fullHtml], { type: 'application/msword;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    // 文件名：主题前 30 字 + 日期
+    const dateStr = new Date().toISOString().slice(0, 10)
+    const safeName = title.replace(/[\\/:*?"<>|]/g, '').slice(0, 30)
+    link.download = `${safeName}_${dateStr}.doc`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+    message.success('Word 文档已导出')
+  }
+
+  // HTML 转义（防 XSS + 保证 Word 解析正确）
+  const escapeHtml = (str) => {
+    if (!str) return ''
+    return str
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
+  }
+
   // ── 加载历史 ────────────────────────────────────────────────
   // 2026-07-17: 左侧列表点击切换。同步 genStatus 让轮询逻辑接管生成中的任务。
   const handleLoadHistory = async (id) => {
@@ -1493,11 +1571,20 @@ export default function AcademicResearchPage({ user }) {
                           {currentConfig.label}
                         </span>
                       </div>
-                      <Button size="small" icon={<CopyOutlined />}
-                        onClick={() => navigator.clipboard.writeText(report).then(() => message.success('已复制'))}
-                        style={{ ...mono, fontSize: 11, color: 'var(--ab-text-3)', borderColor: 'var(--ab-line)' }}>
-                        复制
-                      </Button>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <Button size="small" icon={<CopyOutlined />}
+                          onClick={() => navigator.clipboard.writeText(report).then(() => message.success('已复制'))}
+                          style={{ ...mono, fontSize: 11, color: 'var(--ab-text-3)', borderColor: 'var(--ab-line)' }}>
+                          复制
+                        </Button>
+                        {/* 2026-07-17: 导出 Word 文档（纯 HTML→Blob 方式，无外部依赖） */}
+                        <Button size="small" icon={<FileTextOutlined />}
+                          onClick={() => exportToWord()}
+                          disabled={!report}
+                          style={{ ...mono, fontSize: 11, color: 'var(--ab-copper)', borderColor: 'var(--ab-copper)', background: 'transparent' }}>
+                          导出 Word
+                        </Button>
+                      </div>
                     </div>
                     {/* 报告正文 — 左侧大纲 + 右侧章节正文（2026-07-17 分块显示） */}
                     <ReportBody
@@ -1508,6 +1595,10 @@ export default function AcademicResearchPage({ user }) {
                       researchId={researchId}
                       genStatus={genStatus}
                       onOutlineUpdated={(text) => setOutlineText(text)}
+                      onSectionsUpdated={(newSections, newReport) => {
+                        setSections(newSections)
+                        if (newReport) setReport(newReport)
+                      }}
                     />
                     {/* 报告页脚 */}
                     <div style={{
@@ -1536,7 +1627,7 @@ export default function AcademicResearchPage({ user }) {
 // 兜底从 report 文本中正则切分 ## 章节。
 // - 顶部展示大纲（可编辑） + 大纲评审意见
 // - 每个章节：主标题 + refined 正文 + 折叠面板显示 draft/debate
-function ReportBody({ report, outlineText, outlineDebate, sections: sectionsFromProps, researchId, genStatus, onOutlineUpdated }) {
+function ReportBody({ report, outlineText, outlineDebate, sections: sectionsFromProps, researchId, genStatus, onOutlineUpdated, onSectionsUpdated }) {
   const serif = { fontFamily: 'var(--ab-font-display)' }
   const mono = { fontFamily: 'var(--ab-font-mono)' }
   const body = { fontFamily: 'var(--ab-font-body)' }
@@ -1546,6 +1637,10 @@ function ReportBody({ report, outlineText, outlineDebate, sections: sectionsFrom
   const [savingOutline, setSavingOutline] = React.useState(false)
   // 章节思考过程展开状态：key=sectionIdx, value=Record<"draft"|"debate", boolean>
   const [expandedProcess, setExpandedProcess] = React.useState({})
+  // 2026-07-17: 段落编辑模式 — key=sectionIdx, value={ editing: bool, editedText: string, saving: bool }
+  const [sectionEditState, setSectionEditState] = React.useState({})
+  // 2026-07-17: LLM 校准输入 — key=sectionIdx, value={ hint: string, regenerating: bool }
+  const [sectionRegenState, setSectionRegenState] = React.useState({})
 
   // 2026-07-17: 优先使用后端持久化的 sections（含 draft/debate/refined 完整元数据），
   // 兜底从 report 文本中按 ## 切分章节（保持向后兼容旧报告）。
@@ -1626,6 +1721,114 @@ function ReportBody({ report, outlineText, outlineDebate, sections: sectionsFrom
       message.error('保存失败: ' + (e.response?.data?.error || e.message))
     } finally {
       setSavingOutline(false)
+    }
+  }
+
+  // 2026-07-17: 段落直接编辑 — 进入/取消/保存
+  const startEditSection = (idx, currentText) => {
+    setSectionEditState(prev => ({
+      ...prev,
+      [idx]: { editing: true, editedText: currentText, saving: false },
+    }))
+  }
+
+  const cancelEditSection = (idx) => {
+    setSectionEditState(prev => {
+      const next = { ...prev }
+      delete next[idx]
+      return next
+    })
+  }
+
+  const saveSection = async (idx) => {
+    if (!researchId) return
+    const st = sectionEditState[idx]
+    if (!st || !st.editedText || !st.editedText.trim()) {
+      message.warning('段落内容不能为空')
+      return
+    }
+    setSectionEditState(prev => ({
+      ...prev,
+      [idx]: { ...prev[idx], saving: true },
+    }))
+    try {
+      const res = await api.put(`/academic/research/${researchId}/sections/${idx}`, {
+        refined: st.editedText,
+      })
+      if (res.data?.updated) {
+        // 后端返回 sections（JSON 字符串）+ 新 report
+        let newSections = []
+        try {
+          newSections = JSON.parse(res.data.sections)
+        } catch (e) { /* ignore */ }
+        onSectionsUpdated(newSections, res.data.report)
+        // 退出编辑模式
+        setSectionEditState(prev => {
+          const next = { ...prev }
+          delete next[idx]
+          return next
+        })
+        message.success('段落已保存')
+      } else {
+        message.error('保存失败')
+      }
+    } catch (e) {
+      message.error('保存失败: ' + (e.response?.data?.error || e.message))
+    } finally {
+      setSectionEditState(prev => ({
+        ...prev,
+        [idx]: prev[idx] ? { ...prev[idx], saving: false } : prev[idx],
+      }))
+    }
+  }
+
+  // 2026-07-17: LLM 校准 — 基于用户提示重新生成段落
+  const regenerateSection = async (idx) => {
+    if (!researchId) return
+    const st = sectionRegenState[idx]
+    if (!st || !st.hint || !st.hint.trim()) {
+      message.warning('请输入修改点提示')
+      return
+    }
+    setSectionRegenState(prev => ({
+      ...prev,
+      [idx]: { ...prev[idx], regenerating: true },
+    }))
+    try {
+      const res = await api.post(`/academic/research/${researchId}/sections/${idx}/regenerate`, {
+        user_hint: st.hint.trim(),
+      })
+      if (res.data?.regenerated) {
+        let newSections = []
+        try {
+          newSections = JSON.parse(res.data.sections)
+        } catch (e) { /* ignore */ }
+        onSectionsUpdated(newSections, res.data.report)
+        // 2026-07-17: 同步更新编辑器中的 editedText 为 LLM 重写后的新内容
+        // 这样用户可以在编辑器中继续微调，或直接点保存
+        const newRefined = newSections[idx]?.refined || ''
+        if (newRefined) {
+          setSectionEditState(prev => ({
+            ...prev,
+            [idx]: { ...prev[idx], editedText: newRefined },
+          }))
+        }
+        // 清空 LLM 校准输入框（保留编辑模式，让用户检查后再保存）
+        setSectionRegenState(prev => ({
+          ...prev,
+          [idx]: { hint: '', regenerating: false },
+        }))
+        message.success('LLM 已校准段落 ' + (idx + 1) + '，请检查后点击"保存"')
+      } else {
+        message.error('LLM 校准失败')
+      }
+    } catch (e) {
+      message.error('LLM 校准失败: ' + (e.response?.data?.error || e.message))
+    } finally {
+      setSectionRegenState(prev => ({
+        ...prev,
+        [idx]: prev[idx] ? { ...prev[idx], regenerating: false } : prev[idx],
+      }))
     }
   }
 
@@ -1781,96 +1984,237 @@ function ReportBody({ report, outlineText, outlineDebate, sections: sectionsFrom
           ))}
         </div>
 
-        {/* 右：章节正文 */}
+        {/* 右：章节正文 — 每段卡片化。默认只显示正文，点击"编辑段落"进入编辑模式 */}
         <div style={{ padding: '32px 40px', overflow: 'hidden' }}>
           {sections.map((s, i) => {
             const exp = expandedProcess[i] || {}
+            const editState = sectionEditState[i] || { editing: false, editedText: '', saving: false }
+            const regenState = sectionRegenState[i] || { hint: '', regenerating: false }
+            // 2026-07-17: 是否可用编辑（需要 researchId 且非生成中且后端持久化了 sections）
+            const canEdit = !!researchId && genStatus !== 'generating' && sectionsFromProps && sectionsFromProps.length > 0
+            const isEditing = editState.editing
             return (
               <div
                 key={i}
                 ref={el => sectionRefs.current[`section-${i}`] = el}
-                style={{ marginBottom: 40, scrollMarginTop: 20 }}
+                style={{
+                  marginBottom: 24, scrollMarginTop: 20,
+                  background: 'var(--ab-bg)',
+                  // 2026-07-17: 编辑模式下边框变铜色，非编辑模式保持浅边框
+                  border: `1px solid ${isEditing ? 'var(--ab-copper)' : 'var(--ab-line)'}`,
+                  borderRadius: 6,
+                  overflow: 'hidden',
+                  boxShadow: isEditing ? '0 2px 8px rgba(184, 115, 70, 0.15)' : '0 1px 3px rgba(0,0,0,0.04)',
+                  transition: 'border-color .15s, box-shadow .15s',
+                }}
               >
-                <h2 style={{
-                  ...serif, fontSize: 22, color: 'var(--ab-text)',
-                  fontWeight: 500, margin: '0 0 16px', paddingBottom: 10,
-                  borderBottom: '1px solid var(--ab-line)', letterSpacing: '-0.01em',
-                }}>
-                  <span style={{
-                    ...mono, fontSize: 11, color: 'var(--ab-copper)',
-                    marginRight: 12, letterSpacing: '0.1em',
-                  }}>
-                    {String(i + 1).padStart(2, '0')}
-                  </span>
-                  {s.title}
-                </h2>
-                {/* 最终 refined 正文 */}
+                {/* 卡片头部：序号 + 标题 + 操作按钮 */}
                 <div style={{
-                  ...body, fontSize: 14.5, color: 'var(--ab-text)', lineHeight: 1.9,
-                  whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                  padding: '14px 20px',
+                  borderBottom: '1px solid var(--ab-line)',
+                  background: 'var(--ab-bg-2)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
                 }}>
-                  {s.refined || s.body || '（本章暂无内容）'}
-                </div>
-                {/* 章节大纲概要（来自后端） */}
-                {s.outline && (
-                  <div style={{
-                    ...mono, fontSize: 10, color: 'var(--ab-text-4)',
-                    marginTop: 16, padding: '6px 10px',
-                    background: 'var(--ab-bg-2)', borderRadius: 2,
-                    letterSpacing: '0.05em',
+                  <h2 style={{
+                    ...serif, fontSize: 18, color: 'var(--ab-text)',
+                    fontWeight: 500, margin: 0, letterSpacing: '-0.01em',
+                    display: 'flex', alignItems: 'center', gap: 10,
                   }}>
-                    ◆ 大纲：{s.outline.length > 200 ? s.outline.slice(0, 200) + '…' : s.outline}
-                  </div>
-                )}
-                {/* 思考过程折叠面板 */}
-                {s.hasProcess && (
-                  <div style={{ marginTop: 16 }}>
-                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                      {s.debate && (
-                        <Button size="small"
-                          onClick={() => toggleProcess(i, 'debate')}
-                          style={{ ...mono, fontSize: 10, color: exp.debate ? 'var(--ab-copper)' : 'var(--ab-text-3)',
-                            borderColor: exp.debate ? 'var(--ab-copper)' : 'var(--ab-line)',
-                            background: exp.debate ? 'var(--ab-bg-2)' : 'transparent' }}>
-                          {exp.debate ? '▼' : '▶'} 评审意见
-                        </Button>
-                      )}
-                      {s.draft && (
-                        <Button size="small"
-                          onClick={() => toggleProcess(i, 'draft')}
-                          style={{ ...mono, fontSize: 10, color: exp.draft ? 'var(--ab-copper)' : 'var(--ab-text-3)',
-                            borderColor: exp.draft ? 'var(--ab-copper)' : 'var(--ab-line)',
-                            background: exp.draft ? 'var(--ab-bg-2)' : 'transparent' }}>
-                          {exp.draft ? '▼' : '▶'} 章节初稿
-                        </Button>
-                      )}
+                    <span style={{
+                      ...mono, fontSize: 10, color: 'var(--ab-copper)',
+                      letterSpacing: '0.1em',
+                      padding: '2px 6px', background: 'rgba(184, 115, 70, 0.1)',
+                      borderRadius: 2,
+                    }}>
+                      {String(i + 1).padStart(2, '0')}
+                    </span>
+                    {s.title}
+                    {isEditing && (
+                      <span style={{
+                        ...mono, fontSize: 9, color: 'var(--ab-copper)',
+                        marginLeft: 8, padding: '1px 6px',
+                        background: 'rgba(184, 115, 70, 0.15)', borderRadius: 2,
+                      }}>
+                        编辑中
+                      </span>
+                    )}
+                  </h2>
+                  {/* 2026-07-17: 非编辑模式显示"编辑段落"按钮；编辑模式显示"保存/取消" */}
+                  {canEdit && !isEditing && (
+                    <Button size="small"
+                      onClick={() => startEditSection(i, s.refined || s.body || '')}
+                      style={{ ...mono, fontSize: 10, color: 'var(--ab-text-3)',
+                        borderColor: 'var(--ab-line)', background: 'transparent' }}>
+                      编辑段落
+                    </Button>
+                  )}
+                  {isEditing && (
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <Button type="primary" size="small"
+                        onClick={() => saveSection(i)}
+                        loading={editState.saving}
+                        style={{ background: 'var(--ab-copper)', borderColor: 'var(--ab-copper)',
+                          ...mono, fontSize: 10 }}>
+                        保存
+                      </Button>
+                      <Button size="small"
+                        onClick={() => cancelEditSection(i)}
+                        disabled={editState.saving}
+                        style={{ ...mono, fontSize: 10 }}>
+                        取消
+                      </Button>
                     </div>
-                    {exp.debate && s.debate && (
+                  )}
+                </div>
+
+                {/* 卡片主体 */}
+                <div style={{ padding: '20px' }}>
+                  {!isEditing ? (
+                    // ── 非编辑模式：只显示正文 + 思考过程折叠 ──
+                    <>
                       <div style={{
-                        ...body, fontSize: 12.5, color: 'var(--ab-text-2)', lineHeight: 1.7,
+                        ...body, fontSize: 14.5, color: 'var(--ab-text)', lineHeight: 1.9,
                         whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                        marginTop: 10, padding: '10px 14px',
-                        background: 'rgba(184, 115, 70, 0.05)',
-                        borderLeft: '2px solid var(--ab-copper)',
-                        borderRadius: 2,
                       }}>
-                        {s.debate}
+                        {s.refined || s.body || '（本章暂无内容）'}
                       </div>
-                    )}
-                    {exp.draft && s.draft && (
+
+                      {/* 章节大纲概要 */}
+                      {s.outline && (
+                        <div style={{
+                          ...mono, fontSize: 10, color: 'var(--ab-text-4)',
+                          marginTop: 16, padding: '6px 10px',
+                          background: 'var(--ab-bg-2)', borderRadius: 2,
+                          letterSpacing: '0.05em',
+                        }}>
+                          ◆ 大纲：{s.outline.length > 200 ? s.outline.slice(0, 200) + '…' : s.outline}
+                        </div>
+                      )}
+
+                      {/* 思考过程折叠面板 */}
+                      {s.hasProcess && (
+                        <div style={{ marginTop: 16 }}>
+                          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                            {s.debate && (
+                              <Button size="small"
+                                onClick={() => toggleProcess(i, 'debate')}
+                                style={{ ...mono, fontSize: 10, color: exp.debate ? 'var(--ab-copper)' : 'var(--ab-text-3)',
+                                  borderColor: exp.debate ? 'var(--ab-copper)' : 'var(--ab-line)',
+                                  background: exp.debate ? 'var(--ab-bg-2)' : 'transparent' }}>
+                                {exp.debate ? '▼' : '▶'} 评审意见
+                              </Button>
+                            )}
+                            {s.draft && (
+                              <Button size="small"
+                                onClick={() => toggleProcess(i, 'draft')}
+                                style={{ ...mono, fontSize: 10, color: exp.draft ? 'var(--ab-copper)' : 'var(--ab-text-3)',
+                                  borderColor: exp.draft ? 'var(--ab-copper)' : 'var(--ab-line)',
+                                  background: exp.draft ? 'var(--ab-bg-2)' : 'transparent' }}>
+                                {exp.draft ? '▼' : '▶'} 章节初稿
+                              </Button>
+                            )}
+                          </div>
+                          {exp.debate && s.debate && (
+                            <div style={{
+                              ...body, fontSize: 12.5, color: 'var(--ab-text-2)', lineHeight: 1.7,
+                              whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                              marginTop: 10, padding: '10px 14px',
+                              background: 'rgba(184, 115, 70, 0.05)',
+                              borderLeft: '2px solid var(--ab-copper)',
+                              borderRadius: 2,
+                            }}>
+                              {s.debate}
+                            </div>
+                          )}
+                          {exp.draft && s.draft && (
+                            <div style={{
+                              ...body, fontSize: 12.5, color: 'var(--ab-text-3)', lineHeight: 1.7,
+                              whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                              marginTop: 10, padding: '10px 14px',
+                              background: 'var(--ab-bg-2)',
+                              borderLeft: '2px solid var(--ab-line)',
+                              borderRadius: 2,
+                            }}>
+                              {s.draft}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    // ── 编辑模式：TextArea + LLM 校准输入框 ──
+                    <>
                       <div style={{
-                        ...body, fontSize: 12.5, color: 'var(--ab-text-3)', lineHeight: 1.7,
-                        whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                        marginTop: 10, padding: '10px 14px',
-                        background: 'var(--ab-bg-2)',
-                        borderLeft: '2px solid var(--ab-line)',
-                        borderRadius: 2,
+                        ...mono, fontSize: 10, color: 'var(--ab-text-4)',
+                        marginBottom: 8, letterSpacing: '0.1em',
                       }}>
-                        {s.draft}
+                        ◆ 直接编辑段落内容
                       </div>
-                    )}
-                  </div>
-                )}
+                      <TextArea
+                        value={editState.editedText}
+                        onChange={e => setSectionEditState(prev => ({
+                          ...prev,
+                          [i]: { ...prev[i], editedText: e.target.value },
+                        }))}
+                        autoSize={{ minRows: 10, maxRows: 40 }}
+                        style={{
+                          ...body, fontSize: 14, color: 'var(--ab-text)', lineHeight: 1.9,
+                          background: 'var(--ab-bg-3)',
+                          border: '1px solid var(--ab-copper)',
+                          whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                        }}
+                      />
+
+                      {/* LLM 校准区 — 仅编辑模式下显示 */}
+                      <div style={{
+                        marginTop: 16, padding: '12px 14px',
+                        background: 'rgba(184, 115, 70, 0.04)',
+                        border: '1px dashed var(--ab-copper)',
+                        borderRadius: 4,
+                      }}>
+                        <div style={{
+                          ...mono, fontSize: 10, color: 'var(--ab-copper)',
+                          marginBottom: 8, letterSpacing: '0.1em',
+                        }}>
+                          ◆ LLM 校准（可选）
+                        </div>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                          <Input
+                            placeholder="输入修改点，如「补充 2024 年最新数据」「删除第二段冗余」"
+                            value={regenState.hint}
+                            onChange={e => setSectionRegenState(prev => ({
+                              ...prev,
+                              [i]: { ...prev[i], hint: e.target.value },
+                            }))}
+                            size="small"
+                            style={{
+                              ...mono, fontSize: 11, flex: 1,
+                              background: 'var(--ab-bg)', borderColor: 'var(--ab-line)',
+                            }}
+                            disabled={regenState.regenerating}
+                          />
+                          <Button size="small"
+                            onClick={() => regenerateSection(i)}
+                            loading={regenState.regenerating}
+                            disabled={!regenState.hint || !regenState.hint.trim()}
+                            style={{
+                              ...mono, fontSize: 10,
+                              background: 'var(--ab-copper)', borderColor: 'var(--ab-copper)',
+                              color: '#fff', whiteSpace: 'nowrap',
+                            }}>
+                            LLM 校准
+                          </Button>
+                        </div>
+                        <div style={{
+                          ...mono, fontSize: 9, color: 'var(--ab-text-4)',
+                          marginTop: 6,
+                        }}>
+                          点击 LLM 校准后，AI 会基于修改点重写段落。如需保存请点击上方"保存"按钮。
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
             )
           })}
