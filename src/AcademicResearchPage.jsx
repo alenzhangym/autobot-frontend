@@ -10,10 +10,10 @@
  * 设计语言：Industrial Editorial Brutalism — Fraunces 衬线 × JetBrains Mono 技术感 × 铜色暖光
  */
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { Input, Button, Tooltip, Spin, message, Empty } from 'antd'
+import { Input, Button, Tooltip, Spin, message, Empty, Modal } from 'antd'
 import {
-  SearchOutlined, FileTextOutlined, HistoryOutlined, BulbOutlined,
-  CopyOutlined, LinkOutlined, CheckOutlined, ReloadOutlined,
+  SearchOutlined, FileTextOutlined, BulbOutlined,
+  CopyOutlined, LinkOutlined, CheckOutlined,
   ThunderboltOutlined, GlobalOutlined, DatabaseOutlined, ApiOutlined,
   ArrowRightOutlined, ExperimentOutlined, AlertOutlined, AuditOutlined,
   DeleteOutlined,
@@ -51,6 +51,10 @@ const SEARCH_SOURCES = [
   { key: 'perplexity', label: 'Perplexity', icon: <ApiOutlined />, desc: 'API 检索，消耗配额' },
   { key: 'feedcoop',   label: 'FeedCoop',   icon: <DatabaseOutlined />, desc: '搜索 API，消耗配额' },
   { key: 'httpget',    label: 'HTTP GET',   icon: <GlobalOutlined />, desc: '免费抓取，无配额' },
+  // 2026-07-17: 本地知识库作为第 4 个独立搜索源
+  // 勾选后 executeSearch 会检索 DocumentSemanticSearchService 找到的相关片段，
+  // 作为搜索结果存入 academic_search_item，前端列表中可查看/删除。
+  { key: 'knowledge_base', label: '本地知识库', icon: <DatabaseOutlined />, desc: '检索本地文档库相关片段，无配额' },
 ]
 
 // ── 动画变体 ──────────────────────────────────────────────────
@@ -75,13 +79,20 @@ export default function AcademicResearchPage({ user }) {
   const [history, setHistory] = useState([])
 
   // 搜索源：默认 Perplexity
-  const [sources, setSources] = useState({ perplexity: true, feedcoop: false, httpget: false })
+  const [sources, setSources] = useState({ perplexity: true, feedcoop: false, httpget: false, knowledge_base: false })
 
   const [loadingSuggestions, setLoadingSuggestions] = useState(false)
   const [searching, setSearching] = useState(false)
+  // 2026-07-17: 异步生成状态。原 generating boolean 保留兼容（generating === (genStatus==='generating')）
   const [generating, setGenerating] = useState(false)
+  // genStatus: 'idle' | 'generating' | 'done' | 'cancelled' | 'failed'
+  const [genStatus, setGenStatus] = useState('idle')
+  const [progress, setProgress] = useState(0)
+  const [progressMessage, setProgressMessage] = useState('')
   const [loadingHistory, setLoadingHistory] = useState(false)
   const [selectedResultIdx, setSelectedResultIdx] = useState(0)
+  // 2026-07-17: 当前选中的历史记录 id（左侧列表点击切换）
+  const [selectedHistoryId, setSelectedHistoryId] = useState(null)
 
   // 2026-07-12: 搜索用量（公司/用户搜索次数 + 剩余配额）
   const [searchUsage, setSearchUsage] = useState({ companyCount: 0, userCount: 0, limit: 10000, remaining: 10000, exceeded: false })
@@ -127,6 +138,15 @@ export default function AcademicResearchPage({ user }) {
     setSearchResults([]); setSearchHistory([]); setUserPrompt('')
     setReport(''); setSelectedResultIdx(0)
     setTemplates([]); setTemplateId(null)
+    // 2026-07-17: 重置异步生成状态和选中历史
+    setGenStatus('idle'); setGenerating(false)
+    setProgress(0); setProgressMessage('')
+    setSelectedHistoryId(null)
+  }
+
+  // 2026-07-17: 新建研究 — 重置表单并在左侧列表中不选中任何历史
+  const handleNewResearch = () => {
+    resetResearch()
   }
 
   // ── 历史列表 ────────────────────────────────────────────────
@@ -197,6 +217,8 @@ export default function AcademicResearchPage({ user }) {
     setSearching(true)
     const enablePerplexity = sources.perplexity && !sources.httpget
     const enableFeedCoop = sources.feedcoop && !sources.httpget
+    // 2026-07-17: 本地知识库独立开关，不与 HTTP GET / API 互斥
+    const enableKnowledgeBase = !!sources.knowledge_base
     let totalNew = 0
     try {
       for (const s of checked) {
@@ -204,6 +226,7 @@ export default function AcademicResearchPage({ user }) {
           query: s.text.trim(),
           enable_perplexity_search: enablePerplexity,
           enable_feedcoop_search: enableFeedCoop,
+          enable_knowledge_base: enableKnowledgeBase,
         })
         if (res.data?.results) {
           setSearchResults(prev => [...prev, ...res.data.results])
@@ -222,29 +245,88 @@ export default function AcademicResearchPage({ user }) {
     }
   }
 
-  // ── Step 4: 生成报告 ────────────────────────────────────────
+  // ── Step 4: 生成报告（异步模式） ───────────────────────────
+  // 2026-07-17: 后端改为异步执行，/generate 立即返回 status=generating。
+  // 此处只发起请求并切换到 generating 状态，实际进度通过下方 useEffect 轮询获取。
   const handleGenerate = async () => {
     if (!researchId) { message.warning('请先完成主题与搜索建议步骤'); return }
-    setGenerating(true); setReport('')
+    setGenerating(true); setGenStatus('generating'); setReport('')
+    setProgress(0); setProgressMessage('准备生成')
     try {
-      const res = await api.post(`/academic/research/${researchId}/generate`, {
+      await api.post(`/academic/research/${researchId}/generate`, {
         user_prompt: userPrompt,
         template_id: templateId,
       })
-      if (res.data?.report) {
-        setReport(res.data.report)
-        message.success('报告生成完成')
-        fetchHistory()
+      // 立即返回，轮询 useEffect 会接管进度更新
+      message.info('已开始异步生成，请等待进度更新')
+    } catch (e) {
+      message.error('启动生成失败: ' + (e.response?.data?.error || e.message))
+      setGenerating(false); setGenStatus('failed')
+      setProgressMessage('启动失败: ' + (e.response?.data?.error || e.message))
+    }
+  }
+
+  // 2026-07-17: 异步生成进度轮询。genStatus=generating 时每 2s 轮询一次。
+  // 读取 status/progress/progressMessage/generatedReport，终止条件：done/cancelled/draft/failed
+  useEffect(() => {
+    if (genStatus !== 'generating' || !researchId) return
+    let cancelled = false
+    const poll = async () => {
+      try {
+        const res = await api.get(`/academic/research/${researchId}`)
+        if (cancelled) return
+        const r = res.data
+        if (!r) return
+        setProgress(r.progress || 0)
+        setProgressMessage(r.progressMessage || '')
+        if (r.status === 'done') {
+          setReport(r.generatedReport || '')
+          setGenStatus('done'); setGenerating(false)
+          message.success('报告生成完成')
+          fetchHistory()  // 刷新左侧列表状态
+        } else if (r.status === 'cancelled') {
+          setGenStatus('cancelled'); setGenerating(false)
+          message.warning('生成已取消')
+          fetchHistory()
+        } else if (r.status === 'draft') {
+          // 生成失败（后端异常时回退到 draft）
+          setGenStatus('failed'); setGenerating(false)
+          message.error('生成失败: ' + (r.progressMessage || '未知错误'))
+          fetchHistory()
+        }
+        // status === 'generating' → 继续轮询
+      } catch (e) {
+        if (!cancelled) {
+          console.warn('poll error', e)
+        }
+      }
+    }
+    poll()  // 立即执行一次
+    // 2026-07-17: 轮询间隔 10s，降低后端负载。长任务（30min+）约 180 次请求。
+    // 进度更新频率取决于 LLM 调用完成速度（每章/子小节约 30-90s），10s 足以反映进度变化。
+    const timer = setInterval(poll, 10000)
+    return () => { cancelled = true; clearInterval(timer) }
+  }, [genStatus, researchId])
+
+  // 2026-07-17: 取消生成
+  const handleCancel = async () => {
+    if (!researchId) return
+    try {
+      const res = await api.post(`/academic/research/${researchId}/cancel`)
+      if (res.data?.cancelled) {
+        message.info('已请求取消，生成将在当前步骤完成后中止')
+      } else {
+        message.warning(res.data?.message || '无法取消')
       }
     } catch (e) {
-      message.error('报告生成失败: ' + (e.response?.data?.error || e.message))
-    } finally {
-      setGenerating(false)
+      message.error('取消失败: ' + (e.response?.data?.error || e.message))
     }
   }
 
   // ── 加载历史 ────────────────────────────────────────────────
+  // 2026-07-17: 左侧列表点击切换。同步 genStatus 让轮询逻辑接管生成中的任务。
   const handleLoadHistory = async (id) => {
+    setSelectedHistoryId(id)
     try {
       const res = await api.get(`/academic/research/${id}`)
       if (res.data) {
@@ -254,6 +336,18 @@ export default function AcademicResearchPage({ user }) {
         setUserPrompt(r.userPrompt || ''); setReport(r.generatedReport || '')
         setSuggestions([]); setSearchResults([]); setSearchHistory([])
         setSelectedResultIdx(0)
+        // 2026-07-17: 同步生成状态。若后端仍在 generating，前端轮询会接管进度更新
+        setProgress(r.progress || 0)
+        setProgressMessage(r.progressMessage || '')
+        if (r.status === 'generating') {
+          setGenerating(true); setGenStatus('generating')
+        } else if (r.status === 'done') {
+          setGenerating(false); setGenStatus('done')
+        } else if (r.status === 'cancelled') {
+          setGenerating(false); setGenStatus('cancelled')
+        } else {
+          setGenerating(false); setGenStatus('idle')
+        }
         // 2026-07-12: 恢复模板选择状态
         setTemplateId(r.templateId || null)
         try {
@@ -283,27 +377,58 @@ export default function AcademicResearchPage({ user }) {
 
   const toggleSource = (key) => {
     setSources(prev => {
-      if (key === 'httpget') {
-        // HTTP GET 与 API 互斥：选中 HTTP GET 时关闭两个 API
-        const next = { perplexity: false, feedcoop: false, httpget: !prev.httpget }
-        return next
+      // 2026-07-17: knowledge_base 是独立搜索源，不与 HTTP GET / API 互斥，
+      // 可与任意其他源组合（如同时勾选 Perplexity + 本地知识库）
+      if (key === 'knowledge_base') {
+        return { ...prev, knowledge_base: !prev.knowledge_base }
       }
-      // 选中 API 时关闭 HTTP GET
+      if (key === 'httpget') {
+        // HTTP GET 与 API 互斥：选中 HTTP GET 时关闭两个 API（不影响 knowledge_base）
+        return { perplexity: false, feedcoop: false, httpget: !prev.httpget, knowledge_base: prev.knowledge_base }
+      }
+      // 选中 API 时关闭 HTTP GET（不影响 knowledge_base）
       return { ...prev, [key]: !prev[key], httpget: false }
     })
   }
 
   // ── 删除历史记录 ──────────────────────────────────────────
+  // 2026-07-17: 若删除的是正在执行的任务，需用户确认。删除后停止轮询。
+  // 后端 checkCancellation 会发现记录消失自动中止生成线程。
   const handleDeleteHistory = async (id, e) => {
     if (e) { e.stopPropagation(); e.preventDefault() }
-    try {
-      await api.delete(`/academic/research/${id}`)
-      setHistory(prev => prev.filter(h => h.id !== id))
-      // 若删除的是当前正在编辑的记录，重置为新建状态
-      if (researchId === id) { resetResearch() }
-      message.success('已删除')
-    } catch (e) {
-      message.error('删除失败: ' + (e.response?.data?.error || e.message))
+
+    // 判断是否是正在执行的任务：优先用列表数据，兜底用当前组件状态
+    const target = history.find(h => h.id === id)
+    const isGenerating = (target?.status === 'generating') ||
+                         (id === researchId && genStatus === 'generating')
+
+    const doDelete = async () => {
+      try {
+        await api.delete(`/academic/research/${id}`)
+        // 如果删除的是当前正在生成的任务，先停止轮询（触发 useEffect cleanup）
+        if (id === researchId && genStatus === 'generating') {
+          setGenStatus('idle'); setGenerating(false)
+        }
+        setHistory(prev => prev.filter(h => h.id !== id))
+        // 若删除的是当前正在编辑的记录，重置为新建状态
+        if (researchId === id) { resetResearch() }
+        message.success('已删除')
+      } catch (err) {
+        message.error('删除失败: ' + (err.response?.data?.error || err.message))
+      }
+    }
+
+    if (isGenerating) {
+      Modal.confirm({
+        title: '确认删除正在生成的任务',
+        content: '该研究正在生成中，删除会立即停止生成任务且不可恢复。是否继续？',
+        okText: '删除并停止',
+        cancelText: '取消',
+        okButtonProps: { danger: true },
+        onOk: doDelete,
+      })
+    } else {
+      doDelete()
     }
   }
 
@@ -346,7 +471,7 @@ export default function AcademicResearchPage({ user }) {
   const body    = { fontFamily: "var(--ab-font-body)" }
 
   return (
-    <div style={{ height: '100%', overflow: 'auto' }} className="custom-scrollbar">
+    <div style={{ height: '100%', display: 'flex', overflow: 'hidden' }} className="custom-scrollbar">
       {/* 注入关键帧与伪元素样式 */}
       <style>{`
         @keyframes arp-grain { 0%{transform:translate(0,0)} 100%{transform:translate(-8px,-8px)} }
@@ -363,15 +488,153 @@ export default function AcademicResearchPage({ user }) {
           background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
         .arp-history-item:hover .arp-history-delete { opacity: 1 !important; }
         .arp-search-item:hover .arp-search-delete { opacity: 1 !important; }
+        .arp-sidebar-item:hover .arp-history-delete { opacity: 1 !important; }
+        @keyframes arp-spin-pulse { 0%,100%{opacity:.4} 50%{opacity:1} }
       `}</style>
 
-      <div className="arp-grain" style={{ position: 'relative', zIndex: 1 }}>
+      {/* ═══════════════════════════════════════════════════════
+          左侧历史列表（2026-07-17 新增）
+          取代原底部历史区，点击切换到右侧详情
+          ═══════════════════════════════════════════════════════ */}
+      <div className="arp-grain" style={{
+        width: 280, flexShrink: 0, height: '100%', overflow: 'auto',
+        borderRight: '1px solid var(--ab-line)',
+        background: 'var(--ab-bg)',
+        position: 'relative', zIndex: 1,
+      }}>
+        <div style={{ padding: '20px 16px 12px', borderBottom: '1px solid var(--ab-line)', position: 'sticky', top: 0, background: 'var(--ab-bg)', zIndex: 2 }}>
+          <div style={{ ...mono, color: 'var(--ab-text-4)', fontSize: 10, letterSpacing: '0.22em', textTransform: 'uppercase', marginBottom: 6 }}>
+            Academic Research
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ ...serif, color: 'var(--ab-text)', fontSize: 18, fontWeight: 500 }}>
+              研究列表
+            </span>
+            <span style={{ ...mono, fontSize: 10, color: 'var(--ab-text-4)' }}>{history.length}</span>
+          </div>
+          <button
+            onClick={handleNewResearch}
+            style={{
+              marginTop: 12, width: '100%', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+              background: selectedHistoryId === null ? 'var(--ab-surface-2)' : 'var(--ab-bg-2)',
+              border: selectedHistoryId === null ? '1px solid var(--ab-copper)' : '1px solid var(--ab-line)',
+              borderRadius: 6, padding: '8px 12px', transition: 'all .2s',
+              color: selectedHistoryId === null ? 'var(--ab-copper)' : 'var(--ab-text-2)',
+              ...mono, fontSize: 12, letterSpacing: '0.05em',
+            }}>
+            <span style={{ fontSize: 14, lineHeight: 0 }}>+</span>
+            新建研究
+          </button>
+        </div>
+
+        {/* 历史列表 */}
+        <div style={{ padding: '8px 8px 20px' }}>
+          {loadingHistory ? (
+            <div style={{ textAlign: 'center', padding: 20 }}><Spin size="small" /></div>
+          ) : history.length === 0 ? (
+            <div style={{ padding: '20px 12px', textAlign: 'center' }}>
+              <Empty description="暂无研究" image={Empty.PRESENTED_IMAGE_SIMPLE}
+                style={{ opacity: 0.5 }} />
+            </div>
+          ) : (
+            history.map(h => {
+              const isSelected = selectedHistoryId === h.id
+              const isGenerating = h.status === 'generating'
+              const isDone = h.status === 'done'
+              const isCancelled = h.status === 'cancelled'
+              const reportTypeMeta = REPORT_TYPES.find(t => t.value === h.reportType)
+              return (
+                <div
+                  key={h.id}
+                  onClick={() => handleLoadHistory(h.id)}
+                  className="arp-sidebar-item"
+                  style={{
+                    cursor: 'pointer', textAlign: 'left', position: 'relative',
+                    background: isSelected ? 'var(--ab-surface-2)' : 'transparent',
+                    border: isSelected ? '1px solid var(--ab-copper)' : '1px solid transparent',
+                    borderRadius: 6, padding: '10px 12px', marginBottom: 4, transition: 'all .15s',
+                  }}
+                >
+                  {/* 删除按钮 — hover 时显现 */}
+                  <Tooltip title="删除">
+                    <button
+                      onClick={(e) => handleDeleteHistory(h.id, e)}
+                      className="arp-history-delete"
+                      style={{
+                        position: 'absolute', top: 6, right: 6,
+                        width: 20, height: 20, borderRadius: 4,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        background: 'transparent', border: '1px solid transparent',
+                        color: 'var(--ab-text-4)', cursor: 'pointer',
+                        opacity: 0, transition: 'all .15s', zIndex: 2,
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.opacity = 1
+                        e.currentTarget.style.color = 'var(--ab-copper)'
+                        e.currentTarget.style.borderColor = 'var(--ab-copper)'
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.opacity = 0
+                        e.currentTarget.style.color = 'var(--ab-text-4)'
+                        e.currentTarget.style.borderColor = 'transparent'
+                      }}
+                    >
+                      <DeleteOutlined style={{ fontSize: 10 }} />
+                    </button>
+                  </Tooltip>
+
+                  {/* 状态徽标行 */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, paddingRight: 22 }}>
+                    <span style={{ ...mono, fontSize: 10, color: 'var(--ab-copper)', letterSpacing: '0.1em' }}>
+                      {reportTypeMeta?.numeral || '·'}
+                    </span>
+                    <span style={{
+                      ...mono, fontSize: 9, padding: '1px 6px', borderRadius: 3, letterSpacing: '0.05em',
+                      color: isGenerating ? 'var(--ab-copper)' :
+                             isDone ? 'var(--ab-text-3)' :
+                             isCancelled ? 'var(--ab-text-4)' : 'var(--ab-text-4)',
+                      background: isGenerating ? 'var(--ab-copper-glow)' :
+                                  isDone ? 'var(--ab-surface-2)' :
+                                  'transparent',
+                      animation: isGenerating ? 'arp-spin-pulse 1.5s ease-in-out infinite' : 'none',
+                    }}>
+                      {isGenerating ? '生成中' : isDone ? '已完成' : isCancelled ? '已取消' : (h.status || '草稿')}
+                    </span>
+                  </div>
+
+                  {/* 主题 */}
+                  <div style={{
+                    ...serif, fontSize: 13, fontWeight: 500, color: 'var(--ab-text)', lineHeight: 1.4, marginBottom: 4,
+                    overflow: 'hidden', textOverflow: 'ellipsis',
+                    display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+                    paddingRight: 22,
+                  }}>
+                    {h.topic || '(无主题)'}
+                  </div>
+
+                  {/* 报告类型 + 更新时间 */}
+                  <div style={{ ...mono, fontSize: 9, color: 'var(--ab-text-4)', display: 'flex', justifyContent: 'space-between' }}>
+                    <span>{reportTypeMeta?.label || h.reportType}</span>
+                    {h.updatedAt && <span>{new Date(h.updatedAt).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })}</span>}
+                  </div>
+                </div>
+              )
+            })
+          )}
+        </div>
+      </div>
+
+      {/* ═══════════════════════════════════════════════════════
+          右侧主内容区（原 Step1-4 流程）
+          ═══════════════════════════════════════════════════════ */}
+      <div className="arp-grain custom-scrollbar" style={{ flex: 1, height: '100%', overflow: 'auto', position: 'relative', zIndex: 1 }}>
         <motion.div
           initial="hidden" animate="show" variants={stagger}
           style={{ maxWidth: 1180, margin: '0 auto', padding: '36px 32px 80px' }}
         >
 
-          {/* ── 页眉：标题 + 历史入口 ──────────────────────────── */}
+          {/* ── 页眉：标题（移除历史按钮，由左侧列表取代） ─────── */}
           <motion.div variants={fadeUp} style={{
             display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end',
             marginBottom: 40, borderBottom: '1px solid var(--ab-line)', paddingBottom: 22,
@@ -381,20 +644,15 @@ export default function AcademicResearchPage({ user }) {
                 Academic Research Atlas
               </div>
               <h1 style={{ ...serif, color: 'var(--ab-text)', fontSize: 38, fontWeight: 400, margin: 0, letterSpacing: '-0.02em', lineHeight: 1 }}>
-                学术分析
+                {selectedHistoryId ? '研究详情' : '学术分析'}
               </h1>
             </div>
-            <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-              {researchId && (
-                <Button size="small" onClick={resetResearch} style={{ ...mono, color: 'var(--ab-text-3)', borderColor: 'var(--ab-line)' }}>
-                  新建研究
-                </Button>
-              )}
-              <Button size="small" icon={<ReloadOutlined />} onClick={fetchHistory} loading={loadingHistory}
-                style={{ ...mono, color: 'var(--ab-text-3)', borderColor: 'var(--ab-line)' }}>
-                历史
+            {/* 2026-07-17: 移除"历史"按钮，由左侧列表取代。保留"新建研究"在未选中历史时显示 */}
+            {selectedHistoryId && (
+              <Button size="small" onClick={handleNewResearch} style={{ ...mono, color: 'var(--ab-text-3)', borderColor: 'var(--ab-line)' }}>
+                新建研究
               </Button>
-            </div>
+            )}
           </motion.div>
 
           {/* ── 首次进入提示横幅 ──────────────────────────────── */}
@@ -764,6 +1022,8 @@ export default function AcademicResearchPage({ user }) {
                     let domain = ''
                     try { domain = new URL(r.url).hostname.replace(/^www\./, '') } catch (e) { domain = '' }
                     const isDeleting = deletingResultIdx === i
+                    // 2026-07-17: 知识库结果标记（用于显示徽标）
+                    const isKb = r.source === 'knowledge_base'
                     return (
                       <div key={i} className="arp-search-item" role="button" tabIndex={0}
                         onClick={() => setSelectedResultIdx(i)}
@@ -776,9 +1036,22 @@ export default function AcademicResearchPage({ user }) {
                           opacity: isDeleting ? 0.5 : 1,
                         }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                          <span style={{ ...mono, fontSize: 10, color: active ? 'var(--ab-copper)' : 'var(--ab-text-4)', flexShrink: 0 }}>
-                            {String(i + 1).padStart(2, '0')}
-                          </span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                            <span style={{ ...mono, fontSize: 10, color: active ? 'var(--ab-copper)' : 'var(--ab-text-4)' }}>
+                              {String(i + 1).padStart(2, '0')}
+                            </span>
+                            {/* 2026-07-17: 知识库结果徽标 */}
+                            {isKb && (
+                              <span style={{
+                                ...mono, fontSize: 8.5, padding: '1px 5px', borderRadius: 2,
+                                letterSpacing: '0.08em', fontWeight: 600,
+                                background: 'var(--ab-copper-glow)', color: 'var(--ab-copper)',
+                                border: '1px solid var(--ab-copper)',
+                              }}>
+                                KB
+                              </span>
+                            )}
+                          </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, flex: 1, justifyContent: 'flex-end' }}>
                             {domain && (
                               <span style={{ ...mono, fontSize: 9.5, color: 'var(--ab-text-4)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1, textAlign: 'right' }}>
@@ -819,10 +1092,11 @@ export default function AcademicResearchPage({ user }) {
                 <div style={{ background: 'var(--ab-surface)', overflow: 'auto', minHeight: 0, flex: 1, borderLeft: '1px solid var(--ab-line-bold)' }} className="custom-scrollbar">
                   {selectedResult ? (
                     <div style={{ padding: '20px 24px' }}>
-                      {/* 标签：有 content 显示"网页正文"，否则显示"摘要" + 删除按钮 */}
+                      {/* 标签：知识库/有 content 显示对应标签，否则显示"摘要" + 删除按钮 */}
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
                         <div style={{ ...mono, fontSize: 10, color: 'var(--ab-text-4)', letterSpacing: '0.15em', textTransform: 'uppercase' }}>
-                          {selectedResult.content ? '网页正文' : '摘要'}
+                          {selectedResult.source === 'knowledge_base' ? '知识库片段' :
+                           selectedResult.content ? '网页正文' : '摘要'}
                         </div>
                         {/* 2026-07-13: 阅读后审核删除 — 无关条目可直接移除 */}
                         <Button
@@ -978,33 +1252,131 @@ export default function AcademicResearchPage({ user }) {
               />
             </div>
 
-            {/* 生成按钮 */}
-            <motion.button
-              whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.99 }}
-              onClick={handleGenerate} disabled={generating || !researchId}
-              style={{
-                cursor: researchId ? 'pointer' : 'not-allowed',
-                display: 'flex', alignItems: 'center', gap: 12,
-                background: researchId ? 'var(--ab-copper)' : 'var(--ab-bg-3)',
-                border: 'none', borderRadius: 6, padding: '14px 28px',
-                color: researchId ? 'var(--ab-bg)' : 'var(--ab-text-4)',
-                ...serif, fontSize: 17, fontWeight: 500, letterSpacing: '0.01em',
-                transition: 'all .25s', boxShadow: researchId ? 'var(--ab-shadow-glow)' : 'none',
-              }}>
-              <FileTextOutlined style={{ fontSize: 16 }} />
-              {currentConfig.btnLabel}
-              <ArrowRightOutlined style={{ fontSize: 13, marginLeft: 2 }} />
-            </motion.button>
+            {/* 生成按钮 / 取消按钮（2026-07-17 异步模式） */}
+            {generating ? (
+              // 生成中：显示取消按钮
+              <motion.button
+                whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.99 }}
+                onClick={handleCancel}
+                style={{
+                  cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', gap: 12,
+                  background: 'var(--ab-bg-2)',
+                  border: '1px solid var(--ab-line)',
+                  borderRadius: 6, padding: '14px 28px',
+                  color: 'var(--ab-text-2)',
+                  ...serif, fontSize: 17, fontWeight: 500, letterSpacing: '0.01em',
+                  transition: 'all .25s',
+                }}>
+                <span style={{ fontSize: 16 }}>×</span>
+                取消生成
+              </motion.button>
+            ) : (
+              <motion.button
+                whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.99 }}
+                onClick={handleGenerate} disabled={!researchId}
+                style={{
+                  cursor: researchId ? 'pointer' : 'not-allowed',
+                  display: 'flex', alignItems: 'center', gap: 12,
+                  background: researchId ? 'var(--ab-copper)' : 'var(--ab-bg-3)',
+                  border: 'none', borderRadius: 6, padding: '14px 28px',
+                  color: researchId ? 'var(--ab-bg)' : 'var(--ab-text-4)',
+                  ...serif, fontSize: 17, fontWeight: 500, letterSpacing: '0.01em',
+                  transition: 'all .25s', boxShadow: researchId ? 'var(--ab-shadow-glow)' : 'none',
+                }}>
+                <FileTextOutlined style={{ fontSize: 16 }} />
+                {genStatus === 'cancelled' ? '重新生成' : currentConfig.btnLabel}
+                <ArrowRightOutlined style={{ fontSize: 13, marginLeft: 2 }} />
+              </motion.button>
+            )}
 
-            {/* 生成中 */}
+            {/* 生成中：进度条 + 进度文字（2026-07-17 异步模式） */}
             <AnimatePresence>
               {generating && (
-                <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-                  style={{ marginTop: 24, display: 'flex', alignItems: 'center', gap: 14, justifyContent: 'center', padding: 30 }}>
-                  <Spin size="large" />
+                <motion.div
+                  initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
+                  style={{
+                    marginTop: 24, padding: '24px 28px',
+                    background: 'var(--ab-surface)', border: '1px solid var(--ab-line)',
+                    borderRadius: 8,
+                  }}>
+                  {/* 顶部：Spin + 标题 + 百分比 */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 16 }}>
+                    <Spin size="small" />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ ...serif, color: 'var(--ab-text)', fontSize: 15, fontWeight: 500 }}>
+                        {progressMessage || '正在生成报告…'}
+                      </div>
+                      <div style={{ ...mono, color: 'var(--ab-text-4)', fontSize: 10, marginTop: 3, letterSpacing: '0.05em' }}>
+                        异步生成 · 整合 {searchResults.length} 条资料 + 知识库 · 无超时限制
+                      </div>
+                    </div>
+                    <div style={{ ...mono, color: 'var(--ab-copper)', fontSize: 22, fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>
+                      {progress}%
+                    </div>
+                  </div>
+                  {/* 进度条 */}
+                  <div style={{
+                    height: 6, background: 'var(--ab-bg-3)', borderRadius: 3, overflow: 'hidden',
+                  }}>
+                    <motion.div
+                      animate={{ width: `${progress}%` }}
+                      transition={{ duration: 0.4, ease: 'easeOut' }}
+                      style={{
+                        height: '100%', background: 'linear-gradient(90deg, var(--ab-copper-2), var(--ab-copper))',
+                        borderRadius: 3,
+                      }}
+                    />
+                  </div>
+                  {/* 取消提示 */}
+                  <div style={{ ...mono, color: 'var(--ab-text-4)', fontSize: 10, marginTop: 12, textAlign: 'center' }}>
+                    支持长文档多段落生成 · 可随时取消（当前 LLM 调用完成后生效）
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* 取消状态提示 */}
+            <AnimatePresence>
+              {genStatus === 'cancelled' && !generating && (
+                <motion.div
+                  initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+                  style={{
+                    marginTop: 20, padding: '14px 18px',
+                    background: 'var(--ab-surface-2)', border: '1px solid var(--ab-line)',
+                    borderRadius: 6, display: 'flex', alignItems: 'center', gap: 10,
+                  }}>
+                  <span style={{ color: 'var(--ab-text-3)', fontSize: 14 }}>⚠</span>
                   <div>
-                    <div style={{ ...serif, color: 'var(--ab-text-2)', fontSize: 15 }}>正在综合检索内容生成报告…</div>
-                    <div style={{ ...mono, color: 'var(--ab-text-4)', fontSize: 11, marginTop: 4 }}>LLM 正在整合 {searchResults.length} 条资料 + 知识库</div>
+                    <div style={{ ...serif, color: 'var(--ab-text-2)', fontSize: 13, fontWeight: 500 }}>
+                      生成已取消
+                    </div>
+                    <div style={{ ...mono, color: 'var(--ab-text-4)', fontSize: 10, marginTop: 2 }}>
+                      可点击"重新生成"重新发起，或调整参数后重试
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* 失败状态提示 */}
+            <AnimatePresence>
+              {genStatus === 'failed' && !generating && progressMessage && (
+                <motion.div
+                  initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+                  style={{
+                    marginTop: 20, padding: '14px 18px',
+                    background: 'var(--ab-surface-2)', border: '1px solid var(--ab-copper)',
+                    borderRadius: 6, display: 'flex', alignItems: 'center', gap: 10,
+                  }}>
+                  <span style={{ color: 'var(--ab-copper)', fontSize: 14 }}>!</span>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ ...serif, color: 'var(--ab-text)', fontSize: 13, fontWeight: 500 }}>
+                      生成失败
+                    </div>
+                    <div style={{ ...mono, color: 'var(--ab-text-3)', fontSize: 10, marginTop: 2 }}>
+                      {progressMessage}
+                    </div>
                   </div>
                 </motion.div>
               )}
@@ -1062,80 +1434,6 @@ export default function AcademicResearchPage({ user }) {
               )}
             </AnimatePresence>
           </StepShell>
-
-          {/* ═══════════════════════════════════════════════════════
-              历史研究列表
-              ═══════════════════════════════════════════════════════ */}
-          <motion.div variants={fadeUp} style={{ marginTop: 44 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, paddingBottom: 12, borderBottom: '1px solid var(--ab-line)' }}>
-              <HistoryOutlined style={{ color: 'var(--ab-copper)', fontSize: 14 }} />
-              <span style={{ ...serif, fontSize: 16, fontWeight: 500, color: 'var(--ab-text-2)' }}>历史研究</span>
-              <span style={{ ...mono, fontSize: 11, color: 'var(--ab-text-4)' }}>{history.length}</span>
-            </div>
-            {loadingHistory ? (
-              <div style={{ textAlign: 'center', padding: 20 }}><Spin size="small" /></div>
-            ) : history.length === 0 ? (
-              <Empty description="暂无历史研究" image={Empty.PRESENTED_IMAGE_SIMPLE}
-                style={{ padding: '24px 0' }} />
-            ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10 }}>
-                {history.map(h => (
-                  <motion.div key={h.id} whileHover={{ y: -2 }}
-                    onClick={() => handleLoadHistory(h.id)}
-                    style={{
-                      cursor: 'pointer', textAlign: 'left', position: 'relative',
-                      background: 'var(--ab-bg-2)', border: '1px solid var(--ab-line)',
-                      borderRadius: 6, padding: '14px 16px', transition: 'all .2s',
-                    }}
-                    className="arp-history-item">
-                    {/* 删除按钮 — hover 时显现 */}
-                    <Tooltip title="删除此研究">
-                      <button
-                        onClick={(e) => handleDeleteHistory(h.id, e)}
-                        className="arp-history-delete"
-                        style={{
-                          position: 'absolute', top: 8, right: 8,
-                          width: 22, height: 22, borderRadius: 4,
-                          display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          background: 'transparent', border: '1px solid transparent',
-                          color: 'var(--ab-text-4)', cursor: 'pointer',
-                          opacity: 0, transition: 'all .15s', zIndex: 2,
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.opacity = 1
-                          e.currentTarget.style.color = 'var(--ab-copper)'
-                          e.currentTarget.style.borderColor = 'var(--ab-copper)'
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.opacity = 0
-                          e.currentTarget.style.color = 'var(--ab-text-4)'
-                          e.currentTarget.style.borderColor = 'transparent'
-                        }}
-                      >
-                        <DeleteOutlined style={{ fontSize: 11 }} />
-                      </button>
-                    </Tooltip>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
-                      <span style={{ ...mono, fontSize: 10, color: 'var(--ab-copper)', letterSpacing: '0.1em' }}>
-                        {REPORT_TYPES.find(t => t.value === h.reportType)?.numeral || '·'}
-                      </span>
-                      <span style={{ ...mono, fontSize: 10, color: 'var(--ab-text-4)' }}>
-                        {h.status === 'done' ? '已生成' : h.status || 'draft'}
-                      </span>
-                    </div>
-                    <div style={{ ...serif, fontSize: 14, fontWeight: 500, color: 'var(--ab-text)', lineHeight: 1.4, marginBottom: 6,
-                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: 24 }}>
-                      {h.topic || '(无主题)'}
-                    </div>
-                    <div style={{ ...mono, fontSize: 10, color: 'var(--ab-text-4)' }}>
-                      {REPORT_TYPES.find(t => t.value === h.reportType)?.label || h.reportType}
-                      {h.updatedAt ? ' · ' + new Date(h.updatedAt).toLocaleDateString('zh-CN') : ''}
-                    </div>
-                  </motion.div>
-                ))}
-              </div>
-            )}
-          </motion.div>
 
         </motion.div>
       </div>
