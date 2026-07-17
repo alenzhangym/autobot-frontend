@@ -89,9 +89,9 @@ h1, h2, h3, h4, h5, h6 {
 .prose li { margin-bottom: 0.25em; }
 .prose h1, .prose h2, .prose h3 { color: var(--ab-text); margin: 1em 0 0.5em; }
 .prose blockquote { border-left: 2px solid var(--ab-copper); padding-left: 14px; color: var(--ab-text-2); margin: 0.5em 0; font-style: italic; }
-.prose table { border-collapse: collapse; width: 100%; margin: 0.75em 0; font-family: var(--ab-font-mono); }
-.prose th, .prose td { border: 1px solid var(--ab-line); padding: 7px 12px; font-size: 12.5px; }
-.prose th { background: var(--ab-bg-2); color: var(--ab-copper); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 500; font-size: 11px; }
+.prose table, .markdown-content table { border-collapse: collapse; width: 100%; margin: 0.75em 0; font-family: var(--ab-font-mono); }
+.prose th, .prose td, .markdown-content th, .markdown-content td { border: 1px solid var(--ab-line); padding: 7px 12px; font-size: 12.5px; }
+.prose th, .markdown-content th { background: var(--ab-bg-2); color: var(--ab-copper); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 500; font-size: 11px; }
 
 /* ── Spin animation ─────────────────────────────────────────── */
 .spin-animation { animation: spin 1s linear infinite; }
