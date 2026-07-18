@@ -16,7 +16,7 @@ import {
   CopyOutlined, LinkOutlined, CheckOutlined,
   ThunderboltOutlined, GlobalOutlined, DatabaseOutlined, ApiOutlined,
   ArrowRightOutlined, ExperimentOutlined, AlertOutlined, AuditOutlined,
-  DeleteOutlined,
+  DeleteOutlined, BookOutlined, PlusOutlined,
 } from '@ant-design/icons'
 import { motion, AnimatePresence } from 'framer-motion'
 import api from './auth'
@@ -44,6 +44,12 @@ const REPORT_TYPES = [
     label: '调研实证型', value: 'empirical', btnLabel: '生成调研实证',
     numeral: 'Ⅳ', icon: <ExperimentOutlined />,
     desc: '标杆案例 → 剔除不可复制因素 → 通用模型提炼',
+  },
+  // 2026-07-18: 新增教案任务类型
+  {
+    label: '编写教案', value: 'lesson_plan', btnLabel: '生成教案',
+    numeral: 'Ⅴ', icon: <BookOutlined />,
+    desc: '教学目标 → 重难点 → 教学过程 → 作业与反思',
   },
 ]
 
@@ -106,6 +112,15 @@ export default function AcademicResearchPage({ user }) {
   const [templates, setTemplates] = useState([])
   const [templateId, setTemplateId] = useState(null)
 
+  // 2026-07-18: 自定义模板创建弹窗状态
+  // 用户可在任意任务类型下保存自己的章节结构模板（与内置模板并行显示，带"自定义"标识）
+  const [tplModalOpen, setTplModalOpen] = useState(false)
+  const [newTplName, setNewTplName] = useState('')
+  const [newTplDesc, setNewTplDesc] = useState('')
+  const [newTplStructure, setNewTplStructure] = useState('')  // 一行一个章节
+  const [savingTpl, setSavingTpl] = useState(false)
+  const [deletingTplId, setDeletingTplId] = useState(null)    // 正在删除的 templateId（前端展示用）
+
   const currentConfig = useMemo(
     () => REPORT_TYPES.find(t => t.value === activeTab) || REPORT_TYPES[0],
     [activeTab]
@@ -136,6 +151,86 @@ export default function AcademicResearchPage({ user }) {
         setTemplates([])
       }
     } catch (e) { setTemplates([]) }
+  }
+
+  // 2026-07-18: 重新拉取当前任务类型的模板列表（创建/删除自定义模板后调用）
+  const refreshTemplates = async (reportType) => {
+    if (!reportType) return
+    try {
+      const res = await api.get('/academic/report-templates', { params: { report_type: reportType } })
+      const list = res.data || []
+      setTemplates(list)
+      // 当前选中的 templateId 不在列表中时，回退到第一个
+      setTemplateId(prev => {
+        if (prev && list.find(t => t.id === prev)) return prev
+        return list.length > 0 ? list[0].id : null
+      })
+    } catch (e) { /* 静默 */ }
+  }
+
+  // 2026-07-18: 打开自定义模板创建弹窗
+  const openNewTemplateModal = () => {
+    if (!activeTab) { message.warning('请先选择任务类型'); return }
+    // 默认填充当前选中模板的章节结构，便于用户基于已有模板修改
+    const current = templates.find(t => t.id === templateId)
+    const defaultStructure = current && current.structure
+      ? current.structure.join('\n')
+      : '一、\n二、\n三、\n四、\n五、参考来源'
+    setNewTplName('')
+    setNewTplDesc('')
+    setNewTplStructure(defaultStructure)
+    setTplModalOpen(true)
+  }
+
+  // 2026-07-18: 保存自定义模板（POST /api/academic/user-templates）
+  const handleSaveTemplate = async () => {
+    if (!activeTab) { message.warning('请先选择任务类型'); return }
+    if (!newTplName.trim()) { message.warning('请输入模板名称'); return }
+    const structure = newTplStructure
+      .split('\n')
+      .map(s => s.trim())
+      .filter(s => s.length > 0)
+    if (structure.length === 0) { message.warning('请至少输入一个章节'); return }
+    setSavingTpl(true)
+    try {
+      await api.post('/academic/user-templates', {
+        report_type: activeTab,
+        name: newTplName.trim(),
+        description: newTplDesc.trim(),
+        structure,
+      })
+      message.success('自定义模板已保存')
+      setTplModalOpen(false)
+      await refreshTemplates(activeTab)
+      // 自动选中刚创建的模板（列表最后一个是新建的，按 isCustom 标识找最新一个）
+      // refreshTemplates 已设置 templateId，这里不强制覆盖
+    } catch (e) {
+      message.error('保存失败: ' + (e.response?.data?.error || e.message))
+    } finally {
+      setSavingTpl(false)
+    }
+  }
+
+  // 2026-07-18: 删除自定义模板（DELETE /api/academic/user-templates/{templateId}）
+  // 后端按 templateId 删除（前端只持有 templateId，不持有 DB id）。
+  const handleDeleteTemplate = async (tplId, e) => {
+    if (e) { e.stopPropagation(); e.preventDefault() }
+    if (!tplId) return
+    setDeletingTplId(tplId)
+    try {
+      await api.delete(`/academic/user-templates/${encodeURIComponent(tplId)}`)
+      message.success('已删除自定义模板')
+      // 如果删除的是当前选中的模板，回退到第一个
+      if (templateId === tplId) {
+        const remaining = templates.filter(t => t.id !== tplId)
+        setTemplateId(remaining.length > 0 ? remaining[0].id : null)
+      }
+      await refreshTemplates(activeTab)
+    } catch (e) {
+      message.error('删除失败: ' + (e.response?.data?.error || e.message))
+    } finally {
+      setDeletingTplId(null)
+    }
   }
 
   const resetResearch = () => {
@@ -1331,60 +1426,157 @@ export default function AcademicResearchPage({ user }) {
             done={stepDone.s4} active={stepDone.s2} variants={fadeUp}>
 
             {/* 2026-07-12: 报告结构模板选择 */}
+            {/* 2026-07-18: 支持用户自定义模板 — 末尾"+"按钮新增，自定义模板带"自定义"徽标+删除按钮 */}
             {templates.length > 0 && (
               <div style={{ marginBottom: 22 }}>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
                   <span style={{ ...mono, color: 'var(--ab-text-4)', fontSize: 10, letterSpacing: '0.2em', textTransform: 'uppercase' }}>
                     报告结构模板
                   </span>
                   <Tooltip title="不同模板对应不同的章节结构和分析方法，选择后 LLM 会按此结构生成">
                     <span style={{ ...mono, color: 'var(--ab-text-4)', fontSize: 10 }}>选择生成结构</span>
                   </Tooltip>
+                  <Tooltip title="保存为自定义模板，以后在该任务类型下可复用">
+                    <Button size="small" type="text" icon={<PlusOutlined />} onClick={openNewTemplateModal}
+                      style={{ color: 'var(--ab-copper)', fontSize: 10, padding: '0 4px', marginLeft: 'auto' }}>
+                      添加自定义模板
+                    </Button>
+                  </Tooltip>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 10 }}>
                   {templates.map(tpl => {
                     const selected = templateId === tpl.id
+                    const isCustom = tpl.isCustom === true
+                    const isDeleting = deletingTplId === tpl.id
                     return (
-                      <button key={tpl.id} onClick={() => setTemplateId(tpl.id)}
-                        style={{
-                          cursor: 'pointer', textAlign: 'left',
-                          background: selected ? 'var(--ab-surface-2)' : 'var(--ab-bg-2)',
-                          border: selected ? '1px solid var(--ab-copper)' : '1px solid var(--ab-line)',
-                          borderRadius: 6, padding: '12px 14px', transition: 'all .2s',
-                          position: 'relative',
-                        }}>
-                        {selected && (
-                          <span style={{ position: 'absolute', top: 8, right: 8,
-                            width: 14, height: 14, borderRadius: '50%',
-                            background: 'var(--ab-copper)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                            <CheckOutlined style={{ fontSize: 8, color: 'var(--ab-bg)' }} />
-                          </span>
-                        )}
-                        <div style={{ ...serif, fontSize: 14, fontWeight: 500, color: selected ? 'var(--ab-text)' : 'var(--ab-text-2)', marginBottom: 4, paddingRight: 18 }}>
-                          {tpl.name}
-                        </div>
-                        <div style={{ ...mono, fontSize: 10, color: 'var(--ab-text-3)', lineHeight: 1.5, marginBottom: 8 }}>
-                          {tpl.desc}
-                        </div>
-                        {/* 章节结构预览 */}
-                        <div style={{ borderTop: '1px solid var(--ab-line)', paddingTop: 6, marginTop: 6 }}>
-                          {tpl.structure && tpl.structure.slice(0, 4).map((s, i) => (
-                            <div key={i} style={{ ...mono, fontSize: 9, color: 'var(--ab-text-3)', lineHeight: 1.6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                              · {s}
-                            </div>
-                          ))}
-                          {tpl.structure && tpl.structure.length > 4 && (
-                            <div style={{ ...mono, fontSize: 9, color: 'var(--ab-text-4)' }}>
-                              +{tpl.structure.length - 4} 更多
-                            </div>
+                      <div key={tpl.id} style={{ position: 'relative' }}>
+                        <button onClick={() => setTemplateId(tpl.id)}
+                          style={{
+                            cursor: 'pointer', textAlign: 'left', width: '100%',
+                            background: selected ? 'var(--ab-surface-2)' : 'var(--ab-bg-2)',
+                            border: selected ? '1px solid var(--ab-copper)' : '1px solid var(--ab-line)',
+                            borderRadius: 6, padding: '12px 14px', transition: 'all .2s',
+                            position: 'relative',
+                          }}>
+                          {/* 选中标识（自定义模板不显示选中圈，改用左上角徽标） */}
+                          {selected && !isCustom && (
+                            <span style={{ position: 'absolute', top: 8, right: 8,
+                              width: 14, height: 14, borderRadius: '50%',
+                              background: 'var(--ab-copper)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                              <CheckOutlined style={{ fontSize: 8, color: 'var(--ab-bg)' }} />
+                            </span>
                           )}
-                        </div>
-                      </button>
+                          {/* 自定义模板徽标 */}
+                          {isCustom && (
+                            <span style={{ position: 'absolute', top: 6, left: 6,
+                              ...mono, fontSize: 8, color: 'var(--ab-copper)',
+                              border: '1px solid var(--ab-copper)', borderRadius: 3,
+                              padding: '1px 4px', letterSpacing: '0.05em' }}>
+                              自定义
+                            </span>
+                          )}
+                          {/* 自定义模板选中标识 */}
+                          {selected && isCustom && (
+                            <span style={{ position: 'absolute', top: 8, right: 8,
+                              width: 14, height: 14, borderRadius: '50%',
+                              background: 'var(--ab-copper)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                              <CheckOutlined style={{ fontSize: 8, color: 'var(--ab-bg)' }} />
+                            </span>
+                          )}
+                          <div style={{ ...serif, fontSize: 14, fontWeight: 500, color: selected ? 'var(--ab-text)' : 'var(--ab-text-2)', marginBottom: 4, paddingRight: 18, marginTop: isCustom ? 14 : 0 }}>
+                            {tpl.name}
+                          </div>
+                          <div style={{ ...mono, fontSize: 10, color: 'var(--ab-text-3)', lineHeight: 1.5, marginBottom: 8 }}>
+                            {tpl.desc}
+                          </div>
+                          {/* 章节结构预览 */}
+                          <div style={{ borderTop: '1px solid var(--ab-line)', paddingTop: 6, marginTop: 6 }}>
+                            {tpl.structure && tpl.structure.slice(0, 4).map((s, i) => (
+                              <div key={i} style={{ ...mono, fontSize: 9, color: 'var(--ab-text-3)', lineHeight: 1.6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                · {s}
+                              </div>
+                            ))}
+                            {tpl.structure && tpl.structure.length > 4 && (
+                              <div style={{ ...mono, fontSize: 9, color: 'var(--ab-text-4)' }}>
+                                +{tpl.structure.length - 4} 更多
+                              </div>
+                            )}
+                          </div>
+                        </button>
+                        {/* 自定义模板右上角删除按钮 */}
+                        {isCustom && (
+                          <Tooltip title={isDeleting ? '删除中…' : '删除此自定义模板'}>
+                            <button
+                              onClick={(e) => handleDeleteTemplate(tpl.id, e)}
+                              disabled={isDeleting}
+                              style={{
+                                position: 'absolute', top: 4, right: 4, width: 20, height: 20,
+                                borderRadius: '50%', border: 'none', cursor: isDeleting ? 'wait' : 'pointer',
+                                background: isDeleting ? 'var(--ab-bg-3)' : 'rgba(184,115,70,0.12)',
+                                color: 'var(--ab-copper)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                padding: 0, transition: 'all .2s',
+                              }}
+                              onMouseEnter={(e) => { if (!isDeleting) e.currentTarget.style.background = 'var(--ab-copper)' }}
+                              onMouseLeave={(e) => { if (!isDeleting) e.currentTarget.style.background = 'rgba(184,115,70,0.12)' }}
+                            >
+                              <DeleteOutlined style={{ fontSize: 10, color: isDeleting ? 'var(--ab-text-4)' : 'inherit' }} />
+                            </button>
+                          </Tooltip>
+                        )}
+                      </div>
                     )
                   })}
                 </div>
               </div>
             )}
+
+            {/* 2026-07-18: 自定义模板创建弹窗 */}
+            <Modal
+              title="添加自定义模板"
+              open={tplModalOpen}
+              onOk={handleSaveTemplate}
+              onCancel={() => setTplModalOpen(false)}
+              okText={savingTpl ? '保存中…' : '保存'}
+              cancelText="取消"
+              confirmLoading={savingTpl}
+              okButtonProps={{ disabled: savingTpl || !newTplName.trim() }}
+              width={560}
+            >
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ ...mono, color: 'var(--ab-text-3)', fontSize: 11, marginBottom: 6 }}>模板名称 *</div>
+                <Input
+                  value={newTplName}
+                  onChange={(e) => setNewTplName(e.target.value)}
+                  placeholder="如：我的五段式教案 / 实验探究式教案"
+                  maxLength={50}
+                />
+              </div>
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ ...mono, color: 'var(--ab-text-3)', fontSize: 11, marginBottom: 6 }}>模板说明</div>
+                <Input
+                  value={newTplDesc}
+                  onChange={(e) => setNewTplDesc(e.target.value)}
+                  placeholder="一句话描述适用场景，如：适用于理科实验课，强调探究过程"
+                  maxLength={120}
+                />
+              </div>
+              <div style={{ marginBottom: 6 }}>
+                <div style={{ ...mono, color: 'var(--ab-text-3)', fontSize: 11, marginBottom: 6 }}>
+                  章节结构 * <span style={{ color: 'var(--ab-text-4)' }}>（一行一个章节，按顺序生成）</span>
+                </div>
+                <TextArea
+                  value={newTplStructure}
+                  onChange={(e) => setNewTplStructure(e.target.value)}
+                  placeholder={'一、教学目标\n二、教学重点与难点\n三、教学过程\n四、作业设计\n五、参考来源'}
+                  autoSize={{ minRows: 5, maxRows: 12 }}
+                  style={{ fontFamily: 'var(--ab-font-mono)', fontSize: 12 }}
+                />
+              </div>
+              <div style={{ ...mono, color: 'var(--ab-text-4)', fontSize: 10, marginTop: 8, lineHeight: 1.6 }}>
+                提示：模板保存后，会在当前任务类型「{currentConfig?.label || ''}」下显示，带"自定义"徽标，可随时删除。
+                生成报告时 LLM 会严格按照您定义的章节结构生成。
+              </div>
+            </Modal>
 
             {/* 辅助提示词 */}
             <div style={{ marginBottom: 18 }}>
