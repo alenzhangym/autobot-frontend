@@ -205,6 +205,10 @@ export default function SessionSidebar({
           { key: 'documents', icon: <FileTextOutlined />, label: t('nav.companyDocuments') },
           ...(hasAcademicChannel ? [
             { key: 'academic', icon: <ReadOutlined />, label: '学术分析' },
+            // 2026-07-18: ReAct 闭环效果统计页面（仅超管可见）
+            ...(isSuperAdminFn(user) ? [
+              { key: 'academic_stats', icon: <DashboardOutlined />, label: 'ReAct 闭环统计' },
+            ] : []),
           ] : []),
           ...(((isSuperAdminFn(user) || isCompanyAdminFn(user)) && hasErpChannel) ? [
             { key: 'dashboard', icon: <DashboardOutlined />, label: t('erp.dashboard') },

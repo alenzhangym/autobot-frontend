@@ -774,6 +774,28 @@ export function stripCommandBlocks(text) {
 }
 
 /**
+ * Strip LLM thinking/reasoning tags (<think>...</think>, <reasoning>...</reasoning>,
+ * <reflection>...</reflection>) from displayed text.
+ *
+ * 2026-07-19: 学术研究报告正文区只展示纯净正文，LLM 内部推理过程通过
+ * 折叠面板（debate/draft）查看。此处剥离 thinking 标签，避免字面量残留。
+ * 兜底处理未闭合的开标签（maxTokens 截断场景）。
+ */
+export function stripThinking(content) {
+  if (!content || typeof content !== 'string') return content
+  let cleaned = content
+    .replace(/<think(?:\s[^>]*)?>[\s\S]*?<\/think>/gi, '')
+    .replace(/<reasoning(?:\s[^>]*)?>[\s\S]*?<\/reasoning>/gi, '')
+    .replace(/<reflection(?:\s[^>]*)?>[\s\S]*?<\/reflection>/gi, '')
+    // 兜底：开标签后无闭标签（LLM 被 maxTokens 截断）
+    .replace(/<think(?:\s[^>]*)?>[\s\S]*$/gi, '')
+    .replace(/<reasoning(?:\s[^>]*)?>[\s\S]*$/gi, '')
+    .replace(/<reflection(?:\s[^>]*)?>[\s\S]*$/gi, '')
+  cleaned = cleaned.replace(/\n{3,}/g, '\n\n')
+  return cleaned.trim()
+}
+
+/**
  * Strip agent command markers (__CMD__{...}), [COMMAND_RESULTS] sections,
  * and trailing `{"__state":...}` JSON from message content for display.
  */

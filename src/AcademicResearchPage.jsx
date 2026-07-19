@@ -20,6 +20,7 @@ import {
 } from '@ant-design/icons'
 import { motion, AnimatePresence } from 'framer-motion'
 import api from './auth'
+import { stripThinking } from './utils/helpers.jsx'
 
 const { TextArea } = Input
 
@@ -86,6 +87,8 @@ export default function AcademicResearchPage({ user }) {
   // 2026-07-17: 报告生成的中间过程元数据（后端持久化，前端展示+编辑）
   const [outlineText, setOutlineText] = useState('')
   const [outlineDebate, setOutlineDebate] = useState('')
+  // 2026-07-18: 大纲是否按 debate 建议修订过（前端展示徽标）
+  const [outlineRevised, setOutlineRevised] = useState(false)
   const [sections, setSections] = useState([])  // [{title, outline, draft, debate, refined}, ...]
 
   // 搜索源：默认 Perplexity + 本地知识库
@@ -243,7 +246,7 @@ export default function AcademicResearchPage({ user }) {
     setProgress(0); setProgressMessage('')
     setSelectedHistoryId(null)
     // 2026-07-17: 清空大纲/章节元数据
-    setOutlineText(''); setOutlineDebate(''); setSections([])
+    setOutlineText(''); setOutlineDebate(''); setOutlineRevised(false); setSections([])
   }
 
   // 2026-07-17: 新建研究 — 重置表单并在左侧列表中不选中任何历史
@@ -388,7 +391,7 @@ export default function AcademicResearchPage({ user }) {
     setGenerating(true); setReport('')
     setProgress(0); setProgressMessage('正在启动生成任务…')
     // 2026-07-17: 清空旧的大纲/章节元数据，让新一轮生成重新跑全流程
-    setOutlineText(''); setOutlineDebate(''); setSections([])
+    setOutlineText(''); setOutlineDebate(''); setOutlineRevised(false); setSections([])
     try {
       await api.post(`/academic/research/${researchId}/generate`, {
         user_prompt: userPrompt,
@@ -426,6 +429,8 @@ export default function AcademicResearchPage({ user }) {
         // 2026-07-17: 同步大纲/章节元数据（生成过程中可实时看到章节完成情况）
         if (r.outlineText) setOutlineText(r.outlineText)
         if (r.outlineDebate) setOutlineDebate(r.outlineDebate)
+        // 2026-07-18: 同步大纲修订标记
+        if (r.outlineRevised !== undefined && r.outlineRevised !== null) setOutlineRevised(!!r.outlineRevised)
         if (r.sectionsJson) {
           try {
             const parsed = JSON.parse(r.sectionsJson)
@@ -589,6 +594,8 @@ export default function AcademicResearchPage({ user }) {
         // 2026-07-17: 恢复大纲/章节元数据
         setOutlineText(r.outlineText || '')
         setOutlineDebate(r.outlineDebate || '')
+        // 2026-07-18: 恢复大纲修订标记
+        setOutlineRevised(!!r.outlineRevised)
         if (r.sectionsJson) {
           try {
             const parsed = JSON.parse(r.sectionsJson)
@@ -1783,6 +1790,7 @@ export default function AcademicResearchPage({ user }) {
                       report={report}
                       outlineText={outlineText}
                       outlineDebate={outlineDebate}
+                      outlineRevised={outlineRevised}
                       sections={sections}
                       researchId={researchId}
                       genStatus={genStatus}
@@ -1819,7 +1827,21 @@ export default function AcademicResearchPage({ user }) {
 // 兜底从 report 文本中正则切分 ## 章节。
 // - 顶部展示大纲（可编辑） + 大纲评审意见
 // - 每个章节：主标题 + refined 正文 + 折叠面板显示 draft/debate
-function ReportBody({ report, outlineText, outlineDebate, sections: sectionsFromProps, researchId, genStatus, onOutlineUpdated, onSectionsUpdated }) {
+
+// 2026-07-18: 修订方式徽标配色 + 文案
+// revise_method 值：two-step / single-call / debate-failed / subsection / subsection-retry
+const REVISE_METHOD_META = {
+  'two-step':         { label: '两步ReAct', color: '#16a34a', bg: 'rgba(22, 163, 74, 0.12)' },     // 绿色：理想路径
+  'single-call':      { label: '单次降级', color: '#d97706', bg: 'rgba(217, 119, 6, 0.12)' },     // 橙色：降级路径
+  'debate-failed':    { label: '未修订',   color: '#dc2626', bg: 'rgba(220, 38, 38, 0.12)' },     // 红色：失败
+  'subsection':       { label: '子小节',   color: '#2563eb', bg: 'rgba(37, 99, 235, 0.12)' },     // 蓝色：子小节路径
+  'subsection-retry': { label: '拆分重试', color: '#7c3aed', bg: 'rgba(124, 58, 237, 0.12)' },    // 紫色：截断重试
+}
+function reviseMethodLabel(m) { return (REVISE_METHOD_META[m] || { label: m }).label }
+function reviseMethodColor(m) { return (REVISE_METHOD_META[m] || { color: 'var(--ab-text-4)' }).color }
+function reviseMethodBg(m)    { return (REVISE_METHOD_META[m] || { bg: 'rgba(0,0,0,0.04)' }).bg }
+
+function ReportBody({ report, outlineText, outlineDebate, outlineRevised, sections: sectionsFromProps, researchId, genStatus, onOutlineUpdated, onSectionsUpdated }) {
   const serif = { fontFamily: 'var(--ab-font-display)' }
   const mono = { fontFamily: 'var(--ab-font-mono)' }
   const body = { fontFamily: 'var(--ab-font-body)' }
@@ -1833,6 +1855,8 @@ function ReportBody({ report, outlineText, outlineDebate, sections: sectionsFrom
   const [sectionEditState, setSectionEditState] = React.useState({})
   // 2026-07-17: LLM 校准输入 — key=sectionIdx, value={ hint: string, regenerating: bool }
   const [sectionRegenState, setSectionRegenState] = React.useState({})
+  // 2026-07-19: 段落级扩展 — key=`${sectionIdx}-${paraIdx}`, value={ showInput, hint, expanding }
+  const [paragraphExpandState, setParagraphExpandState] = React.useState({})
 
   // 2026-07-17: 优先使用后端持久化的 sections（含 draft/debate/refined 完整元数据），
   // 兜底从 report 文本中按 ## 切分章节（保持向后兼容旧报告）。
@@ -1845,7 +1869,20 @@ function ReportBody({ report, outlineText, outlineDebate, sections: sectionsFrom
         draft: s.draft || '',
         debate: s.debate || '',
         refined: s.refined || '',
-        hasProcess: !!(s.draft || s.debate),
+        // 2026-07-18: hasProcess 扩展 — subsection 路径下父章节 draft/debate 虽为空，
+        // 但有子小节详情可展示，也标记为 true，让"思考过程"折叠面板可见，
+        // 内部会根据 reviseMethod='subsection' 渲染子小节聚合提示。
+        hasProcess: !!(s.draft || s.debate || (s.subsections && s.subsections.length > 0)),
+        // 2026-07-18: 修订方式 + 一致性校验元数据
+        reviseMethod: s.revise_method || '',         // two-step / single-call / debate-failed / subsection / subsection-retry
+        similarity: s.similarity,                    // 0.0-1.0
+        consistency: s.consistency_check || '',      // normal / low_revision / high_revision / skipped
+        subsections: s.subsections || [],            // 子小节元数据数组
+        // 2026-07-19: 段落级扩展历史 — [{ para_idx, original, debate, refined, expand_hint, expanded_at }]
+        paragraphs: s.paragraphs || [],
+        // 2026-07-19: 段落级扩展预览 — { "paraIdx": { original, expanded, debate, expand_hint, created_at } }
+        // 存在则该段落进入预览态，显示扩展后内容 + 保存/取消按钮
+        pendingParagraphExpands: s.pendingParagraphExpands || {},
       }))
     }
     if (!report) return []
@@ -2024,6 +2061,141 @@ function ReportBody({ report, outlineText, outlineDebate, sections: sectionsFrom
     }
   }
 
+  // 2026-07-19: 段落级扩展 — 对指定章节的指定段落做 ReAct 闭环扩展
+  // key=`${sectionIdx}-${paraIdx}` → state={ showInput, hint, expanding }
+  const toggleParagraphExpandInput = (sectionIdx, paraIdx) => {
+    const key = `${sectionIdx}-${paraIdx}`
+    setParagraphExpandState(prev => ({
+      ...prev,
+      [key]: prev[key]
+        ? { ...prev[key], showInput: !prev[key].showInput }
+        : { showInput: true, hint: '', expanding: false },
+    }))
+  }
+
+  const setParagraphExpandHint = (sectionIdx, paraIdx, hint) => {
+    const key = `${sectionIdx}-${paraIdx}`
+    setParagraphExpandState(prev => ({
+      ...prev,
+      [key]: { ...(prev[key] || { showInput: true }), hint },
+    }))
+  }
+
+  const cancelParagraphExpandInput = (sectionIdx, paraIdx) => {
+    const key = `${sectionIdx}-${paraIdx}`
+    setParagraphExpandState(prev => {
+      const next = { ...prev }
+      delete next[key]
+      return next
+    })
+  }
+
+  const expandParagraph = async (sectionIdx, paraIdx) => {
+    if (!researchId) return
+    const key = `${sectionIdx}-${paraIdx}`
+    const st = paragraphExpandState[key] || { showInput: true, hint: '' }
+    setParagraphExpandState(prev => ({
+      ...prev,
+      [key]: { ...st, expanding: true },
+    }))
+    try {
+      const body = {}
+      if (st.hint && st.hint.trim()) body.expand_hint = st.hint.trim()
+      const res = await api.post(
+        `/academic/research/${researchId}/sections/${sectionIdx}/paragraphs/${paraIdx}/expand`,
+        body,
+      )
+      if (res.data?.expanded) {
+        let newSections = []
+        try {
+          newSections = JSON.parse(res.data.sections)
+        } catch (e) { /* ignore */ }
+        // 2026-07-19: 扩展结果进入 pending 预览态，不更新 report（commit 时才更新）
+        onSectionsUpdated(newSections, undefined)
+        message.success(`已生成扩展预览，请确认保存或取消`)
+        // 清理输入框状态
+        setParagraphExpandState(prev => {
+          const next = { ...prev }
+          delete next[key]
+          return next
+        })
+      } else {
+        message.error('段落扩展失败')
+      }
+    } catch (e) {
+      message.error('段落扩展失败: ' + (e.response?.data?.error || e.message))
+    } finally {
+      setParagraphExpandState(prev => ({
+        ...prev,
+        [key]: prev[key] ? { ...prev[key], expanding: false } : prev[key],
+      }))
+    }
+  }
+
+  // 2026-07-19: 提交段落扩展 — 把 pending 扩展结果应用到 refined，记录历史，重写 report
+  const commitParagraphExpand = async (sectionIdx, paraIdx) => {
+    if (!researchId) return
+    const key = `${sectionIdx}-${paraIdx}`
+    setParagraphExpandState(prev => ({
+      ...prev,
+      [key]: { ...(prev[key] || {}), committing: true },
+    }))
+    try {
+      const res = await api.post(
+        `/academic/research/${researchId}/sections/${sectionIdx}/paragraphs/${paraIdx}/commit`,
+      )
+      if (res.data?.committed) {
+        let newSections = []
+        try {
+          newSections = JSON.parse(res.data.sections)
+        } catch (e) { /* ignore */ }
+        onSectionsUpdated(newSections, res.data.report)
+        message.success(`已保存章节 ${sectionIdx + 1} 段落 ${paraIdx + 1} 的扩展`)
+      } else {
+        message.error('保存扩展失败')
+      }
+    } catch (e) {
+      message.error('保存扩展失败: ' + (e.response?.data?.error || e.message))
+    } finally {
+      setParagraphExpandState(prev => ({
+        ...prev,
+        [key]: prev[key] ? { ...prev[key], committing: false } : prev[key],
+      }))
+    }
+  }
+
+  // 2026-07-19: 取消段落扩展 — 清除 pending，原 refined 不变
+  const cancelPendingParagraphExpand = async (sectionIdx, paraIdx) => {
+    if (!researchId) return
+    const key = `${sectionIdx}-${paraIdx}`
+    setParagraphExpandState(prev => ({
+      ...prev,
+      [key]: { ...(prev[key] || {}), cancelling: true },
+    }))
+    try {
+      const res = await api.post(
+        `/academic/research/${researchId}/sections/${sectionIdx}/paragraphs/${paraIdx}/cancel`,
+      )
+      if (res.data?.cancelled) {
+        let newSections = []
+        try {
+          newSections = JSON.parse(res.data.sections)
+        } catch (e) { /* ignore */ }
+        onSectionsUpdated(newSections, undefined)
+        message.info(`已取消扩展，恢复原内容`)
+      } else {
+        message.error('取消扩展失败')
+      }
+    } catch (e) {
+      message.error('取消扩展失败: ' + (e.response?.data?.error || e.message))
+    } finally {
+      setParagraphExpandState(prev => ({
+        ...prev,
+        [key]: prev[key] ? { ...prev[key], cancelling: false } : prev[key],
+      }))
+    }
+  }
+
   if (sections.length === 0 && !outlineText) {
     // 兜底：未识别到任何 ## 章节且无大纲，直接显示原文
     return (
@@ -2054,8 +2226,20 @@ function ReportBody({ report, outlineText, outlineDebate, sections: sectionsFrom
             <div style={{
               ...mono, fontSize: 10, letterSpacing: '0.22em', textTransform: 'uppercase',
               color: 'var(--ab-text-4)',
+              display: 'flex', alignItems: 'center', gap: 8,
             }}>
-              · 报告大纲（{editingOutline ? '编辑中' : '可编辑'}）·
+              <span>· 报告大纲（{editingOutline ? '编辑中' : '可编辑'}）·</span>
+              {/* 2026-07-18: 已按评审修订徽标 */}
+              {outlineRevised && !editingOutline && (
+                <span style={{
+                  ...mono, fontSize: 9, color: '#16a34a',
+                  padding: '1px 6px',
+                  background: 'rgba(22, 163, 74, 0.12)', borderRadius: 2,
+                  letterSpacing: '0.1em',
+                }}>
+                  已按评审修订
+                </span>
+              )}
             </div>
             {!editingOutline && outlineText && genStatus !== 'generating' && (
               <Button size="small" onClick={startEditOutline}
@@ -2230,6 +2414,33 @@ function ReportBody({ report, outlineText, outlineDebate, sections: sectionsFrom
                         编辑中
                       </span>
                     )}
+                    {/* 2026-07-18: 修订方式徽标 — 显示 revise_method + similarity + consistency */}
+                    {!isEditing && s.reviseMethod && (
+                      <span style={{
+                        ...mono, fontSize: 9, marginLeft: 4, padding: '1px 6px',
+                        color: reviseMethodColor(s.reviseMethod),
+                        background: reviseMethodBg(s.reviseMethod),
+                        borderRadius: 2, letterSpacing: '0.05em',
+                        display: 'inline-flex', alignItems: 'center', gap: 4,
+                      }}>
+                        {reviseMethodLabel(s.reviseMethod)}
+                        {typeof s.similarity === 'number' && (
+                          <span style={{ color: 'var(--ab-text-4)', marginLeft: 2 }}>
+                            · sim {s.similarity.toFixed(2)}
+                          </span>
+                        )}
+                        {s.consistency && s.consistency !== 'normal' && s.consistency !== 'skipped' && (
+                          <span style={{
+                            marginLeft: 2, padding: '0 4px',
+                            color: s.consistency === 'low_revision' ? '#dc2626' : '#d97706',
+                            background: s.consistency === 'low_revision' ? 'rgba(220, 38, 38, 0.1)' : 'rgba(217, 119, 6, 0.1)',
+                            borderRadius: 2,
+                          }}>
+                            {s.consistency === 'low_revision' ? '修订不足' : '大幅重写'}
+                          </span>
+                        )}
+                      </span>
+                    )}
                   </h2>
                   {/* 2026-07-17: 非编辑模式显示"编辑段落"按钮；编辑模式显示"保存/取消" */}
                   {canEdit && !isEditing && (
@@ -2264,12 +2475,168 @@ function ReportBody({ report, outlineText, outlineDebate, sections: sectionsFrom
                   {!isEditing ? (
                     // ── 非编辑模式：只显示正文 + 思考过程折叠 ──
                     <>
-                      <div style={{
-                        ...body, fontSize: 14.5, color: 'var(--ab-text)', lineHeight: 1.9,
-                        whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                      }}>
-                        {s.refined || s.body || '（本章暂无内容）'}
-                      </div>
+                      {/* 2026-07-19: 段落级渲染 — 按 \n\n+ 切分，每段独立 <div> + hover 扩展按钮 */}
+                      {(() => {
+                        const rawText = stripThinking(s.refined || s.body) || ''
+                        if (!rawText) return <div style={{ ...body, color: 'var(--ab-text-3)' }}>（本章暂无内容）</div>
+                        // 按段落切分（与后端 \n\n+ 一致），保留原段落索引映射
+                        const paragraphs = []
+                        rawText.split(/\n\n+/).forEach((p) => {
+                          if (p.trim()) paragraphs.push(p)
+                        })
+                        if (paragraphs.length === 0) {
+                          return <div style={{ ...body, color: 'var(--ab-text-3)' }}>（本章暂无内容）</div>
+                        }
+                        return paragraphs.map((p, pIdx) => {
+                          // subsection 路径下 ### 子标题段落不挂扩展按钮
+                          const isSubsectionTitle = p.trim().startsWith('### ')
+                          const expandKey = `${i}-${pIdx}`
+                          const expandSt = paragraphExpandState[expandKey]
+                          // 2026-07-19: 检查 pending 预览态 — 若存在则显示扩展后内容 + 保存/取消按钮
+                          const pending = s.pendingParagraphExpands
+                            ? s.pendingParagraphExpands[String(pIdx)]
+                            : null
+                          const displayText = pending ? stripThinking(pending.expanded || '') : p
+                          return (
+                            <div key={pIdx}
+                              className="paragraph-block"
+                              style={{
+                                position: 'relative',
+                                marginBottom: 12,
+                                ...body, fontSize: 14.5, color: 'var(--ab-text)', lineHeight: 1.9,
+                                whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                                paddingRight: isSubsectionTitle ? 0 : 28,
+                                // 2026-07-19: pending 预览态高亮
+                                background: pending ? 'rgba(22, 163, 74, 0.04)' : 'transparent',
+                                borderLeft: pending ? '3px solid #16a34a' : 'none',
+                                paddingLeft: pending ? 10 : 0,
+                                borderRadius: pending ? 2 : 0,
+                              }}
+                              onMouseEnter={(e) => {
+                                if (isSubsectionTitle || pending) return
+                                e.currentTarget.style.background = 'rgba(184, 115, 70, 0.03)'
+                              }}
+                              onMouseLeave={(e) => {
+                                if (isSubsectionTitle || pending) return
+                                e.currentTarget.style.background = 'transparent'
+                              }}>
+                              {pending && (
+                                <div style={{
+                                  ...mono, fontSize: 9, color: '#16a34a',
+                                  marginBottom: 6, letterSpacing: '0.1em',
+                                  display: 'flex', alignItems: 'center', gap: 6,
+                                }}>
+                                  <span style={{
+                                    padding: '1px 5px',
+                                    background: 'rgba(22, 163, 74, 0.12)', borderRadius: 2,
+                                  }}>
+                                    扩展预览
+                                  </span>
+                                  <span style={{ color: 'var(--ab-text-4)' }}>
+                                    原段落 {p.length} 字 → 扩展后 {(pending.expanded || '').length} 字
+                                  </span>
+                                </div>
+                              )}
+                              {displayText}
+                              {!isSubsectionTitle && !pending && (
+                                <button
+                                  onClick={() => toggleParagraphExpandInput(i, pIdx)}
+                                  title="扩展补充本段落"
+                                  style={{
+                                    position: 'absolute',
+                                    top: -4,
+                                    right: 0,
+                                    width: 22, height: 22,
+                                    border: '1px solid var(--ab-line)',
+                                    borderRadius: 4,
+                                    background: 'var(--ab-bg)',
+                                    color: 'var(--ab-copper)',
+                                    cursor: 'pointer',
+                                    fontSize: 14, lineHeight: '20px',
+                                    padding: 0,
+                                    opacity: 0.6,
+                                    transition: 'opacity 0.15s',
+                                  }}
+                                  onMouseEnter={(e) => { e.currentTarget.style.opacity = 1 }}
+                                  onMouseLeave={(e) => { e.currentTarget.style.opacity = 0.6 }}>
+                                  ＋
+                                </button>
+                              )}
+                              {pending && (
+                                <div style={{
+                                  marginTop: 10, padding: '8px 10px',
+                                  background: 'var(--ab-bg-2)',
+                                  borderRadius: 2,
+                                  display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap',
+                                }}>
+                                  <span style={{
+                                    ...mono, fontSize: 10, color: 'var(--ab-text-3)',
+                                  }}>
+                                    是否保存此扩展？保存后覆盖原段落，取消则恢复原内容。
+                                  </span>
+                                  <Button type="primary" size="small"
+                                    onClick={() => commitParagraphExpand(i, pIdx)}
+                                    loading={expandSt?.committing}
+                                    style={{ background: '#16a34a', borderColor: '#16a34a',
+                                      ...mono, fontSize: 10 }}>
+                                    {expandSt?.committing ? '保存中…' : '保存扩展'}
+                                  </Button>
+                                  <Button size="small"
+                                    onClick={() => cancelPendingParagraphExpand(i, pIdx)}
+                                    loading={expandSt?.cancelling}
+                                    disabled={expandSt?.committing}
+                                    style={{ ...mono, fontSize: 10 }}>
+                                    {expandSt?.cancelling ? '取消中…' : '取消，恢复原内容'}
+                                  </Button>
+                                </div>
+                              )}
+                              {expandSt?.showInput && !pending && (
+                                <div style={{
+                                  marginTop: 10, padding: '10px 12px',
+                                  background: 'var(--ab-bg-2)',
+                                  borderLeft: '2px solid var(--ab-copper)',
+                                  borderRadius: 2,
+                                }}>
+                                  <div style={{ ...mono, fontSize: 10, color: 'var(--ab-text-3)', marginBottom: 6 }}>
+                                    扩展方向提示（可选）：
+                                  </div>
+                                  <textarea
+                                    value={expandSt.hint || ''}
+                                    onChange={(e) => setParagraphExpandHint(i, pIdx, e.target.value)}
+                                    placeholder="如：补充 2024 年数据、增加案例分析、补强因果论证…"
+                                    rows={2}
+                                    style={{
+                                      width: '100%', padding: '6px 8px',
+                                      border: '1px solid var(--ab-line)',
+                                      borderRadius: 2,
+                                      fontSize: 12, fontFamily: 'var(--ab-font-body)',
+                                      resize: 'vertical',
+                                      background: 'var(--ab-bg)',
+                                      color: 'var(--ab-text)',
+                                    }}
+                                  />
+                                  <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                                    <Button type="primary" size="small"
+                                      onClick={() => expandParagraph(i, pIdx)}
+                                      loading={expandSt.expanding}
+                                      style={{ background: 'var(--ab-copper)', borderColor: 'var(--ab-copper)',
+                                        ...mono, fontSize: 10 }}>
+                                      {expandSt.expanding ? '扩展中…' : '开始扩展'}
+                                    </Button>
+                                    <Button size="small"
+                                      onClick={() => cancelParagraphExpandInput(i, pIdx)}
+                                      disabled={expandSt.expanding}
+                                      style={{ ...mono, fontSize: 10 }}>
+                                      取消
+                                    </Button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })
+                      })()}
+                      {/* 段落级渲染结束 */}
 
                       {/* 章节大纲概要 */}
                       {s.outline && (
@@ -2305,6 +2672,17 @@ function ReportBody({ report, outlineText, outlineDebate, sections: sectionsFrom
                                 {exp.draft ? '▼' : '▶'} 章节初稿
                               </Button>
                             )}
+                            {/* 2026-07-18: subsection 路径下展示"思考过程"按钮，
+                                点击后展示子小节拆分说明（draft/debate 在子小节层面） */}
+                            {!s.draft && !s.debate && s.subsections && s.subsections.length > 0 && (
+                              <Button size="small"
+                                onClick={() => toggleProcess(i, 'debate')}
+                                style={{ ...mono, fontSize: 10, color: exp.debate ? '#2563eb' : 'var(--ab-text-3)',
+                                  borderColor: exp.debate ? '#2563eb' : 'var(--ab-line)',
+                                  background: exp.debate ? 'rgba(37, 99, 235, 0.05)' : 'transparent' }}>
+                                {exp.debate ? '▼' : '▶'} 思考过程（子小节拆分）
+                              </Button>
+                            )}
                           </div>
                           {exp.debate && s.debate && (
                             <div style={{
@@ -2315,7 +2693,7 @@ function ReportBody({ report, outlineText, outlineDebate, sections: sectionsFrom
                               borderLeft: '2px solid var(--ab-copper)',
                               borderRadius: 2,
                             }}>
-                              {s.debate}
+                              {stripThinking(s.debate)}
                             </div>
                           )}
                           {exp.draft && s.draft && (
@@ -2323,11 +2701,208 @@ function ReportBody({ report, outlineText, outlineDebate, sections: sectionsFrom
                               ...body, fontSize: 12.5, color: 'var(--ab-text-3)', lineHeight: 1.7,
                               whiteSpace: 'pre-wrap', wordBreak: 'break-word',
                               marginTop: 10, padding: '10px 14px',
-                              background: 'var(--ab-bg-2)',
+                              background: 'rgba(0,0,0,0.02)',
                               borderLeft: '2px solid var(--ab-line)',
                               borderRadius: 2,
                             }}>
-                              {s.draft}
+                              {stripThinking(s.draft)}
+                            </div>
+                          )}
+                          {/* 2026-07-18: subsection 路径下，展开"思考过程"显示子小节拆分说明 */}
+                          {exp.debate && !s.debate && !s.draft && s.subsections && s.subsections.length > 0 && (
+                            <div style={{
+                              ...body, fontSize: 12.5, color: 'var(--ab-text-2)', lineHeight: 1.7,
+                              marginTop: 10, padding: '10px 14px',
+                              background: 'rgba(37, 99, 235, 0.04)',
+                              borderLeft: '2px solid #2563eb',
+                              borderRadius: 2,
+                            }}>
+                              <div style={{
+                                ...mono, fontSize: 10, color: '#2563eb',
+                                letterSpacing: '0.1em', marginBottom: 8,
+                              }}>
+                                ◇ 子小节拆分生成说明
+                              </div>
+                              <div>本章节因篇幅较大（预估超过 {Math.round((s.refined || '').length / 100) * 100} 字），按子小节拆分生成。</div>
+                              <div style={{ marginTop: 6 }}>共拆分 <strong>{s.subsections.length}</strong> 个子小节，每个子小节独立走两步 ReAct 闭环（draft → debate → revise）。</div>
+                              <div style={{ marginTop: 6, color: 'var(--ab-text-3)', fontSize: 11.5 }}>
+                                各子小节的初稿、评审意见、修订正文请查看下方"子小节详情"面板。
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* 2026-07-18: 子小节详情折叠面板（subsection 路径才显示） */}
+                      {s.subsections && s.subsections.length > 0 && (
+                        <div style={{ marginTop: 16 }}>
+                          <Button size="small"
+                            onClick={() => toggleProcess(i, 'subsections')}
+                            style={{ ...mono, fontSize: 10,
+                              color: exp.subsections ? '#2563eb' : 'var(--ab-text-3)',
+                              borderColor: exp.subsections ? '#2563eb' : 'var(--ab-line)',
+                              background: exp.subsections ? 'rgba(37, 99, 235, 0.05)' : 'transparent' }}>
+                            {exp.subsections ? '▼' : '▶'} 子小节详情（{s.subsections.length}）
+                          </Button>
+                          {exp.subsections && (
+                            <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                              {s.subsections.map((sub, j) => (
+                                <div key={j} style={{
+                                  padding: '10px 14px',
+                                  background: 'rgba(37, 99, 235, 0.03)',
+                                  border: '1px solid rgba(37, 99, 235, 0.15)',
+                                  borderRadius: 4,
+                                }}>
+                                  {/* 子小节标题 + 修订方式徽标 */}
+                                  <div style={{
+                                    display: 'flex', alignItems: 'center', gap: 8,
+                                    marginBottom: 6,
+                                  }}>
+                                    <span style={{
+                                      ...mono, fontSize: 9, color: '#2563eb',
+                                      padding: '1px 5px',
+                                      background: 'rgba(37, 99, 235, 0.1)', borderRadius: 2,
+                                    }}>
+                                      {String(j + 1).padStart(2, '0')}
+                                    </span>
+                                    <span style={{
+                                      ...serif, fontSize: 14, color: 'var(--ab-text)',
+                                      fontWeight: 500,
+                                    }}>
+                                      {sub.title}
+                                    </span>
+                                    {sub.revise_method && (
+                                      <span style={{
+                                        ...mono, fontSize: 9, padding: '1px 5px',
+                                        color: reviseMethodColor(sub.revise_method),
+                                        background: reviseMethodBg(sub.revise_method),
+                                        borderRadius: 2,
+                                        display: 'inline-flex', alignItems: 'center', gap: 3,
+                                      }}>
+                                        {reviseMethodLabel(sub.revise_method)}
+                                        {typeof sub.similarity === 'number' && (
+                                          <span style={{ color: 'var(--ab-text-4)', marginLeft: 2 }}>
+                                            · sim {sub.similarity.toFixed(2)}
+                                          </span>
+                                        )}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {/* 子小节正文（refined） */}
+                                  {sub.refined && (
+                                    <div style={{
+                                      ...body, fontSize: 13, color: 'var(--ab-text)', lineHeight: 1.8,
+                                      whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                                      marginBottom: 6,
+                                    }}>
+                                      {stripThinking(sub.refined)}
+                                    </div>
+                                  )}
+                                  {/* 子小节审稿意见（折叠） */}
+                                  {sub.debate && (
+                                    <div style={{
+                                      ...body, fontSize: 11, color: 'var(--ab-text-3)', lineHeight: 1.6,
+                                      whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                                      padding: '6px 10px',
+                                      background: 'rgba(184, 115, 70, 0.04)',
+                                      borderLeft: '2px solid var(--ab-copper)',
+                                      borderRadius: 2,
+                                    }}>
+                                      <span style={{
+                                        ...mono, fontSize: 9, color: 'var(--ab-copper)',
+                                        letterSpacing: '0.1em', marginRight: 6,
+                                      }}>
+                                        ◇ 评审意见
+                                      </span>
+                                      {stripThinking(sub.debate)}
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* 2026-07-19: 段落扩展历史折叠面板 — 展示每段的扩展前后 + debate 思考过程 */}
+                      {s.paragraphs && s.paragraphs.length > 0 && (
+                        <div style={{ marginTop: 16 }}>
+                          <Button size="small"
+                            onClick={() => toggleProcess(i, 'paragraphs')}
+                            style={{ ...mono, fontSize: 10,
+                              color: exp.paragraphs ? '#16a34a' : 'var(--ab-text-3)',
+                              borderColor: exp.paragraphs ? '#16a34a' : 'var(--ab-line)',
+                              background: exp.paragraphs ? 'rgba(22, 163, 74, 0.05)' : 'transparent' }}>
+                            {exp.paragraphs ? '▼' : '▶'} 段落扩展历史（{s.paragraphs.length}）
+                          </Button>
+                          {exp.paragraphs && (
+                            <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                              {s.paragraphs.map((pm, j) => (
+                                <div key={j} style={{
+                                  padding: '10px 14px',
+                                  background: 'rgba(22, 163, 74, 0.03)',
+                                  border: '1px solid rgba(22, 163, 74, 0.15)',
+                                  borderRadius: 4,
+                                }}>
+                                  <div style={{
+                                    display: 'flex', alignItems: 'center', gap: 8,
+                                    marginBottom: 6, flexWrap: 'wrap',
+                                  }}>
+                                    <span style={{
+                                      ...mono, fontSize: 9, color: '#16a34a',
+                                      padding: '1px 5px',
+                                      background: 'rgba(22, 163, 74, 0.1)', borderRadius: 2,
+                                    }}>
+                                      段落 {(typeof pm.para_idx === 'number' ? pm.para_idx : 0) + 1}
+                                    </span>
+                                    {pm.expanded_at && (
+                                      <span style={{
+                                        ...mono, fontSize: 9, color: 'var(--ab-text-4)',
+                                      }}>
+                                        {pm.expanded_at.slice(0, 19).replace('T', ' ')}
+                                      </span>
+                                    )}
+                                    {pm.expand_hint && (
+                                      <span style={{
+                                        ...mono, fontSize: 9, color: 'var(--ab-copper)',
+                                        padding: '1px 5px',
+                                        background: 'rgba(184, 115, 70, 0.08)', borderRadius: 2,
+                                      }}>
+                                        hint: {pm.expand_hint.length > 40 ? pm.expand_hint.slice(0, 40) + '…' : pm.expand_hint}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {/* 扩展后段落正文 */}
+                                  {pm.refined && (
+                                    <div style={{
+                                      ...body, fontSize: 13, color: 'var(--ab-text)', lineHeight: 1.8,
+                                      whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                                      marginBottom: 6,
+                                    }}>
+                                      {stripThinking(pm.refined)}
+                                    </div>
+                                  )}
+                                  {/* 段落级 debate 思考过程 */}
+                                  {pm.debate && (
+                                    <div style={{
+                                      ...body, fontSize: 11, color: 'var(--ab-text-3)', lineHeight: 1.6,
+                                      whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                                      padding: '6px 10px',
+                                      background: 'rgba(22, 163, 74, 0.04)',
+                                      borderLeft: '2px solid #16a34a',
+                                      borderRadius: 2,
+                                    }}>
+                                      <span style={{
+                                        ...mono, fontSize: 9, color: '#16a34a',
+                                        letterSpacing: '0.1em', marginRight: 6,
+                                      }}>
+                                        ◇ 扩展反思
+                                      </span>
+                                      {stripThinking(pm.debate)}
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
                             </div>
                           )}
                         </div>
