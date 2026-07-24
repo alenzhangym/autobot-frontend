@@ -618,7 +618,7 @@ export default function ReconciliationManagement({ user, companies = [] }) {
             <Button key="preview" loading={exporting} onClick={handleExport}>窗口中预览</Button>,
           ]}
           width={520}
-          destroyOnClose
+          destroyOnHidden
         >
           <Form form={exportForm} layout="vertical" preserve={false}>
             <Form.Item
@@ -672,7 +672,7 @@ export default function ReconciliationManagement({ user, companies = [] }) {
             <Button key="close" onClick={() => setExportResult(null)}>关闭</Button>
           ]}
           width={1100}
-          destroyOnClose
+          destroyOnHidden
         >
           {exportResult && (
             <ExportResultView data={exportResult} />

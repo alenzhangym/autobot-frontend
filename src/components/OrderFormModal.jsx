@@ -197,7 +197,7 @@ export function OrderFormModal({ open, onClose, onSubmit, formSpec, hintText, co
       cancelText="取消"
       confirmLoading={submitting}
       onOk={handleOk}
-      destroyOnClose
+      destroyOnHidden
       styles={{
         body: { background: '#1a1a1a', padding: '20px 24px' },
         header: { background: '#1a1a1a', borderBottom: '1px solid #2a2a2a', padding: '16px 24px' },

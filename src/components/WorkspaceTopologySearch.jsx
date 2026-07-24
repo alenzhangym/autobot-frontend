@@ -55,7 +55,7 @@ export default function WorkspaceTopologySearch({ open, onClose, workspaceId, on
       onCancel={onClose}
       footer={<Button onClick={onClose}>关闭</Button>}
       width={620}
-      destroyOnClose
+      destroyOnHidden
     >
       <Input
         allowClear

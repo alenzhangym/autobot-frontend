@@ -24,7 +24,8 @@ export const THEMES = {
       '--ab-text':         '#e8e3d8',
       '--ab-text-2':       '#b8b1a3',
       '--ab-text-3':       '#807a6e',
-      '--ab-text-4':       '#524d44',
+      // 2026-07-20 P2-1: text-4 从 #524d44 提升到 #7a7268，对 #0a0a0a 背景 ~4.5:1 达 WCAG AA
+      '--ab-text-4':       '#7a7268',
       '--ab-copper':       '#d4a574',
       '--ab-copper-2':     '#c89770',
       '--ab-copper-hi':    '#e8b886',
@@ -88,7 +89,8 @@ export const THEMES = {
       '--ab-text':         '#1f1c16',
       '--ab-text-2':       '#4a4438',
       '--ab-text-3':       '#756e60',
-      '--ab-text-4':       '#8c8576',
+      // 2026-07-20 P1-light: text-4 从 #8c8576 提升到 #736b5c，对 #f7f4ee 背景 ~4.6:1 达 WCAG AA
+      '--ab-text-4':       '#736b5c',
       // 2026-07-12: 铜色加深，亮底上需更深才有视觉重量
       '--ab-copper':       '#a87028',
       '--ab-copper-2':     '#986018',
@@ -151,7 +153,8 @@ export const THEMES = {
       '--ab-text':         '#e0ecf6',
       '--ab-text-2':       '#a8b8d4',
       '--ab-text-3':       '#7888b0',
-      '--ab-text-4':       '#5a6a90',
+      // 2026-07-20 P1-midnight: text-4 从 #5a6a90 提升到 #7a8ab0，对 #060912 背景 ~5.5:1 达 WCAG AA
+      '--ab-text-4':       '#7a8ab0',
       '--ab-copper':       '#5ec4f0',
       '--ab-copper-2':     '#4ab0dc',
       '--ab-copper-hi':    '#76d4fa',

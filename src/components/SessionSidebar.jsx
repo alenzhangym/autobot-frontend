@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Button, Menu, Avatar, Tooltip, Dropdown, Space, Tag } from 'antd';
-import { PlusOutlined, FileTextOutlined, DatabaseOutlined, LogoutOutlined, SettingOutlined, TeamOutlined, DeleteOutlined, PlayCircleOutlined, DownOutlined, ShopOutlined, FileSearchOutlined, CodeOutlined, MessageOutlined, SendOutlined, DashboardOutlined, InboxOutlined, ToolOutlined, UsergroupAddOutlined, CrownOutlined, LinkOutlined, UploadOutlined, SnippetsOutlined, ShoppingCartOutlined, AuditOutlined, SearchOutlined, ContainerOutlined, RocketOutlined, ApiOutlined, ReadOutlined } from '@ant-design/icons';
+import { PlusOutlined, FileTextOutlined, DatabaseOutlined, LogoutOutlined, SettingOutlined, TeamOutlined, DeleteOutlined, PlayCircleOutlined, DownOutlined, ShopOutlined, FileSearchOutlined, CodeOutlined, MessageOutlined, SendOutlined, DashboardOutlined, InboxOutlined, ToolOutlined, UsergroupAddOutlined, CrownOutlined, LinkOutlined, UploadOutlined, SnippetsOutlined, ShoppingCartOutlined, AuditOutlined, SearchOutlined, ContainerOutlined, RocketOutlined, ApiOutlined, ReadOutlined, EditOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useUserStore } from '../store/useUserStore';
 import api, { getLocalAgentBaseUrl } from '../auth';
@@ -48,6 +48,8 @@ export default function SessionSidebar({
   const hasCrmChannel = CHANNELS.some(ch => ch.key === 'cross');
   const hasDatabaseChannel = CHANNELS.some(ch => ch.key === 'database_analysis');
   const hasAcademicChannel = CHANNELS.some(ch => ch.key === 'academic');
+  // 2026-07-20: novel channel 网关 — 公司勾选 novel channel 后该用户可见"小说创作"入口
+  const hasNovelChannel = CHANNELS.some(ch => ch.key === 'novel');
 
   // Probe monitor availability once on mount; cheap, no polling
   const [monitorAvailable, setMonitorAvailable] = useState(false)
@@ -209,6 +211,15 @@ export default function SessionSidebar({
             ...(isSuperAdminFn(user) ? [
               { key: 'academic_stats', icon: <DashboardOutlined />, label: 'ReAct 闭环统计' },
             ] : []),
+          ] : []),
+          // 2026-07-22: LLM 模型管理页面 (仅超管可见) — 列出 omlx 模型 + 运行时热切换主模型
+          ...(isSuperAdminFn(user) ? [
+            { key: 'llm_management', icon: <ApiOutlined />, label: 'LLM 模型管理' },
+          ] : []),
+          // 2026-07-20: 小说创作入口 — 受 hasNovelChannel 网关控制
+          // 公司管理员在"公司管理"页勾选 novel channel 后, 该公司所有用户可见此入口
+          ...(hasNovelChannel ? [
+            { key: 'novel', icon: <EditOutlined />, label: '小说创作' },
           ] : []),
           ...(((isSuperAdminFn(user) || isCompanyAdminFn(user)) && hasErpChannel) ? [
             { key: 'dashboard', icon: <DashboardOutlined />, label: t('erp.dashboard') },

@@ -26,6 +26,7 @@ import {
   ShopOutlined,
   SearchOutlined,
   ReadOutlined,
+  EditOutlined,
 } from '@ant-design/icons';
 
 // 任务类型 key（与后端 TaskType 枚举值完全一致）
@@ -105,6 +106,22 @@ export const CHANNELS = [
     subType: null,
     isPageOnly: true, // 不出现在"新建会话"下拉, 仅作为菜单 tab
     capabilities: ['论文检索', '深度研究', '报告生成'],
+    agentNames: [],
+  },
+  // 2026-07-20: 小说创作 channel — 复用学术研究后端接口(report_type=novel)
+  // isPageOnly=true: 仅作为菜单 tab, 不出现在"新建会话"下拉
+  // isBaseDefault 未设置: 公司需在管理页显式勾选"novel"channel 才能授权用户访问
+  // 授权后用户在侧栏看到"小说创作"入口, 进入 NovelPage 三步生成流程
+  {
+    key: 'novel',
+    label: '小说创作',
+    desc: '题材化小说分层生成',
+    icon: '✒️',
+    antIcon: <EditOutlined />,
+    taskType: null,
+    subType: null,
+    isPageOnly: true,
+    capabilities: ['题材选择', '分层大纲', '卷章生成', '断点续传'],
     agentNames: [],
   },
 ];

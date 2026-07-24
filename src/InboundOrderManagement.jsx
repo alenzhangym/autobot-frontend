@@ -434,7 +434,7 @@ export default function InboundOrderManagement({ user, companies = [] }) {
 
     {/* ── Create Modal with items table ── */}
     <Modal key={modalKey} title="新建入库单" open={showCreateModal} onOk={handleCreate} onCancel={() => { setShowCreateModal(false); setItemFilter('') }}
-      okText="保存" width={1000} destroyOnClose>
+      okText="保存" width={1000} destroyOnHidden>
       <Form form={createForm} layout="vertical">
         <Row gutter={16}>
           <Col span={24}><Form.Item name="supplierName" label="供应商" rules={[{ required: true, message: '请选择供应商' }]}>
@@ -550,7 +550,7 @@ export default function InboundOrderManagement({ user, companies = [] }) {
 
     {/* ── Edit Modal ── */}
     <Modal title="编辑入库单草稿" open={showEditModal} onOk={handleEditSave} onCancel={() => { setShowEditModal(false); setEditItems([]); setEditingOrder(null); setEditingReconciled(false) }}
-      okText="保存" width={1000} destroyOnClose>
+      okText="保存" width={1000} destroyOnHidden>
       <Form form={editForm} layout="vertical">
         <Row gutter={16}>
           <Col span={12}><Form.Item name="supplierName" label="供应商" rules={[{ required: true }]}>

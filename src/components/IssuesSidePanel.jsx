@@ -655,7 +655,7 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
         footer={null}
         width={760}
         title={null}
-        destroyOnClose
+        destroyOnHidden
       >
         {summaryModal && (
           <FixSummaryCard
@@ -686,7 +686,7 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
         onCancel={() => setStateMachineModal(null)}
         footer={null}
         width={680}
-        destroyOnClose
+        destroyOnHidden
         title={
           stateMachineModal && (
             <Space>
@@ -723,7 +723,7 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
         }}
         footer={null}
         width={720}
-        destroyOnClose
+        destroyOnHidden
         title={
           <Space>
             <BranchesOutlined />

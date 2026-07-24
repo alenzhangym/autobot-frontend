@@ -122,7 +122,7 @@ export default function SupplierManagement({ user, companies = [] }) {
         onOk={handleSave}
         onCancel={() => { setShowModal(false); setEditing(null); form.resetFields() }}
         okText="保存"
-        destroyOnClose
+        destroyOnHidden
       >
         <Form form={form} layout="vertical">
           <Form.Item name="name" label="供应商名称" rules={[{ required: true, message: '请输入供应商名称' }]}>

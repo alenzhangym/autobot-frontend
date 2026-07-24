@@ -354,7 +354,7 @@ export default function SalesOrderManagement({ user, companies = [] }) {
         <Table dataSource={orders} columns={columns} rowKey="sales_id" loading={loading}
           expandable={{ expandedRowRender, onExpand: (expanded, record) => { if (expanded) fetchExpandedItems(record) } }}
           pagination={{ current: page, pageSize, total, showSizeChanger: true, onChange: (p, ps) => { setPage(p); setPageSize(ps) } }} scroll={{ x: 1100 }} />
-        <Modal title={editing ? '编辑销售单' : '录入销售单'} open={showModal} onOk={handleSave} width={950} okText="保存" destroyOnClose
+        <Modal title={editing ? '编辑销售单' : '录入销售单'} open={showModal} onOk={handleSave} width={950} okText="保存" destroyOnHidden
           onCancel={() => { setShowModal(false); setEditing(null); form.resetFields(); setItems([emptyItem()]); setSelectedCustomerId(null); setCustomerPartMappings([]) }}>
           <Form form={form} layout="vertical">
             <Space wrap>

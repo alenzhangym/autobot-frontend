@@ -251,7 +251,7 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
         <Table dataSource={orders} columns={columns} rowKey="purchase_id" loading={loading}
           expandable={{ expandedRowRender, onExpand: (expanded, record) => { if (expanded) fetchExpandedItems(record) } }}
           pagination={{ current: page, pageSize, total, showSizeChanger: true, onChange: (p, ps) => { setPage(p); setPageSize(ps) } }} scroll={{ x: 1100 }} />
-        <Modal title={editing ? '编辑采购单' : '录入采购单'} open={showModal} onOk={handleSave} width={900} okText="保存" destroyOnClose
+        <Modal title={editing ? '编辑采购单' : '录入采购单'} open={showModal} onOk={handleSave} width={900} okText="保存" destroyOnHidden
           onCancel={() => { setShowModal(false); setEditing(null); form.resetFields(); setItems([emptyItem()]) }}>
           <Form form={form} layout="vertical">
             <Space wrap>

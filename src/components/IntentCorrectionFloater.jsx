@@ -120,7 +120,7 @@ export default function IntentCorrectionFloater({ visible, onClose, onResult, qu
       onCancel={onClose}
       footer={null}
       width={520}
-      destroyOnClose
+      destroyOnHidden
     >
       <Alert
         type="info"

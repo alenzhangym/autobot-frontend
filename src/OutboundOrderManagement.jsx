@@ -790,7 +790,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
           onCancel={() => { setShowCreateModal(false); setItems([emptyItem()]); setSelectedCustId(null); setSalesOrders([]); setItemFilter('') }}
           okText="创建"
           width={900}
-          destroyOnClose
+          destroyOnHidden
         >
           <Form form={createForm} layout="vertical">
             <Row gutter={16}>
@@ -911,7 +911,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
           onCancel={() => { setShowEditModal(false); setEditingOrder(null); setEditItems([]); setEditingReconciled(false) }}
           okText="保存"
           width={900}
-          destroyOnClose
+          destroyOnHidden
         >
           {editingOrder && (
             <>
@@ -982,7 +982,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
           onCancel={() => setSubModal({ visible: false, target: null, model: '', subs: [], manual: [], sameType: [], partType: '', loading: false, query: '', freeQuery: '', freeResults: [], freeLoading: false })}
           footer={null}
           width={760}
-          destroyOnClose
+          destroyOnHidden
         >
           <div style={{ marginBottom: 10, padding: '8px 12px', background: '#1a1a1a', borderRadius: 4, color: '#888', fontSize: 12, display: 'flex', justifyContent: 'space-between' }}>
             <span>原型号 <span style={{ color: '#69b1ff' }}>{subModal.model}</span> 库存: <span style={{ color: '#52c41a' }}>{subModal.target?.currentStock ?? '-'}</span>　需求: <span style={{ color: '#faad14' }}>{subModal.target?.currentQty ?? 0}</span></span>

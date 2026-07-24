@@ -74,7 +74,7 @@ export function InteractivePanel({ sessionId, style }) {
             回答
           </Button>,
         ]}
-        destroyOnClose
+        destroyOnHidden
       >
         {currentQ ? (
           <div>

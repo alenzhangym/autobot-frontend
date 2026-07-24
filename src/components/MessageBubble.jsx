@@ -474,7 +474,7 @@ function MessageBubble({ msg, onCopy, onRegenerate, onExpand, onDelete, sessionI
                   <strong>{e.field}:</strong> {e.error}
                 </div>
               ))}
-              overlayStyle={{ maxWidth: 360 }}
+              styles={{ root: { maxWidth: 360 } }}
             >
               <Tag color="warning" style={{ fontSize: 10, margin: 0, cursor: 'help' }}>
                 <ExclamationCircleOutlined style={{ marginRight: 2 }} />

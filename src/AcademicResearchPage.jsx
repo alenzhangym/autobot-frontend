@@ -21,6 +21,7 @@ import {
 import { motion, AnimatePresence } from 'framer-motion'
 import api from './auth'
 import { stripThinking } from './utils/helpers.jsx'
+import { useUIStore } from './store/useUIStore'
 
 const { TextArea } = Input
 
@@ -75,6 +76,19 @@ const stagger = {
 }
 
 export default function AcademicResearchPage({ user }) {
+  // 2026-07-20 P1-1: 进入学术研究页时自动折叠全局 Sider，让研究详情区获得更大宽度
+  // 符合用户约定"研究详情应右对齐占更多屏幕宽度，减少两侧空白"
+  // 离开时恢复进入前的原值，不破坏用户原有 Sider 偏好
+  const setSiderCollapsed = useUIStore(s => s.setSiderCollapsed)
+  useEffect(() => {
+    const prevCollapsed = useUIStore.getState().siderCollapsed
+    if (!prevCollapsed) setSiderCollapsed(true)
+    return () => {
+      // 仅当进入前是展开状态时恢复展开；若用户原本就是折叠则不改变
+      if (!prevCollapsed) setSiderCollapsed(false)
+    }
+  }, [setSiderCollapsed])
+
   const [activeTab, setActiveTab] = useState(null)          // null = 未选择，强制用户选
   const [topic, setTopic] = useState('')
   const [researchId, setResearchId] = useState(null)
@@ -103,6 +117,18 @@ export default function AcademicResearchPage({ user }) {
   const [genStatus, setGenStatus] = useState('idle')
   const [progress, setProgress] = useState(0)
   const [progressMessage, setProgressMessage] = useState('')
+  // 2026-07-20 小说生成功能 C2/C5: 自动续做批次号（后端 resume_batch 字段）
+  // 0 = 首次生成或未进入 auto-resume 循环；N = 已自动续做第 N 批
+  const [resumeBatch, setResumeBatch] = useState(0)
+  // 2026-07-20 小说生成功能 C4: 卡住检测标志
+  // true = progress 已 10 分钟无变化，提示用户"生成可能卡住"
+  const [staleWarning, setStaleWarning] = useState(false)
+  // 2026-07-20 小说生成功能 E3: LLM 心跳时间戳（后端 last_llm_activity_at 字段）
+  // 用于精准卡住检测 — LLM 调用本身卡住时心跳不更新，比 progress 不变更精准
+  const [lastLlmActivityAt, setLastLlmActivityAt] = useState(null)
+  // 2026-07-20 小说生成功能 E4: 生成元数据（后端 generation_meta 字段）
+  // done 状态时展示"本文自动续做 N 次完成，总耗时 X 分钟"
+  const [generationMeta, setGenerationMeta] = useState(null)
   const [loadingHistory, setLoadingHistory] = useState(false)
   const [selectedResultIdx, setSelectedResultIdx] = useState(0)
   // 2026-07-17: 当前选中的历史记录 id（左侧列表点击切换）
@@ -255,11 +281,15 @@ export default function AcademicResearchPage({ user }) {
   }
 
   // ── 历史列表 ────────────────────────────────────────────────
+  // 2026-07-22: 过滤掉 novel 类型 — 小说历史只在 NovelPage 展示, 不混入学术研究列表.
   const fetchHistory = useCallback(async () => {
     setLoadingHistory(true)
     try {
       const res = await api.get('/academic/research')
-      if (res.data) setHistory(res.data)
+      if (res.data) {
+        const academicOnly = res.data.filter(r => r.reportType !== 'novel')
+        setHistory(academicOnly)
+      }
     } catch (e) { /* 静默 */ }
     finally { setLoadingHistory(false) }
   }, [])
@@ -392,6 +422,8 @@ export default function AcademicResearchPage({ user }) {
     setProgress(0); setProgressMessage('正在启动生成任务…')
     // 2026-07-17: 清空旧的大纲/章节元数据，让新一轮生成重新跑全流程
     setOutlineText(''); setOutlineDebate(''); setOutlineRevised(false); setSections([])
+    // 2026-07-20 C4/C5/E3/E4: 清空卡住提示 + 续做批次号 + LLM 心跳 + 元数据（新一轮生成从头开始）
+    setStaleWarning(false); setResumeBatch(0); setLastLlmActivityAt(null); setGenerationMeta(null)
     try {
       await api.post(`/academic/research/${researchId}/generate`, {
         user_prompt: userPrompt,
@@ -413,10 +445,29 @@ export default function AcademicResearchPage({ user }) {
   //
   // 宽容期机制：前 2 次轮询（约 10s 内）即使读到 status='draft' 也不立即判失败，
   // 避免后端线程启动与 DB 状态更新的微小时间差导致误判。
+  //
+  // 2026-07-20 C4: 卡住检测 — progress 连续 10 分钟无变化时设置 staleWarning=true，
+  // 进度面板展示"生成可能卡住"提示，建议用户检查网络或取消重试。
+  // 2026-07-20 C5: 同步 resumeBatch 字段，进度面板展示"已自动续做第 N 批"。
+  // 2026-07-20 D2: 根据 reportType 动态选择卡住阈值 — 小说场景单章节生成可能 5-15 分钟，
+  //   10 分钟阈值会误报；小说场景调到 20 分钟，非小说场景保持 10 分钟。
+  // 2026-07-20 E3: 优先用 lastLlmActivityAt 检测卡住（LLM 调用本身卡住时心跳不更新，
+  //   比 progress 不变更精准 — progress 不变可能是章节间持久化/后处理，不一定是卡住）。
+  //   策略：若 lastLlmActivityAt 距当前 > 阈值 → staleWarning=true；
+  //   否则回退到 progress 不变检测（覆盖 LLM 心跳未触发的场景，如大纲生成/段落扩展）。
   useEffect(() => {
     if (genStatus !== 'generating' || !researchId) return
     let cancelled = false
     let pollCount = 0  // 宽容期计数
+    // C4: 卡住检测闭包状态（useEffect 重新执行时重置）
+    let lastProgressValue = -1
+    let lastProgressChangedAt = Date.now()
+    let staleWarned = false  // 避免重复 message.warning 弹窗
+    // D2: 根据 activeTab（reportType）动态选择卡住阈值
+    //   novel: 20 分钟（单章节生成 5-15 分钟，10 分钟会误报）
+    //   其他: 10 分钟（学术报告单章节 1-3 分钟，10 分钟足够检测卡住）
+    const isNovelReport = activeTab === 'novel'
+    const STALE_THRESHOLD_MS = (isNovelReport ? 20 : 10) * 60 * 1000
     const poll = async () => {
       pollCount++
       try {
@@ -424,8 +475,56 @@ export default function AcademicResearchPage({ user }) {
         if (cancelled) return
         const r = res.data
         if (!r) return
-        setProgress(r.progress || 0)
+        const currentProgress = r.progress || 0
+        setProgress(currentProgress)
         setProgressMessage(r.progressMessage || '')
+        // C5: 同步自动续做批次号
+        setResumeBatch(r.resumeBatch || 0)
+        // E3: 同步 LLM 心跳时间戳 + 生成元数据
+        setLastLlmActivityAt(r.lastLlmActivityAt || null)
+        setGenerationMeta(r.generationMeta || null)
+
+        // E3: 优先用 LLM 心跳检测卡住 — LLM 心跳距当前 > 阈值 → 卡住
+        // 回退到 progress 检测（覆盖大纲生成/段落扩展等无心跳场景）
+        let isStale = false
+        if (r.lastLlmActivityAt) {
+          // 后端返回的是 ISO 格式时间戳，前端 new Date() 解析
+          const llmActiveMs = new Date(r.lastLlmActivityAt).getTime()
+          const elapsedSinceLlm = Date.now() - llmActiveMs
+          if (elapsedSinceLlm > STALE_THRESHOLD_MS) {
+            isStale = true
+          }
+        }
+        // 回退检测：progress 不变超过阈值（覆盖无 LLM 心跳的场景）
+        if (!isStale) {
+          if (currentProgress !== lastProgressValue) {
+            lastProgressValue = currentProgress
+            lastProgressChangedAt = Date.now()
+          } else {
+            const elapsed = Date.now() - lastProgressChangedAt
+            if (elapsed > STALE_THRESHOLD_MS) {
+              isStale = true
+            }
+          }
+        } else {
+          // LLM 心跳检测到卡住时，仍更新 progress ref 避免 heartbeat 恢复后误报
+          if (currentProgress !== lastProgressValue) {
+            lastProgressValue = currentProgress
+            lastProgressChangedAt = Date.now()
+          }
+        }
+
+        if (isStale && !staleWarned) {
+          staleWarned = true
+          setStaleWarning(true)
+          const thresholdMin = STALE_THRESHOLD_MS / 60000
+          message.warning(`生成可能卡住：LLM 已 ${thresholdMin} 分钟无活动，建议检查网络或取消重试`)
+        } else if (!isStale && staleWarned) {
+          // 恢复：LLM 心跳更新或 progress 变化 → 清除卡住提示
+          staleWarned = false
+          setStaleWarning(false)
+        }
+
         // 2026-07-17: 同步大纲/章节元数据（生成过程中可实时看到章节完成情况）
         if (r.outlineText) setOutlineText(r.outlineText)
         if (r.outlineDebate) setOutlineDebate(r.outlineDebate)
@@ -440,10 +539,14 @@ export default function AcademicResearchPage({ user }) {
         if (r.status === 'done') {
           setReport(r.generatedReport || '')
           setGenStatus('done'); setGenerating(false)
+          // C4/C5/E3/E4: 生成完成时清理卡住提示 + resumeBatch（后端已清零，前端同步）
+          // generationMeta 保留（done 状态展示用）
+          setStaleWarning(false); setResumeBatch(0); setLastLlmActivityAt(null)
           message.success('报告生成完成')
           fetchHistory()  // 刷新左侧列表状态
         } else if (r.status === 'cancelled') {
           setGenStatus('cancelled'); setGenerating(false)
+          setStaleWarning(false); setResumeBatch(0); setLastLlmActivityAt(null)
           message.warning('生成已取消')
           fetchHistory()
         } else if (r.status === 'draft') {
@@ -454,6 +557,7 @@ export default function AcademicResearchPage({ user }) {
             return
           }
           setGenStatus('failed'); setGenerating(false)
+          setStaleWarning(false); setResumeBatch(0); setLastLlmActivityAt(null)
           message.error('生成失败: ' + (r.progressMessage || '未知错误'))
           fetchHistory()
         }
@@ -469,7 +573,7 @@ export default function AcademicResearchPage({ user }) {
     // 进度更新频率取决于 LLM 调用完成速度（每章/子小节约 30-90s），10s 足以反映进度变化。
     const timer = setInterval(poll, 10000)
     return () => { cancelled = true; clearInterval(timer) }
-  }, [genStatus, researchId])
+  }, [genStatus, researchId, activeTab])
 
   // 2026-07-17: 取消生成
   const handleCancel = async () => {
@@ -580,6 +684,13 @@ export default function AcademicResearchPage({ user }) {
         // 2026-07-17: 同步生成状态。若后端仍在 generating，前端轮询会接管进度更新
         setProgress(r.progress || 0)
         setProgressMessage(r.progressMessage || '')
+        // 2026-07-20 C5: 同步 resumeBatch（切换历史记录时恢复"已自动续做第 N 批"展示）
+        setResumeBatch(r.resumeBatch || 0)
+        // 2026-07-20 E3/E4: 同步 LLM 心跳 + 生成元数据
+        setLastLlmActivityAt(r.lastLlmActivityAt || null)
+        setGenerationMeta(r.generationMeta || null)
+        // 2026-07-20 C4: 切换历史记录时重置卡住提示（由轮询逻辑重新检测）
+        setStaleWarning(false)
         if (r.status === 'generating') {
           setGenerating(true); setGenStatus('generating')
         } else if (r.status === 'done') {
@@ -744,6 +855,13 @@ export default function AcademicResearchPage({ user }) {
         .arp-search-item:hover .arp-search-delete { opacity: 1 !important; }
         .arp-sidebar-item:hover .arp-history-delete { opacity: 1 !important; }
         @keyframes arp-spin-pulse { 0%,100%{opacity:.4} 50%{opacity:1} }
+        /* 2026-07-20 P3-2: 响应式断点 — 窄屏下 4 卡片网格降为 2 列，避免描述文案被挤压 */
+        @media (max-width: 1280px) {
+          .arp-rtype-grid { grid-template-columns: repeat(2, 1fr) !important; }
+        }
+        @media (max-width: 720px) {
+          .arp-rtype-grid { grid-template-columns: 1fr !important; }
+        }
       `}</style>
 
       {/* ═══════════════════════════════════════════════════════
@@ -938,7 +1056,7 @@ export default function AcademicResearchPage({ user }) {
               ═══════════════════════════════════════════════════════ */}
           <StepShell index="01" title="选择研究类型" subtitle="必须选择一种报告范式，决定后续生成方向"
             done={stepDone.s1} variants={fadeUp}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14 }}>
+            <div className="arp-rtype-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14 }}>
               {REPORT_TYPES.map(t => {
                 const selected = activeTab === t.value
                 return (
@@ -1260,7 +1378,11 @@ export default function AcademicResearchPage({ user }) {
             {searchResults.length > 0 && (
               <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
                 style={{
-                  display: 'flex', height: 420,
+                  display: 'flex',
+                  // 2026-07-20 P1-2: 高度从固定 420px 改为自适应 — 小屏不拥挤，大屏充分利用
+                  // minHeight 保底避免内容过少时塌陷，maxHeight 避免占满整屏遮挡后续步骤
+                  minHeight: 420,
+                  maxHeight: 'calc(100vh - 280px)',
                   background: 'var(--ab-line)', borderRadius: 8, overflow: 'hidden',
                   border: '1px solid var(--ab-line-bold)',
                   boxShadow: 'var(--ab-shadow-2)',
@@ -1676,8 +1798,35 @@ export default function AcademicResearchPage({ user }) {
                         异步生成 · 整合 {searchResults.length} 条资料 + 知识库 · 无超时限制
                       </div>
                     </div>
-                    <div style={{ ...mono, color: 'var(--ab-copper)', fontSize: 22, fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>
-                      {progress}%
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                      {/* 2026-07-20 P3-1: resumeBatch 徽标从副标题行移到百分比左侧独立显示
+                          避免副标题行高随批次切换抖动；保持 AnimatePresence 数字淡入淡出 */}
+                      <AnimatePresence mode="wait">
+                        {resumeBatch > 0 && (
+                          <motion.span
+                            key={resumeBatch}
+                            initial={{ opacity: 0, scale: 0.85 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            exit={{ opacity: 0, scale: 0.85 }}
+                            transition={{ duration: 0.2 }}
+                            title={`自动续做第 ${resumeBatch} 批次 · 当前进度 ${progress}% · 长篇小说分批生成避免单次超时`}
+                            style={{
+                              ...mono, fontSize: 10, fontWeight: 500,
+                              color: 'var(--ab-copper-2)',
+                              padding: '2px 8px', borderRadius: 3,
+                              background: 'var(--ab-copper-glow)',
+                              border: '1px solid var(--ab-copper)',
+                              cursor: 'help', fontVariantNumeric: 'tabular-nums',
+                              letterSpacing: '0.05em', whiteSpace: 'nowrap',
+                            }}
+                          >
+                            续做第 {resumeBatch} 批
+                          </motion.span>
+                        )}
+                      </AnimatePresence>
+                      <div style={{ ...mono, color: 'var(--ab-copper)', fontSize: 22, fontWeight: 500, fontVariantNumeric: 'tabular-nums' }}>
+                        {progress}%
+                      </div>
                     </div>
                   </div>
                   {/* 进度条 */}
@@ -1693,12 +1842,70 @@ export default function AcademicResearchPage({ user }) {
                       }}
                     />
                   </div>
+                  {/* 2026-07-20 C4: 卡住检测提示（progress 长时间无变化时显示） */}
+                  {/* 2026-07-20 D2: 阈值根据 reportType 动态（小说 20 分钟 / 其他 10 分钟） */}
+                  {staleWarning && (
+                    <div style={{
+                      marginTop: 10, padding: '8px 12px',
+                      background: 'rgba(220, 120, 50, 0.08)', border: '1px solid rgba(220, 120, 50, 0.3)',
+                      borderRadius: 4, display: 'flex', alignItems: 'center', gap: 8,
+                    }}>
+                      <span style={{ color: 'var(--ab-copper)', fontSize: 13, fontWeight: 500 }}>⚠ 生成可能卡住</span>
+                      <span style={{ ...mono, color: 'var(--ab-text-3)', fontSize: 10 }}>
+                        进度已 {activeTab === 'novel' ? '20' : '10'} 分钟无变化，建议检查网络或点击"取消生成"后重试
+                      </span>
+                    </div>
+                  )}
                   {/* 取消提示 */}
                   <div style={{ ...mono, color: 'var(--ab-text-4)', fontSize: 10, marginTop: 12, textAlign: 'center' }}>
                     支持长文档多段落生成 · 可随时取消（当前 LLM 调用完成后生效）
                   </div>
                 </motion.div>
               )}
+            </AnimatePresence>
+
+            {/* 2026-07-20 E4+F3: done 状态生成元数据展示（自动续做次数 + 总耗时 + 章节数 + 配置快照） */}
+            <AnimatePresence>
+              {genStatus === 'done' && !generating && generationMeta && (() => {
+                try {
+                  const meta = typeof generationMeta === 'string' ? JSON.parse(generationMeta) : generationMeta
+                  if (meta && (meta.totalResumeCount > 0 || meta.totalChapters > 0)) {
+                    const isNovel = meta.reportType === 'novel'
+                    const resumeText = meta.totalResumeCount > 0
+                      ? `自动续做 ${meta.totalResumeCount} 次`
+                      : '一次性生成'
+                    const chapterText = meta.totalChapters > 0
+                      ? ` · ${meta.totalChapters} 章`
+                      : ''
+                    const lengthText = meta.reportLength > 0
+                      ? ` · ${(meta.reportLength / 10000).toFixed(1)} 万字`
+                      : ''
+                    return (
+                      <motion.div
+                        initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+                        title={meta.config ? `配置快照：单次最多 ${meta.config.chaptersPerSession} 章 / 最大重试 ${meta.config.maxResumeRetry} / 分层生成 ${meta.config.hierarchicalEnabled ? '开启' : '关闭'}${meta.config.hierarchicalEnabled ? `（阈值 ${meta.config.hierarchicalThreshold} 章）` : ''}` : ''}
+                        style={{
+                          marginTop: 20, padding: '14px 18px',
+                          background: 'var(--ab-surface-2)', border: '1px solid var(--ab-line)',
+                          borderRadius: 6, display: 'flex', alignItems: 'center', gap: 10, cursor: 'help',
+                        }}>
+                        <span style={{ color: 'var(--ab-copper)', fontSize: 14 }}>✓</span>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ ...serif, color: 'var(--ab-text-2)', fontSize: 13, fontWeight: 500 }}>
+                            {isNovel ? '小说' : '报告'}生成完成 · {resumeText} · 总耗时 {meta.totalDurationMin || 0} 分钟
+                          </div>
+                          <div style={{ ...mono, color: 'var(--ab-text-4)', fontSize: 10, marginTop: 2 }}>
+                            {chapterText}{lengthText}
+                            {meta.totalResumeCount > 0 && ` · 分批生成避免单次超时`}
+                            {meta.config && ` · 配置: ${meta.config.chaptersPerSession} 章/批`}
+                          </div>
+                        </div>
+                      </motion.div>
+                    )
+                  }
+                } catch (e) { /* JSON 解析失败忽略 */ }
+                return null
+              })()}
             </AnimatePresence>
 
             {/* 取消状态提示 */}
@@ -1758,11 +1965,12 @@ export default function AcademicResearchPage({ user }) {
                     borderRadius: 10, overflow: 'hidden',
                     boxShadow: 'var(--ab-shadow-2)',
                   }}>
-                    {/* 报告页眉 */}
+                    {/* 报告页眉 — 2026-07-20 P2-2: sticky 让长报告滚动后仍可操作复制/导出 */}
                     <div style={{
                       display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                       padding: '16px 28px', borderBottom: '1px solid var(--ab-line)',
                       background: 'var(--ab-bg-2)',
+                      position: 'sticky', top: 0, zIndex: 10,
                     }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                         <span style={{ fontSize: 16, color: 'var(--ab-copper)' }}><FileTextOutlined /></span>
@@ -2544,8 +2752,8 @@ function ReportBody({ report, outlineText, outlineDebate, outlineRevised, sectio
                                   title="扩展补充本段落"
                                   style={{
                                     position: 'absolute',
-                                    top: -4,
-                                    right: 0,
+                                    top: 2,
+                                    right: 2,
                                     width: 22, height: 22,
                                     border: '1px solid var(--ab-line)',
                                     borderRadius: 4,

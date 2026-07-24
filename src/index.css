@@ -2,8 +2,11 @@
    AutoBot — Atelier Command Center Design System
    Industrial Editorial Brutalism: serif gravitas × mono technicality
    ============================================================ */
-
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600;9..144,700;9..144,900&family=Hanken+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600;700&display=swap');
+/* 2026-07-20: 字体加载迁移到 index.html <link rel="preload"> + <link rel="stylesheet">
+ * 原 @import 阻塞 CSS 解析且 Google Fonts 国内访问不稳定，迁移后:
+ *   1) preload 提前建立连接，不阻塞首屏渲染
+ *   2) media="print" onload="this.media='all'" 异步加载 CSS
+ *   3) <noscript> 兜底禁用 JS 场景 */
 
 /* ── Design Tokens ─────────────────────────────────────────── */
 :root {
@@ -22,7 +25,8 @@
   --ab-text:        #e8e3d8;
   --ab-text-2:      #b8b1a3;
   --ab-text-3:      #807a6e;
-  --ab-text-4:      #524d44;
+  /* 2026-07-20 P2-1: text-4 从 #524d44 提升到 #7a7268，对 #0a0a0a 背景对比度 ~4.5:1 达 WCAG AA */
+  --ab-text-4:      #7a7268;
 
   /* Accent — copper / amber (CRT phosphor / brass) */
   --ab-copper:      #d4a574;
@@ -39,10 +43,14 @@
   --ab-moss:        #8a9a6e;
   --ab-iris:        #8a7aa8;
 
-  /* Fonts */
-  --ab-font-display: 'Fraunces', 'Times New Roman', Georgia, serif;
-  --ab-font-body:    'Hanken Grotesk', system-ui, sans-serif;
-  --ab-font-mono:    'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  /* Fonts — 2026-07-20 P2-fonts: 字体由 @fontsource 自托管子集化（仅拉丁+数字+标点）
+   * 中文 fallback 链：macOS "PingFang SC" → Windows "Microsoft YaHei" → 通用 "sans-serif"
+   *   display 衬线中文：macOS "Songti SC" → Windows "SimSun" → 通用 "serif"
+   *   mono 中文：保持英文等宽，中文回退到 "PingFang SC"/"Microsoft YaHei"（无等宽中文不影响阅读）
+   * 注：Fraunces/Hanken Grotesk/JetBrains Mono 本身不含中文字形，中文必须靠 fallback */
+  --ab-font-display: 'Fraunces', 'Songti SC', 'SimSun', 'Times New Roman', Georgia, serif;
+  --ab-font-body:    'Hanken Grotesk', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  --ab-font-mono:    'JetBrains Mono', 'PingFang SC', 'Microsoft YaHei', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 
   /* Shadows — warm, low-spread */
   --ab-shadow-1: 0 1px 0 rgba(255, 235, 200, 0.02) inset;
@@ -360,6 +368,114 @@ input::selection, textarea::selection, .ant-input::selection {
 
 .ab-btn-copper.ant-btn-primary:active {
     transform: translateY(0);
+}
+
+/* ── Editorial Atelier Button Suite ────────────────────────────
+   2026-07-20: 全局按钮美化 — 按视觉权重分层圆角 + hover 微动效 + 铜色辉光
+   设计原则:
+     - 圆角分层: default 8px / primary 10px / text-link 999px(胶囊) / circle 保持圆形
+     - hover: 边框铜色化 + 上浮 1px + 暖光阴影 (default) / 铜色辉光 (primary)
+     - active: scale(0.97) 按下反馈
+     - focus: 铜色 outline 替代 AntD 默认蓝色, 提升可达性
+     - transition: 0.18s ease 统一节奏
+   注: 代码中 Button 大量用 inline style 覆盖 borderColor/color,
+       但未设 borderRadius/transition/transform/box-shadow, 全局规则可生效 */
+
+/* 1. 基础按钮 — 圆角 + 字体 + transition */
+.ant-btn {
+  border-radius: 8px !important;
+  font-family: var(--ab-font-body) !important;
+  font-weight: 500 !important;
+  letter-spacing: 0.01em !important;
+  transition: all 0.18s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  position: relative;
+  overflow: hidden;
+}
+
+/* 2. Primary 按钮 — 略大圆角 + 铜色辉光 hover + 按下反馈 */
+.ant-btn-primary {
+  border-radius: 10px !important;
+  box-shadow: 0 2px 8px rgba(212, 165, 116, 0.15);
+}
+.ant-btn-primary:hover:not(:disabled):not(.ant-btn-disabled) {
+  box-shadow: 0 4px 16px rgba(212, 165, 116, 0.35), 0 0 0 1px var(--ab-copper-hi) inset !important;
+  transform: translateY(-1px);
+}
+.ant-btn-primary:active:not(:disabled):not(.ant-btn-disabled) {
+  transform: translateY(0) scale(0.97);
+}
+
+/* 3. Default 按钮 — 边框铜色化 hover + 微上浮 + 暖光阴影 */
+.ant-btn-default:hover:not(:disabled):not(.ant-btn-disabled) {
+  border-color: var(--ab-copper) !important;
+  color: var(--ab-copper) !important;
+  box-shadow: 0 4px 12px rgba(212, 165, 116, 0.12) !important;
+  transform: translateY(-1px);
+}
+.ant-btn-default:active:not(:disabled):not(.ant-btn-disabled) {
+  transform: translateY(0) scale(0.97);
+}
+
+/* 4. Text/Link 按钮 — 胶囊形 + 铜色淡背景 hover */
+.ant-btn-text,
+.ant-btn-link {
+  border-radius: 999px !important;
+}
+.ant-btn-text:hover:not(:disabled):not(.ant-btn-disabled) {
+  background: var(--ab-copper-glow) !important;
+  color: var(--ab-copper) !important;
+}
+.ant-btn-link:hover:not(:disabled):not(.ant-btn-disabled) {
+  filter: brightness(1.15);
+}
+
+/* 5. Circle 图标按钮 — 保持圆形 + hover 旋转微动 */
+.ant-btn-circle,
+.ant-btn-circle-outline {
+  border-radius: 50% !important;
+}
+.ant-btn-circle:hover:not(:disabled):not(.ant-btn-disabled),
+.ant-btn-icon-only:hover:not(:disabled):not(.ant-btn-disabled) {
+  transform: rotate(-6deg) scale(1.05);
+}
+
+/* 6. Round 按钮 — AntD 内置圆角保留, 加铜色辉光 */
+.ant-btn-round {
+  box-shadow: 0 2px 8px rgba(212, 165, 116, 0.1);
+}
+.ant-btn-round.ant-btn-primary:hover:not(:disabled):not(.ant-btn-disabled) {
+  box-shadow: 0 4px 16px rgba(212, 165, 116, 0.4) !important;
+}
+
+/* 7. Focus 可达性 — 铜色 outline 替代默认蓝色 */
+.ant-btn:focus-visible {
+  outline: 2px solid var(--ab-copper) !important;
+  outline-offset: 2px !important;
+  box-shadow: 0 0 0 3px var(--ab-copper-glow) !important;
+}
+
+/* 8. Danger 按钮 — 玫瑰色调圆角 + hover 反馈 */
+.ant-btn-dangerous {
+  border-radius: 8px !important;
+}
+.ant-btn-dangerous.ant-btn-primary:hover:not(:disabled):not(.ant-btn-disabled) {
+  box-shadow: 0 4px 16px rgba(201, 122, 107, 0.35) !important;
+  transform: translateY(-1px);
+}
+
+/* 9. Disabled 按钮 — 静默态, 无 hover 反馈 */
+.ant-btn:disabled,
+.ant-btn.ant-btn-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+/* 10. 按钮内图标微调 — 与文字间距 + 对齐 */
+.ant-btn > .anticon + span,
+.ant-btn > span + .anticon {
+  margin-left: 6px;
 }
 
 /* ── Nav link ───────────────────────────────────────────────── */

@@ -137,7 +137,7 @@ export default function CustomerPartMappingManagement({ user, companies = [] }) 
       scroll={{ x: 900 }} size="small" style={{ background: '#141414' }} />
 
     <Modal title={editing ? '编辑客户料号映射' : '新建客户料号映射'} open={showModal} onOk={handleSave}
-      onCancel={() => { setShowModal(false); setEditing(null) }} okText={editing ? '保存' : '创建'} width={520} destroyOnClose>
+      onCancel={() => { setShowModal(false); setEditing(null) }} okText={editing ? '保存' : '创建'} width={520} destroyOnHidden>
       <Form form={form} layout="vertical">
         <Form.Item name="customerId" label="客户" rules={[{ required: true, message: '请选择客户' }]}>
           <Select showSearch placeholder="选择客户" filterOption={(input, option) => option?.children?.toLowerCase().includes(input.toLowerCase())}>

@@ -153,7 +153,7 @@ export function ErpQuickActions({ selected, onSelect, onClear, currentInput, onS
             </Tag>
           </Dropdown>
         ))}
-        <Divider type="vertical" style={{ background: '#1f1f1f', height: 18, margin: '0 4px' }} />
+        <Divider orientation="vertical" style={{ background: '#1f1f1f', height: 18, margin: '0 4px' }} />
         <Text style={{ color: '#666', fontSize: 11 }}>
           {selected ? '👇 继续输入内容, 然后点发送' : '选标签声明意图, 不直接发送'}
         </Text>

@@ -70,6 +70,8 @@ import IntentCorrectionFloater from './components/IntentCorrectionFloater'
 import ReVerifyProgressToast from './components/ReVerifyProgressToast'
 import AcademicResearchPage from './AcademicResearchPage'
 import AcademicStatsPage from './AcademicStatsPage'
+import NovelPage from './NovelPage'
+import LlmManagement from './LlmManagement'
 import { useUserStore } from './store/useUserStore'
 import { useDataStore } from './store/useDataStore'
 import { useConfigStore } from './store/useConfigStore'
@@ -3219,7 +3221,7 @@ const handleDeleteSession = (id) => {
                 )
               })() : (
                 <Text style={{ color: 'var(--ab-text-3)', fontSize: 14, fontFamily: "'Hanken Grotesk', system-ui, sans-serif" }}>
-                  {activeTab === 'documents' ? t('nav.companyDocuments') : activeTab === 'academic' ? '学术分析' : activeTab === 'academic_stats' ? 'ReAct 闭环统计' : activeTab === 'sales_orders' ? '销售单管理' : activeTab === 'purchase_orders' ? '采购单管理' : activeTab === 'reconciliations' ? '对账单管理' : activeTab === 'erp' ? t('erp.dataManagement') : activeTab === 'outbound_orders' ? t('erp.outboundOrders') : activeTab === 'inbound_orders' ? t('erp.inboundOrders') : activeTab === 'parts' ? t('erp.parts') : activeTab === 'customers' ? t('erp.customers') : activeTab === 'suppliers' ? t('erp.suppliers') : activeTab === 'customer_part_mappings' ? '客户料号映射' : activeTab === 'import_product_relation' ? '导入产品关系' : activeTab === 'crm_customers' ? 'CRM 客户管理' : activeTab === 'crm_contacts' ? 'CRM 联系人管理' : activeTab === 'crm_leads' ? 'CRM 线索管理' : activeTab === 'crm_opportunities' ? 'CRM 商机管理' : activeTab === 'crm_contracts' ? 'CRM 合同管理' : activeTab === 'crm_payment_plans' ? 'CRM 回款计划' : activeTab === 'crm_payment_records' ? 'CRM 回款记录' : activeTab === 'crm_follow_ups' ? 'CRM 跟进记录' : activeTab === 'dashboard' ? t('erp.dashboard') : activeTab === 'databases' ? t('nav.databases') : activeTab === 'monitor' ? 'autobot-monitor' : (sessions.find(s => s.id === sessionId)?.title || t('nav.newChat'))}
+                  {activeTab === 'documents' ? t('nav.companyDocuments') : activeTab === 'academic' ? '学术分析' : activeTab === 'academic_stats' ? 'ReAct 闭环统计' : activeTab === 'llm_management' ? 'LLM 模型管理' : activeTab === 'sales_orders' ? '销售单管理' : activeTab === 'purchase_orders' ? '采购单管理' : activeTab === 'reconciliations' ? '对账单管理' : activeTab === 'erp' ? t('erp.dataManagement') : activeTab === 'outbound_orders' ? t('erp.outboundOrders') : activeTab === 'inbound_orders' ? t('erp.inboundOrders') : activeTab === 'parts' ? t('erp.parts') : activeTab === 'customers' ? t('erp.customers') : activeTab === 'suppliers' ? t('erp.suppliers') : activeTab === 'customer_part_mappings' ? '客户料号映射' : activeTab === 'import_product_relation' ? '导入产品关系' : activeTab === 'crm_customers' ? 'CRM 客户管理' : activeTab === 'crm_contacts' ? 'CRM 联系人管理' : activeTab === 'crm_leads' ? 'CRM 线索管理' : activeTab === 'crm_opportunities' ? 'CRM 商机管理' : activeTab === 'crm_contracts' ? 'CRM 合同管理' : activeTab === 'crm_payment_plans' ? 'CRM 回款计划' : activeTab === 'crm_payment_records' ? 'CRM 回款记录' : activeTab === 'crm_follow_ups' ? 'CRM 跟进记录' : activeTab === 'dashboard' ? t('erp.dashboard') : activeTab === 'databases' ? t('nav.databases') : activeTab === 'monitor' ? 'autobot-monitor' : (sessions.find(s => s.id === sessionId)?.title || t('nav.newChat'))}
                 </Text>
               )}
               {activeTab === 'chat' && (sessions.find(s => s.id === sessionId)?.channel === 'code' || (!sessions.find(s => s.id === sessionId)?.channel && currentChannel === 'code')) && workspaceDir && (
@@ -3330,9 +3332,17 @@ const handleDeleteSession = (id) => {
             <Content style={{ background: '#0a0a0a', overflow: 'auto' }}>
               <AcademicResearchPage user={user} />
             </Content>
+          ) : activeTab === 'novel' ? (
+            <Content style={{ background: '#0a0a0a', overflow: 'auto' }}>
+              <NovelPage user={user} />
+            </Content>
           ) : activeTab === 'academic_stats' && isSuperAdmin ? (
             <Content style={{ background: '#0a0a0a', overflow: 'auto' }}>
               <AcademicStatsPage />
+            </Content>
+          ) : activeTab === 'llm_management' && isSuperAdmin ? (
+            <Content style={{ background: '#0a0a0a', overflow: 'auto' }}>
+              <LlmManagement />
             </Content>
           ) : (
 
@@ -4071,7 +4081,7 @@ const handleDeleteSession = (id) => {
         title={<Space><ApartmentOutlined /><span>代码图谱 — 当前会话</span></Space>}
         open={graphDrawerOpen}
         onClose={() => setGraphDrawerOpen(false)}
-        width={720}
+        size="large"
         styles={{ body: { background: '#0f0f0f', padding: 16 } }}
       >
         <Space direction="vertical" size="middle" style={{ width: '100%' }}>
