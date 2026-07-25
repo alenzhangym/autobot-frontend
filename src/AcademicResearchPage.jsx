@@ -10,13 +10,13 @@
  * 设计语言：Industrial Editorial Brutalism — Fraunces 衬线 × JetBrains Mono 技术感 × 铜色暖光
  */
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { Input, Button, Tooltip, Spin, message, Empty, Modal } from 'antd'
+import { Input, Button, Tooltip, Spin, message, Empty, Modal, Drawer, Grid } from 'antd'
 import {
   SearchOutlined, FileTextOutlined, BulbOutlined,
   CopyOutlined, LinkOutlined, CheckOutlined,
   ThunderboltOutlined, GlobalOutlined, DatabaseOutlined, ApiOutlined,
   ArrowRightOutlined, ExperimentOutlined, AlertOutlined, AuditOutlined,
-  DeleteOutlined, BookOutlined, PlusOutlined,
+  DeleteOutlined, BookOutlined, PlusOutlined, MenuOutlined,
 } from '@ant-design/icons'
 import { motion, AnimatePresence } from 'framer-motion'
 import api from './auth'
@@ -76,6 +76,11 @@ const stagger = {
 }
 
 export default function AcademicResearchPage({ user }) {
+  // ── Responsive breakpoint ──
+  const screens = Grid.useBreakpoint()
+  const isMobile = !screens.md
+  const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false)
+
   // 2026-07-20 P1-1: 进入学术研究页时自动折叠全局 Sider，让研究详情区获得更大宽度
   // 符合用户约定"研究详情应右对齐占更多屏幕宽度，减少两侧空白"
   // 离开时恢复进入前的原值，不破坏用户原有 Sider 偏好
@@ -88,6 +93,16 @@ export default function AcademicResearchPage({ user }) {
       if (!prevCollapsed) setSiderCollapsed(false)
     }
   }, [setSiderCollapsed])
+
+  // Mobile: close history drawer when a history item is selected
+  const handleLoadHistoryMobile = (id) => {
+    handleLoadHistory(id)
+    setMobileHistoryOpen(false)
+  }
+  const handleNewResearchMobile = () => {
+    handleNewResearch()
+    setMobileHistoryOpen(false)
+  }
 
   const [activeTab, setActiveTab] = useState(null)          // null = 未选择，强制用户选
   const [topic, setTopic] = useState('')
@@ -867,135 +882,155 @@ export default function AcademicResearchPage({ user }) {
       {/* ═══════════════════════════════════════════════════════
           左侧历史列表（2026-07-17 新增）
           取代原底部历史区，点击切换到右侧详情
+          Mobile: 渲染为左侧 Drawer，由 header 汉堡按钮触发。
           ═══════════════════════════════════════════════════════ */}
-      <div className="arp-grain" style={{
-        width: 280, flexShrink: 0, height: '100%', overflow: 'auto',
-        borderRight: '1px solid var(--ab-line)',
-        background: 'var(--ab-bg)',
-        position: 'relative', zIndex: 1,
-      }}>
-        <div style={{ padding: '20px 16px 12px', borderBottom: '1px solid var(--ab-line)', position: 'sticky', top: 0, background: 'var(--ab-bg)', zIndex: 2 }}>
-          <div style={{ ...mono, color: 'var(--ab-text-4)', fontSize: 10, letterSpacing: '0.22em', textTransform: 'uppercase', marginBottom: 6 }}>
-            Academic Research
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ ...serif, color: 'var(--ab-text)', fontSize: 18, fontWeight: 500 }}>
-              研究列表
-            </span>
-            <span style={{ ...mono, fontSize: 10, color: 'var(--ab-text-4)' }}>{history.length}</span>
-          </div>
-          <button
-            onClick={handleNewResearch}
-            style={{
-              marginTop: 12, width: '100%', cursor: 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-              background: selectedHistoryId === null ? 'var(--ab-surface-2)' : 'var(--ab-bg-2)',
-              border: selectedHistoryId === null ? '1px solid var(--ab-copper)' : '1px solid var(--ab-line)',
-              borderRadius: 6, padding: '8px 12px', transition: 'all .2s',
-              color: selectedHistoryId === null ? 'var(--ab-copper)' : 'var(--ab-text-2)',
-              ...mono, fontSize: 12, letterSpacing: '0.05em',
-            }}>
-            <span style={{ fontSize: 14, lineHeight: 0 }}>+</span>
-            新建研究
-          </button>
-        </div>
-
-        {/* 历史列表 */}
-        <div style={{ padding: '8px 8px 20px' }}>
-          {loadingHistory ? (
-            <div style={{ textAlign: 'center', padding: 20 }}><Spin size="small" /></div>
-          ) : history.length === 0 ? (
-            <div style={{ padding: '20px 12px', textAlign: 'center' }}>
-              <Empty description="暂无研究" image={Empty.PRESENTED_IMAGE_SIMPLE}
-                style={{ opacity: 0.5 }} />
+      {(() => {
+        const sidebarInner = (
+          <>
+            <div style={{ padding: '20px 16px 12px', borderBottom: '1px solid var(--ab-line)', position: 'sticky', top: 0, background: 'var(--ab-bg)', zIndex: 2 }}>
+              <div style={{ ...mono, color: 'var(--ab-text-4)', fontSize: 10, letterSpacing: '0.22em', textTransform: 'uppercase', marginBottom: 6 }}>
+                Academic Research
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ ...serif, color: 'var(--ab-text)', fontSize: 18, fontWeight: 500 }}>
+                  研究列表
+                </span>
+                <span style={{ ...mono, fontSize: 10, color: 'var(--ab-text-4)' }}>{history.length}</span>
+              </div>
+              <button
+                onClick={isMobile ? handleNewResearchMobile : handleNewResearch}
+                style={{
+                  marginTop: 12, width: '100%', cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                  background: selectedHistoryId === null ? 'var(--ab-surface-2)' : 'var(--ab-bg-2)',
+                  border: selectedHistoryId === null ? '1px solid var(--ab-copper)' : '1px solid var(--ab-line)',
+                  borderRadius: 6, padding: '8px 12px', transition: 'all .2s',
+                  color: selectedHistoryId === null ? 'var(--ab-copper)' : 'var(--ab-text-2)',
+                  ...mono, fontSize: 12, letterSpacing: '0.05em',
+                }}>
+                <span style={{ fontSize: 14, lineHeight: 0 }}>+</span>
+                新建研究
+              </button>
             </div>
-          ) : (
-            history.map(h => {
-              const isSelected = selectedHistoryId === h.id
-              const isGenerating = h.status === 'generating'
-              const isDone = h.status === 'done'
-              const isCancelled = h.status === 'cancelled'
-              const reportTypeMeta = REPORT_TYPES.find(t => t.value === h.reportType)
-              return (
-                <div
-                  key={h.id}
-                  onClick={() => handleLoadHistory(h.id)}
-                  className="arp-sidebar-item"
-                  style={{
-                    cursor: 'pointer', textAlign: 'left', position: 'relative',
-                    background: isSelected ? 'var(--ab-surface-2)' : 'transparent',
-                    border: isSelected ? '1px solid var(--ab-copper)' : '1px solid transparent',
-                    borderRadius: 6, padding: '10px 12px', marginBottom: 4, transition: 'all .15s',
-                  }}
-                >
-                  {/* 删除按钮 — hover 时显现 */}
-                  <Tooltip title="删除">
-                    <button
-                      onClick={(e) => handleDeleteHistory(h.id, e)}
-                      className="arp-history-delete"
+
+            {/* 历史列表 */}
+            <div style={{ padding: '8px 8px 20px' }}>
+              {loadingHistory ? (
+                <div style={{ textAlign: 'center', padding: 20 }}><Spin size="small" /></div>
+              ) : history.length === 0 ? (
+                <div style={{ padding: '20px 12px', textAlign: 'center' }}>
+                  <Empty description="暂无研究" image={Empty.PRESENTED_IMAGE_SIMPLE}
+                    style={{ opacity: 0.5 }} />
+                </div>
+              ) : (
+                history.map(h => {
+                  const isSelected = selectedHistoryId === h.id
+                  const isGenerating = h.status === 'generating'
+                  const isDone = h.status === 'done'
+                  const isCancelled = h.status === 'cancelled'
+                  const reportTypeMeta = REPORT_TYPES.find(t => t.value === h.reportType)
+                  return (
+                    <div
+                      key={h.id}
+                      onClick={() => isMobile ? handleLoadHistoryMobile(h.id) : handleLoadHistory(h.id)}
+                      className="arp-sidebar-item"
                       style={{
-                        position: 'absolute', top: 6, right: 6,
-                        width: 20, height: 20, borderRadius: 4,
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        background: 'transparent', border: '1px solid transparent',
-                        color: 'var(--ab-text-4)', cursor: 'pointer',
-                        opacity: 0, transition: 'all .15s', zIndex: 2,
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.opacity = 1
-                        e.currentTarget.style.color = 'var(--ab-copper)'
-                        e.currentTarget.style.borderColor = 'var(--ab-copper)'
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.opacity = 0
-                        e.currentTarget.style.color = 'var(--ab-text-4)'
-                        e.currentTarget.style.borderColor = 'transparent'
+                        cursor: 'pointer', textAlign: 'left', position: 'relative',
+                        background: isSelected ? 'var(--ab-surface-2)' : 'transparent',
+                        border: isSelected ? '1px solid var(--ab-copper)' : '1px solid transparent',
+                        borderRadius: 6, padding: '10px 12px', marginBottom: 4, transition: 'all .15s',
                       }}
                     >
-                      <DeleteOutlined style={{ fontSize: 10 }} />
-                    </button>
-                  </Tooltip>
+                      {/* 删除按钮 — hover 时显现 */}
+                      <Tooltip title="删除">
+                        <button
+                          onClick={(e) => handleDeleteHistory(h.id, e)}
+                          className="arp-history-delete"
+                          style={{
+                            position: 'absolute', top: 6, right: 6,
+                            width: 20, height: 20, borderRadius: 4,
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            background: 'transparent', border: '1px solid transparent',
+                            color: 'var(--ab-text-4)', cursor: 'pointer',
+                            opacity: 0, transition: 'all .15s', zIndex: 2,
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.opacity = 1
+                            e.currentTarget.style.color = 'var(--ab-copper)'
+                            e.currentTarget.style.borderColor = 'var(--ab-copper)'
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.opacity = 0
+                            e.currentTarget.style.color = 'var(--ab-text-4)'
+                            e.currentTarget.style.borderColor = 'transparent'
+                          }}
+                        >
+                          <DeleteOutlined style={{ fontSize: 10 }} />
+                        </button>
+                      </Tooltip>
 
-                  {/* 状态徽标行 */}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, paddingRight: 22 }}>
-                    <span style={{ ...mono, fontSize: 10, color: 'var(--ab-copper)', letterSpacing: '0.1em' }}>
-                      {reportTypeMeta?.numeral || '·'}
-                    </span>
-                    <span style={{
-                      ...mono, fontSize: 9, padding: '1px 6px', borderRadius: 3, letterSpacing: '0.05em',
-                      color: isGenerating ? 'var(--ab-copper)' :
-                             isDone ? 'var(--ab-text-3)' :
-                             isCancelled ? 'var(--ab-text-4)' : 'var(--ab-text-4)',
-                      background: isGenerating ? 'var(--ab-copper-glow)' :
-                                  isDone ? 'var(--ab-surface-2)' :
-                                  'transparent',
-                      animation: isGenerating ? 'arp-spin-pulse 1.5s ease-in-out infinite' : 'none',
-                    }}>
-                      {isGenerating ? '生成中' : isDone ? '已完成' : isCancelled ? '已取消' : (h.status || '草稿')}
-                    </span>
-                  </div>
+                      {/* 状态徽标行 */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, paddingRight: 22 }}>
+                        <span style={{ ...mono, fontSize: 10, color: 'var(--ab-copper)', letterSpacing: '0.1em' }}>
+                          {reportTypeMeta?.numeral || '·'}
+                        </span>
+                        <span style={{
+                          ...mono, fontSize: 9, padding: '1px 6px', borderRadius: 3, letterSpacing: '0.05em',
+                          color: isGenerating ? 'var(--ab-copper)' :
+                                 isDone ? 'var(--ab-text-3)' :
+                                 isCancelled ? 'var(--ab-text-4)' : 'var(--ab-text-4)',
+                          background: isGenerating ? 'var(--ab-copper-glow)' :
+                                      isDone ? 'var(--ab-surface-2)' :
+                                      'transparent',
+                          animation: isGenerating ? 'arp-spin-pulse 1.5s ease-in-out infinite' : 'none',
+                        }}>
+                          {isGenerating ? '生成中' : isDone ? '已完成' : isCancelled ? '已取消' : (h.status || '草稿')}
+                        </span>
+                      </div>
 
-                  {/* 主题 */}
-                  <div style={{
-                    ...serif, fontSize: 13, fontWeight: 500, color: 'var(--ab-text)', lineHeight: 1.4, marginBottom: 4,
-                    overflow: 'hidden', textOverflow: 'ellipsis',
-                    display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
-                    paddingRight: 22,
-                  }}>
-                    {h.topic || '(无主题)'}
-                  </div>
+                      {/* 主题 */}
+                      <div style={{
+                        ...serif, fontSize: 13, fontWeight: 500, color: 'var(--ab-text)', lineHeight: 1.4, marginBottom: 4,
+                        overflow: 'hidden', textOverflow: 'ellipsis',
+                        display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+                        paddingRight: 22,
+                      }}>
+                        {h.topic || '(无主题)'}
+                      </div>
 
-                  {/* 报告类型 + 更新时间 */}
-                  <div style={{ ...mono, fontSize: 9, color: 'var(--ab-text-4)', display: 'flex', justifyContent: 'space-between' }}>
-                    <span>{reportTypeMeta?.label || h.reportType}</span>
-                    {h.updatedAt && <span>{new Date(h.updatedAt).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })}</span>}
-                  </div>
-                </div>
-              )
-            })
-          )}
-        </div>
-      </div>
+                      {/* 报告类型 + 更新时间 */}
+                      <div style={{ ...mono, fontSize: 9, color: 'var(--ab-text-4)', display: 'flex', justifyContent: 'space-between' }}>
+                        <span>{reportTypeMeta?.label || h.reportType}</span>
+                        {h.updatedAt && <span>{new Date(h.updatedAt).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })}</span>}
+                      </div>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          </>
+        )
+        return isMobile ? (
+          <Drawer
+            placement="left" open={mobileHistoryOpen} onClose={() => setMobileHistoryOpen(false)}
+            width={280} closable={false}
+            styles={{ body: { padding: 0, background: 'var(--ab-bg)' }, header: { display: 'none' } }}
+          >
+            <div className="arp-grain" style={{ height: '100%', overflow: 'auto' }}>
+              {sidebarInner}
+            </div>
+          </Drawer>
+        ) : (
+          <div className="arp-grain" style={{
+            width: 280, flexShrink: 0, height: '100%', overflow: 'auto',
+            borderRight: '1px solid var(--ab-line)',
+            background: 'var(--ab-bg)',
+            position: 'relative', zIndex: 1,
+          }}>
+            {sidebarInner}
+          </div>
+        )
+      })()}
 
       {/* ═══════════════════════════════════════════════════════
           右侧主内容区（原 Step1-4 流程）
@@ -1003,25 +1038,33 @@ export default function AcademicResearchPage({ user }) {
       <div className="arp-grain custom-scrollbar" style={{ flex: 1, height: '100%', overflow: 'auto', position: 'relative', zIndex: 1 }}>
         <motion.div
           initial="hidden" animate="show" variants={stagger}
-          style={{ maxWidth: 1700, margin: '0 auto', padding: '36px 40px 80px' }}
+          style={{ maxWidth: 1700, margin: '0 auto', padding: isMobile ? '20px 14px 60px' : '36px 40px 80px' }}
         >
 
           {/* ── 页眉：标题（移除历史按钮，由左侧列表取代） ─────── */}
           <motion.div variants={fadeUp} style={{
             display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end',
-            marginBottom: 40, borderBottom: '1px solid var(--ab-line)', paddingBottom: 22,
+            marginBottom: isMobile ? 24 : 40, borderBottom: '1px solid var(--ab-line)', paddingBottom: 22,
+            gap: 12,
           }}>
-            <div>
-              <div style={{ ...mono, color: 'var(--ab-text-4)', fontSize: 11, letterSpacing: '0.22em', textTransform: 'uppercase', marginBottom: 8 }}>
-                Academic Research Atlas
+            <div style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: 12 }}>
+              {/* Mobile: 汉堡按钮打开历史列表 Drawer */}
+              {isMobile && (
+                <Button type="text" icon={<MenuOutlined />} onClick={() => setMobileHistoryOpen(true)}
+                  style={{ color: 'var(--ab-text-3)', flexShrink: 0 }} />
+              )}
+              <div style={{ minWidth: 0 }}>
+                <div style={{ ...mono, color: 'var(--ab-text-4)', fontSize: 11, letterSpacing: '0.22em', textTransform: 'uppercase', marginBottom: 8 }}>
+                  Academic Research Atlas
+                </div>
+                <h1 style={{ ...serif, color: 'var(--ab-text)', fontSize: isMobile ? 26 : 38, fontWeight: 400, margin: 0, letterSpacing: '-0.02em', lineHeight: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {selectedHistoryId ? '研究详情' : '学术分析'}
+                </h1>
               </div>
-              <h1 style={{ ...serif, color: 'var(--ab-text)', fontSize: 38, fontWeight: 400, margin: 0, letterSpacing: '-0.02em', lineHeight: 1 }}>
-                {selectedHistoryId ? '研究详情' : '学术分析'}
-              </h1>
             </div>
             {/* 2026-07-17: 移除"历史"按钮，由左侧列表取代。保留"新建研究"在未选中历史时显示 */}
             {selectedHistoryId && (
-              <Button size="small" onClick={handleNewResearch} style={{ ...mono, color: 'var(--ab-text-3)', borderColor: 'var(--ab-line)' }}>
+              <Button size="small" onClick={handleNewResearch} style={{ ...mono, color: 'var(--ab-text-3)', borderColor: 'var(--ab-line)', flexShrink: 0 }}>
                 新建研究
               </Button>
             )}
@@ -1377,6 +1420,7 @@ export default function AcademicResearchPage({ user }) {
             {/* 搜索结果分屏：左摘要 / 右全文 */}
             {searchResults.length > 0 && (
               <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+                className="arp-search-split"
                 style={{
                   display: 'flex',
                   // 2026-07-20 P1-2: 高度从固定 420px 改为自适应 — 小屏不拥挤，大屏充分利用
@@ -1388,7 +1432,7 @@ export default function AcademicResearchPage({ user }) {
                   boxShadow: 'var(--ab-shadow-2)',
                 }}>
                 {/* 左：摘要列表 */}
-                <div style={{ background: 'var(--ab-bg-1)', overflow: 'auto', minHeight: 0, flex: '0 0 42%', display: 'flex', flexDirection: 'column' }} className="custom-scrollbar">
+                <div className="arp-search-split-left" style={{ background: 'var(--ab-bg-1)', overflow: 'auto', minHeight: 0, flex: '0 0 42%', display: 'flex', flexDirection: 'column' }}>
                   <div style={{ position: 'sticky', top: 0, background: 'var(--ab-bg-2)', padding: '10px 14px',
                     borderBottom: '1px solid var(--ab-line-bold)', ...mono, fontSize: 10, color: 'var(--ab-text-3)', letterSpacing: '0.15em', textTransform: 'uppercase' }}>
                     摘要 · {searchResults.length} 条
@@ -2515,13 +2559,14 @@ function ReportBody({ report, outlineText, outlineDebate, outlineRevised, sectio
         </div>
       )}
 
-      {/* ── 主区：左侧大纲 + 右侧章节正文 ── */}
-      <div style={{
+      {/* ── 主区：左侧大纲 + 右侧章节正文 ──
+          Mobile: 单列堆叠，大纲变为可折叠的 sticky 顶栏 */}
+      <div className="arp-report-grid" style={{
         display: 'grid', gridTemplateColumns: '260px 1fr', gap: 0,
         minHeight: 400,
       }}>
         {/* 左：书纲式大纲（可点击跳转） */}
-        <div style={{
+        <div className="arp-report-toc" style={{
           borderRight: '1px solid var(--ab-line)',
           padding: '24px 18px',
           background: 'var(--ab-bg-2)',
@@ -2569,7 +2614,7 @@ function ReportBody({ report, outlineText, outlineDebate, outlineRevised, sectio
         </div>
 
         {/* 右：章节正文 — 每段卡片化。默认只显示正文，点击"编辑段落"进入编辑模式 */}
-        <div style={{ padding: '32px 40px', overflow: 'hidden' }}>
+        <div className="arp-report-body" style={{ padding: '32px 40px', overflow: 'hidden' }}>
           {sections.map((s, i) => {
             const exp = expandedProcess[i] || {}
             const editState = sectionEditState[i] || { editing: false, editedText: '', saving: false }

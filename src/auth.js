@@ -47,6 +47,15 @@ export const getSuggestedBackendHost = () => {
 };
 
 export const getApiBaseUrl = () => {
+  // 2026-07-25: dev 模式下且用户未显式配置 backend_host 时, 返回相对路径 '/api',
+  // 让请求走 Vite dev server 的 /api 代理 (见 vite.config.js).
+  // 这样手机端通过局域网 IP (http://192.168.x.x:5173) 访问前端时,
+  // /api/* 请求会被 Vite 代理转发到后端, 绕过 CORS 和手机端无法直连后端公网 IP 的问题.
+  // 如果用户显式配置了 backend_host (localStorage), 优先使用配置值.
+  const configured = localStorage.getItem('backend_host');
+  if (!configured && import.meta.env.DEV) {
+    return '/api';
+  }
   let host = getBackendHost();
   if (host.startsWith('https://')) {
     host = host.replace('https://', 'http://');
@@ -98,6 +107,36 @@ api.interceptors.request.use(
     return config;
   },
   (error) => {
+    return Promise.reject(error);
+  }
+);
+
+// Response interceptor: centralised 401 handling.
+// 2026-07-25: token 失效时(过期/篡改/服务端重启换 secret), 后端返回 401. 统一在响应拦截器
+// 处理: 清除 localStorage 凭证并 reload, App.jsx bootstrap 检测到 !tokenExists 渲染登录页.
+//
+// 关键: 只在"请求带了 token 但被后端拒绝"时才 reload. 如果请求本身没带 Authorization header
+// (bootstrap 阶段的 fetchMe, 或未登录时的请求), 不触发 reload — 否则会形成死循环:
+// 无 token → fetchMe 401 → reload → 无 token → fetchMe 401 → reload → ...
+// 这种情况让调用方自行处理(fetchMe 返回 null, App.jsx 会渲染登录页).
+let _unauthorizedRedirecting = false;
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const status = error?.response?.status;
+    const url = error?.config?.url || '';
+    const reqHeaders = error?.config?.headers || {};
+    const hadAuthHeader = !!reqHeaders['Authorization'] || !!reqHeaders['authorization'];
+    if (status === 401 && !_unauthorizedRedirecting) {
+      // 排除 /auth/login 本身 — 登录失败应让调用方处理(弹出"密码错误"), 不应跳转.
+      if (!url.includes('/auth/login') && hadAuthHeader) {
+        _unauthorizedRedirecting = true;
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        // 延迟 100ms 让当前 catch 链跑完, 避免 React 状态更新与 reload 冲突.
+        setTimeout(() => { window.location.reload(); }, 100);
+      }
+    }
     return Promise.reject(error);
   }
 );

@@ -2,19 +2,19 @@ import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import {
   Layout, Menu, Button, Input, Avatar, Typography, Space, Tooltip,
   Modal, Form, Tabs, Tag, Dropdown, Divider, ConfigProvider, theme, Badge, Select, InputNumber, TimePicker, message, Checkbox,
-  List, Spin, Drawer, Segmented
+  List, Spin, Drawer, Segmented, Grid
 } from 'antd'
 import dayjs from 'dayjs'
 import {
   SendOutlined, PlusOutlined, SettingOutlined, DeleteOutlined,
   MessageOutlined, LogoutOutlined,
   CheckCircleOutlined, SyncOutlined, PlayCircleOutlined,
-  CodeOutlined, MenuFoldOutlined, MenuUnfoldOutlined, RobotOutlined,
+  CodeOutlined, MenuFoldOutlined, MenuUnfoldOutlined, RobotOutlined, BarsOutlined,
   StopOutlined, LoadingOutlined, ThunderboltOutlined, UserOutlined, TeamOutlined,
   DownOutlined, RightOutlined, CheckOutlined, EditOutlined, ClockCircleOutlined,
   FileTextOutlined, PaperClipOutlined, CloseOutlined, FileImageOutlined, DownloadOutlined, DatabaseOutlined, GlobalOutlined,
   FolderOpenOutlined, HomeOutlined, SearchOutlined, ShopOutlined,
-  ApartmentOutlined
+  ApartmentOutlined, MenuOutlined
 } from '@ant-design/icons'
 import api, { logout, isAuthenticated, getCurrentUser, fetchMe, getWsBaseUrl, getLocalAgentBaseUrl, getBackendHost } from './auth'
 import Login from './Login'
@@ -768,6 +768,12 @@ function SettingsModal({ open, onClose, user, dbConfigs, onDeleteDbConfig, onAdd
 // ── Main App ───────────────────────────────────────────────────────────────
 function App() {
   const { t, i18n } = useTranslation()
+  // ── Responsive breakpoint ──
+  // md ≥ 768px. On screens below md we switch Sider/right panel to Drawers.
+  const screens = Grid.useBreakpoint()
+  const isMobile = !screens.md
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
+  const [mobilePanelOpen, setMobilePanelOpen] = useState(false)
   const {
     user, setUser,
     companies, setCompanies,
@@ -890,6 +896,11 @@ function App() {
   // 形状: {key, label, text, category, color, icon, desc} | null
   const [selectedQuickAction, setSelectedQuickAction] = useState(null)
   const chatInputRef = useRef(null)
+
+  // Mobile: auto-close sidebar drawer when session changes (covers startNewSession + loadSession)
+  useEffect(() => {
+    if (isMobile && sessionId) setMobileSidebarOpen(false)
+  }, [sessionId, isMobile])
 
   // Keep session cache in sync with live messages so tab switches don't lose content
   useEffect(() => {
@@ -3168,42 +3179,99 @@ const handleDeleteSession = (id) => {
       )}
       <Layout style={{ height: updateAvailable ? 'calc(100vh - 44px)' : '100vh', overflow: 'hidden' }}>
         {/* ── Sidebar ── */}
-        <Sider
-          collapsible collapsed={siderCollapsed} onCollapse={setSiderCollapsed}
-          trigger={null} width={240} collapsedWidth={0}
-          style={{ background: 'var(--ab-bg-1)', borderRight: '1px solid var(--ab-line)', overflow: 'hidden' }}
->
-          <SessionSidebar
-            sessions={sessions}
-            scheduledTasks={scheduledTasks}
-            sessionId={sessionId}
-            activeTab={activeTab}
-            siderCollapsed={siderCollapsed}
-            startNewSession={startNewSession}
-            loadSession={loadSession}
-            setActiveTab={setActiveTab}
-            handleDeleteSession={handleDeleteSession}
-            handleExecuteTask={handleExecuteTask}
-            handleDeleteTask={handleDeleteTask}
-            user={user}
-            logout={logout}
-            setShowSettings={setShowSettings}
-            setShowUsersManagement={setShowUsersManagement}
-            setShowCompanyManagement={setShowCompanyManagement}
-          />
-        </Sider>
+        {/* Mobile: Sider becomes a left Drawer (auto-closes on session select).
+            Desktop: original collapsible Sider retained. */}
+        {!isMobile ? (
+          <Sider
+            collapsible collapsed={siderCollapsed} onCollapse={setSiderCollapsed}
+            trigger={null} width={240} collapsedWidth={0}
+            style={{ background: 'var(--ab-bg-1)', borderRight: '1px solid var(--ab-line)', overflow: 'hidden' }}
+          >
+            <SessionSidebar
+              sessions={sessions}
+              scheduledTasks={scheduledTasks}
+              sessionId={sessionId}
+              activeTab={activeTab}
+              siderCollapsed={siderCollapsed}
+              startNewSession={startNewSession}
+              loadSession={loadSession}
+              setActiveTab={setActiveTab}
+              handleDeleteSession={handleDeleteSession}
+              handleExecuteTask={handleExecuteTask}
+              handleDeleteTask={handleDeleteTask}
+              user={user}
+              logout={logout}
+              setShowSettings={setShowSettings}
+              setShowUsersManagement={setShowUsersManagement}
+              setShowCompanyManagement={setShowCompanyManagement}
+            />
+          </Sider>
+        ) : (
+          <Drawer
+            placement="left"
+            open={mobileSidebarOpen}
+            onClose={() => setMobileSidebarOpen(false)}
+            width={280}
+            styles={{ body: { padding: 0, background: 'var(--ab-bg-1)' }, header: { display: 'none' } }}
+            closable={false}
+          >
+            <SessionSidebar
+              sessions={sessions}
+              scheduledTasks={scheduledTasks}
+              sessionId={sessionId}
+              activeTab={activeTab}
+              siderCollapsed={false}
+              startNewSession={startNewSession}
+              loadSession={loadSession}
+              setActiveTab={setActiveTab}
+              handleDeleteSession={handleDeleteSession}
+              handleExecuteTask={handleExecuteTask}
+              handleDeleteTask={handleDeleteTask}
+              user={user}
+              logout={logout}
+              setShowSettings={setShowSettings}
+              setShowUsersManagement={setShowUsersManagement}
+              setShowCompanyManagement={setShowCompanyManagement}
+            />
+          </Drawer>
+        )}
 
         {/* ── Main ── */}
         <Layout style={{ background: 'var(--ab-bg)' }}>
           {/* Header */}
           <Header style={{
-            background: 'var(--ab-bg-1)', borderBottom: '1px solid var(--ab-line)', padding: '0 16px',
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 52
+            background: 'var(--ab-bg-1)', borderBottom: '1px solid var(--ab-line)', padding: isMobile ? '0 10px' : '0 16px',
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 52, gap: 8
           }}>
-            <Space>
-              <Button type="text" icon={siderCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-                onClick={() => setSiderCollapsed(!siderCollapsed)}
-                style={{ color: 'var(--ab-text-3)' }} />
+            <Space style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+              <Button type="text"
+                icon={isMobile ? <MenuOutlined /> : (siderCollapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />)}
+                onClick={() => isMobile ? setMobileSidebarOpen(true) : setSiderCollapsed(!siderCollapsed)}
+                style={{
+                  color: 'var(--ab-text-3)',
+                  flexShrink: 0,
+                  // 2026-07-25: 移动端会话切换按钮加背景色 + Badge, 让用户更容易发现入口.
+                  // 之前按钮太不起眼, 用户进入会话后找不到如何打开会话列表切换.
+                  background: isMobile ? 'var(--ab-bg-3)' : 'transparent',
+                  borderRadius: 8,
+                  paddingInline: isMobile ? 10 : 7,
+                  minHeight: 36,
+                }} />
+              {isMobile && sessions.length > 0 && (
+                <Badge
+                  count={sessions.length}
+                  style={{
+                    backgroundColor: 'var(--ab-copper)',
+                    marginLeft: -8,
+                    marginTop: -10,
+                    fontSize: 10,
+                    minWidth: 16,
+                    height: 16,
+                    lineHeight: '16px',
+                    boxShadow: '0 0 0 2px var(--ab-bg-1)',
+                  }}
+                />
+              )}
               {activeTab === 'chat' ? (() => {
                 const curSess = sessions.find(s => s.id === sessionId)
                 const chKey = curSess?.channel || currentChannel
@@ -3212,19 +3280,19 @@ const handleDeleteSession = (id) => {
                 const chDef = ALL_CHANNELS.find(c => c.key === normalizedChKey)
                 return (
                   <>
-                    {chDef?.icon && <span style={{ color: 'var(--ab-copper)', fontSize: 15, display: 'inline-flex', alignItems: 'center' }}>{chDef.icon}</span>}
-                    <Text style={{ color: 'var(--ab-text)', fontSize: 14, fontWeight: 500, fontFamily: "'Hanken Grotesk', system-ui, sans-serif" }}>
+                    {chDef?.icon && <span style={{ color: 'var(--ab-copper)', fontSize: 15, display: 'inline-flex', alignItems: 'center', flexShrink: 0 }}>{chDef.icon}</span>}
+                    <Text style={{ color: 'var(--ab-text)', fontSize: 14, fontWeight: 500, fontFamily: "'Hanken Grotesk', system-ui, sans-serif", overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
                       {curSess?.title || t('nav.newChat')}
                     </Text>
-                    {chDef && <Tag style={{ fontSize: 11, marginInlineEnd: 0, color: 'var(--ab-text-3)', borderColor: 'var(--ab-line)', background: 'var(--ab-bg-3)', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.05em' }}>({chDef.label})</Tag>}
+                    {chDef && !isMobile && <Tag style={{ fontSize: 11, marginInlineEnd: 0, color: 'var(--ab-text-3)', borderColor: 'var(--ab-line)', background: 'var(--ab-bg-3)', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.05em' }}>({chDef.label})</Tag>}
                   </>
                 )
               })() : (
-                <Text style={{ color: 'var(--ab-text-3)', fontSize: 14, fontFamily: "'Hanken Grotesk', system-ui, sans-serif" }}>
+                <Text style={{ color: 'var(--ab-text-3)', fontSize: isMobile ? 13 : 14, fontFamily: "'Hanken Grotesk', system-ui, sans-serif", overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {activeTab === 'documents' ? t('nav.companyDocuments') : activeTab === 'academic' ? '学术分析' : activeTab === 'academic_stats' ? 'ReAct 闭环统计' : activeTab === 'llm_management' ? 'LLM 模型管理' : activeTab === 'sales_orders' ? '销售单管理' : activeTab === 'purchase_orders' ? '采购单管理' : activeTab === 'reconciliations' ? '对账单管理' : activeTab === 'erp' ? t('erp.dataManagement') : activeTab === 'outbound_orders' ? t('erp.outboundOrders') : activeTab === 'inbound_orders' ? t('erp.inboundOrders') : activeTab === 'parts' ? t('erp.parts') : activeTab === 'customers' ? t('erp.customers') : activeTab === 'suppliers' ? t('erp.suppliers') : activeTab === 'customer_part_mappings' ? '客户料号映射' : activeTab === 'import_product_relation' ? '导入产品关系' : activeTab === 'crm_customers' ? 'CRM 客户管理' : activeTab === 'crm_contacts' ? 'CRM 联系人管理' : activeTab === 'crm_leads' ? 'CRM 线索管理' : activeTab === 'crm_opportunities' ? 'CRM 商机管理' : activeTab === 'crm_contracts' ? 'CRM 合同管理' : activeTab === 'crm_payment_plans' ? 'CRM 回款计划' : activeTab === 'crm_payment_records' ? 'CRM 回款记录' : activeTab === 'crm_follow_ups' ? 'CRM 跟进记录' : activeTab === 'dashboard' ? t('erp.dashboard') : activeTab === 'databases' ? t('nav.databases') : activeTab === 'monitor' ? 'autobot-monitor' : (sessions.find(s => s.id === sessionId)?.title || t('nav.newChat'))}
                 </Text>
               )}
-              {activeTab === 'chat' && (sessions.find(s => s.id === sessionId)?.channel === 'code' || (!sessions.find(s => s.id === sessionId)?.channel && currentChannel === 'code')) && workspaceDir && (
+              {activeTab === 'chat' && (sessions.find(s => s.id === sessionId)?.channel === 'code' || (!sessions.find(s => s.id === sessionId)?.channel && currentChannel === 'code')) && workspaceDir && !isMobile && (
                 <Tag
                   icon={<FolderOpenOutlined />}
                   style={{ fontSize: 11, maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', cursor: 'pointer' }}
@@ -3238,7 +3306,7 @@ const handleDeleteSession = (id) => {
                   📁 {workspaceDir.length > 40 ? '...' + workspaceDir.slice(-40) : workspaceDir}
                 </Tag>
               )}
-              {activeTab === 'chat' && (sessions.find(s => s.id === sessionId)?.channel === 'code' || (!sessions.find(s => s.id === sessionId)?.channel && currentChannel === 'code')) && workspaceDir && sessionId && (
+              {activeTab === 'chat' && (sessions.find(s => s.id === sessionId)?.channel === 'code' || (!sessions.find(s => s.id === sessionId)?.channel && currentChannel === 'code')) && workspaceDir && sessionId && !isMobile && (
                 <Button
                   size="small"
                   icon={<ApartmentOutlined />}
@@ -3249,28 +3317,39 @@ const handleDeleteSession = (id) => {
                 </Button>
               )}
             </Space>
-            {activeTab === 'chat' && (
-              <Space>
-                <Tooltip title={liveLogActive ? (showLogs ? 'Hide live logs' : 'Show live logs') : 'No active logs'}>
-                  <Button type="text" icon={<CodeOutlined />}
-                    onClick={() => setShowLogs(!showLogs)}
-                    style={{ color: showLogs && liveLogActive ? 'var(--ab-copper)' : 'var(--ab-text-3)' }}
-                    disabled={!liveLogActive} />
+            <Space style={{ flexShrink: 0 }}>
+              {activeTab === 'chat' && (
+                <>
+                  {/* Mobile: toggle right issues/interactive panel as a Drawer.
+                      2026-07-25: 改用 BarsOutlined 图标, 避免和左侧会话列表按钮(MenuOutlined)混淆. */}
+                  {isMobile && sessionId && (
+                    <Tooltip title="Issues & Interactive panel">
+                      <Button type="text" icon={<BarsOutlined />}
+                        onClick={() => setMobilePanelOpen(true)}
+                        style={{ color: 'var(--ab-text-3)' }} />
+                    </Tooltip>
+                  )}
+                  <Tooltip title={liveLogActive ? (showLogs ? 'Hide live logs' : 'Show live logs') : 'No active logs'}>
+                    <Button type="text" icon={<CodeOutlined />}
+                      onClick={() => setShowLogs(!showLogs)}
+                      style={{ color: showLogs && liveLogActive ? 'var(--ab-copper)' : 'var(--ab-text-3)' }}
+                      disabled={!liveLogActive} />
+                  </Tooltip>
+                </>
+              )}
+              <Dropdown menu={{
+                items: [
+                  { key: 'zh-CN', label: '中文', onClick: () => { i18n.changeLanguage('zh-CN'); localStorage.setItem('autobot_lang', 'zh-CN'); } },
+                  { key: 'en-US', label: 'English', onClick: () => { i18n.changeLanguage('en-US'); localStorage.setItem('autobot_lang', 'en-US'); } },
+                ],
+                selectedKeys: [i18n.language]
+              }}>
+                <Tooltip title={t('language.switchTo')}>
+                  <Button type="text" icon={<GlobalOutlined />} style={{ color: 'var(--ab-text-3)' }} />
                 </Tooltip>
-                </Space>
-            )}
-            <Dropdown menu={{
-              items: [
-                { key: 'zh-CN', label: '中文', onClick: () => { i18n.changeLanguage('zh-CN'); localStorage.setItem('autobot_lang', 'zh-CN'); } },
-                { key: 'en-US', label: 'English', onClick: () => { i18n.changeLanguage('en-US'); localStorage.setItem('autobot_lang', 'en-US'); } },
-              ],
-              selectedKeys: [i18n.language]
-            }}>
-              <Tooltip title={t('language.switchTo')}>
-                <Button type="text" icon={<GlobalOutlined />} style={{ color: 'var(--ab-text-3)' }} />
-              </Tooltip>
-            </Dropdown>
-            <ThemeSwitcher size="small" />
+              </Dropdown>
+              <ThemeSwitcher size="small" />
+            </Space>
           </Header>
 
           {/* Content Area */}
@@ -3353,8 +3432,8 @@ const handleDeleteSession = (id) => {
               {messages.length === 0 && !sessionId ? (
                 // 2026-07-13: 删除当前会话后, 改为"创建会话引导页"
                 // (旧逻辑: 复用 greeting 占位 + input 区仍显示, 体验割裂)
-                <div style={{ flex: 1, overflow: 'auto', padding: '40px 24px' }} className="custom-scrollbar">
-                  <div style={{ maxWidth: 880, margin: '0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                <div style={{ flex: 1, overflow: 'auto', padding: isMobile ? '24px 14px' : '40px 24px' }} className="custom-scrollbar">
+                  <div style={{ maxWidth: isMobile ? '100%' : 880, margin: '0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                     <ThunderboltOutlined style={{ fontSize: 56, color: '#d4a574', opacity: 0.75, marginBottom: 20 }} />
                     <Title level={2} style={{ color: '#e8e3d8', fontFamily: "'Fraunces', serif", fontWeight: 300, letterSpacing: '-0.02em', marginBottom: 8 }}>
                       开始新对话
@@ -3364,7 +3443,7 @@ const handleDeleteSession = (id) => {
                     </Text>
 
                     {/* Channel 卡片网格 — 点击即 startNewSession(key) */}
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12, width: '100%', marginBottom: 28 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12, width: '100%', marginBottom: 28 }}>
                       {ALL_CHANNELS.map(ch => (
                         <div key={ch.key}
                           role="button"
@@ -3435,7 +3514,7 @@ const handleDeleteSession = (id) => {
                 </div>
               ) : messages.length === 0 ? (
                 <div style={{ flex: 1, overflow: 'auto', padding: '24px 0' }} className="custom-scrollbar">
-                  <div style={{ maxWidth: 1000, margin: '0 auto', padding: '0 24px' }}>
+                  <div style={{ maxWidth: 1000, margin: '0 auto', padding: isMobile ? '0 12px' : '0 24px' }}>
                     {isLoading ? (
                       <SessionSkeleton />
                     ) : activeScheduledTask ? (
@@ -3463,7 +3542,7 @@ const handleDeleteSession = (id) => {
                     itemContent={(index) => {
                       const msg = messages[index]
                       return (
-                        <div style={{ maxWidth: 1000, margin: '0 auto', padding: '0 24px' }}>
+                        <div style={{ maxWidth: 1000, margin: '0 auto', padding: isMobile ? '0 12px' : '0 24px' }}>
                           <MessageBubble msg={msg} onDelete={() => handleDeleteMessage(msg.id || msg._localId)} />
                           {msg.explanation && <ResultExplanationCard explanation={msg.explanation} />}
                           {msg.paramSources && <ParamSourceCard paramSources={msg.paramSources} />}
@@ -3473,7 +3552,7 @@ const handleDeleteSession = (id) => {
                     }}
                     components={{
                       Header: () => isParsingHistory && !isLoading ? (
-                        <div style={{ maxWidth: 1000, margin: '0 auto', padding: '0 24px' }}>
+                        <div style={{ maxWidth: 1000, margin: '0 auto', padding: isMobile ? '0 12px' : '0 24px' }}>
                           <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
                             <Avatar icon={<RobotOutlined />} size={32} style={{ background: '#1677ff', flexShrink: 0 }} />
                             <div>
@@ -3487,7 +3566,7 @@ const handleDeleteSession = (id) => {
                         </div>
                       ) : null,
                       Footer: () => isLoading && messages.length > 0 ? (
-                        <div style={{ maxWidth: 1000, margin: '0 auto', padding: '0 24px' }}>
+                        <div style={{ maxWidth: 1000, margin: '0 auto', padding: isMobile ? '0 12px' : '0 24px' }}>
                           <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
                             <Avatar icon={<RobotOutlined />} size={32} style={{ background: '#1677ff', flexShrink: 0 }} />
                             <div>
@@ -3507,8 +3586,8 @@ const handleDeleteSession = (id) => {
 
               {/* Input — 没有 sessionId 时不显示 (用户在"创建会话引导页"上, 见上方分支) */}
               {!sessionId ? null : activeScheduledTask ? (
-                <div style={{ padding: '16px 24px', background: '#0e0e0e', borderTop: '1px solid #2a2620', display: 'flex', justifyContent: 'center' }}>
-                  <div style={{ maxWidth: 760, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#161613', padding: '12px 24px', borderRadius: 4, border: '1px solid #2a2620' }}>
+                <div style={{ padding: isMobile ? '10px 12px' : '16px 24px', background: '#0e0e0e', borderTop: '1px solid #2a2620', display: 'flex', justifyContent: 'center', overflowX: 'auto' }}>
+                  <div style={{ maxWidth: 760, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#161613', padding: isMobile ? '10px 12px' : '12px 24px', borderRadius: 4, border: '1px solid #2a2620', gap: 12, flexWrap: 'wrap' }}>
                     <Space size="large">
                       <div>
                         <Text style={{ color: '#807a6e', fontSize: 11, display: 'block', marginBottom: 4, textTransform: 'uppercase', fontFamily: "'JetBrains Mono', monospace", letterSpacing: '0.1em' }}>Frequency</Text>
@@ -3570,7 +3649,7 @@ const handleDeleteSession = (id) => {
                   </div>
                 </div>
               ) : (
-                <div style={{ padding: '0 24px 20px', background: '#0a0a0a', borderTop: '1px solid #2a2620' }}>
+                <div style={{ padding: isMobile ? '0 12px 14px' : '0 24px 20px', background: '#0a0a0a', borderTop: '1px solid #2a2620' }}>
                   <div style={{ maxWidth: 760, margin: '0 auto' }}>
                     {/* ── ERP 快速操作栏 — 业务会话 (cross/erp) 显示 ──
                         Phase 4: erp/crm 合并为 cross channel 后, 标签按域动态切换.
@@ -3742,14 +3821,11 @@ const handleDeleteSession = (id) => {
                 reuses the existing session to fetch /api/code-analysis/{id}/issues
                 and lets the user mark items fixed/ignored. Strikes through
                 issues whose status === 'fixed' | 'ignored' so the user can
-                see at a glance which items remain. */}
-            {activeTab === 'chat' && sessionId && (
-              <div style={{
-                width: 320, flexShrink: 0,
-                borderLeft: '1px solid #2a2620',
-                background: '#0a0a0a',
-                overflowY: 'auto'
-              }}>
+                see at a glance which items remain.
+                Mobile: rendered inside a right-side Drawer toggled from the header. */}
+            {activeTab === 'chat' && sessionId && (() => {
+              const rightPanelInner = (
+                <>
                 <InteractivePanel sessionId={sessionId} />
                 {/* 阶段5: ERP 订单表单弹窗 — 收到 reply_context.formSpec 时弹出 */}
                 <OrderFormModal
@@ -3930,8 +4006,30 @@ const handleDeleteSession = (id) => {
                   }}
                   />
                 )}
-              </div>
-            )}
+                </>
+              )
+              return isMobile ? (
+                <Drawer
+                  placement="right"
+                  open={mobilePanelOpen}
+                  onClose={() => setMobilePanelOpen(false)}
+                  width="85%"
+                  title="Issues & Interactive"
+                  styles={{ body: { padding: 0, background: '#0a0a0a', overflowY: 'auto' }, header: { background: 'var(--ab-bg-1)', borderBottom: '1px solid var(--ab-line)' } }}
+                >
+                  {rightPanelInner}
+                </Drawer>
+              ) : (
+                <div style={{
+                  width: 320, flexShrink: 0,
+                  borderLeft: '1px solid #2a2620',
+                  background: '#0a0a0a',
+                  overflowY: 'auto'
+                }}>
+                  {rightPanelInner}
+                </div>
+              )
+            })()}
 
             {/* Log Panel */}
             {showLogs && liveLogActive && (

@@ -12,13 +12,14 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Button, Spin, message, Tooltip, Modal, Form, Input, InputNumber, Popconfirm, Select, Empty, Checkbox } from 'antd'
+import { Button, Spin, message, Tooltip, Modal, Form, Input, InputNumber, Popconfirm, Select, Empty, Checkbox, Drawer, Grid } from 'antd'
 import {
   ArrowLeftOutlined, ArrowRightOutlined, EditOutlined, ReadOutlined,
   CopyOutlined, FileTextOutlined, ReloadOutlined, StopOutlined,
   PlusOutlined, CheckOutlined, CloseOutlined, RollbackOutlined,
   LeftOutlined, RightOutlined, UpOutlined, DownOutlined,
   DeleteOutlined, SettingOutlined, LockOutlined, TeamOutlined, UserOutlined, ShareAltOutlined,
+  MenuOutlined,
 } from '@ant-design/icons'
 import ReactFlow, { Background, Controls, MiniMap, MarkerType } from 'reactflow'
 import 'reactflow/dist/style.css'
@@ -446,13 +447,14 @@ function BookReader({
           2026-07-21 阅读体验优化:
             - grid 高度从固定 minHeight:480 改为 calc(100vh - 200px), 让书本占满视口
             - 左目录宽度从 220px 缩到 200px, 给正文更多空间
-            - 目录 maxHeight 同步改为 height: calc(100vh - 200px), 与正文区同高 */}
-      <div style={{ display: 'grid', gridTemplateColumns: '200px 1fr', height: 'calc(100vh - 200px)', minHeight: 520 }}>
+            - 目录 maxHeight 同步改为 height: calc(100vh - 200px), 与正文区同高
+          Mobile: 单列堆叠, 目录变矮 (160px) + 横向可滚动, 翻页区占满剩余高度 */}
+      <div className="novel-book-grid" style={{ display: 'grid', gridTemplateColumns: '200px 1fr', height: 'calc(100vh - 200px)', minHeight: 520 }}>
         {/* 左: 章节目录 */}
-        <div style={{
+        <div className="novel-book-toc custom-scrollbar" style={{
           background: 'var(--ab-bg-2)', borderRight: '1px solid var(--ab-line)',
           padding: '14px 10px', overflow: 'auto', height: '100%',
-        }} className="custom-scrollbar">
+        }}>
           <div style={{ ...mono, fontSize: 10, color: 'var(--ab-text-4)', letterSpacing: '0.15em', textTransform: 'uppercase', marginBottom: 10, padding: '0 4px' }}>
             CONTENTS · 目录
           </div>
@@ -504,7 +506,7 @@ function BookReader({
         </div>
 
         {/* 右: 书本翻页区 */}
-        <div style={{
+        <div className="novel-book-pages" style={{
           position: 'relative',
           background: 'radial-gradient(ellipse at center, var(--ab-bg-3) 0%, var(--ab-bg) 70%)',
           overflow: 'hidden',
@@ -533,7 +535,7 @@ function BookReader({
                 position: 'absolute', inset: 0, padding: '32px 56px 32px 56px',
                 transformStyle: 'preserve-3d', transformOrigin: 'left center', overflow: 'auto',
               }}
-              className="custom-scrollbar"
+              className="custom-scrollbar novel-book-page-content"
             >
               <BookPage chapter={current} selectedGenre={selectedGenre} activeIdx={activeIdx} total={chapters.length} />
             </motion.div>
@@ -1069,6 +1071,11 @@ function OutlineProgressPanel({ chapters, totalExpected, generating, collapsed, 
 }
 
 export default function NovelPage({ user }) {
+  // ── Responsive breakpoint ──
+  const screens = Grid.useBreakpoint()
+  const isMobile = !screens.md
+  const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false)
+
   // 2026-07-20: 进入小说页时自动折叠全局 Sider, 与学术页行为一致
   const setSiderCollapsed = useUIStore(s => s.setSiderCollapsed)
   useEffect(() => {
@@ -1076,6 +1083,12 @@ export default function NovelPage({ user }) {
     if (!prevCollapsed) setSiderCollapsed(true)
     return () => { if (!prevCollapsed) setSiderCollapsed(false) }
   }, [setSiderCollapsed])
+
+  // Mobile: close history drawer when a history item is selected or new novel is created.
+  // Uses closures that reference loadHistoryItem/handleReset defined later — safe because
+  // these wrappers are only invoked via user interaction after full render.
+  const loadHistoryItemMobile = (item) => { loadHistoryItem(item); setMobileHistoryOpen(false) }
+  const handleResetMobile = () => { handleReset(); setMobileHistoryOpen(false) }
 
   // ── 步骤状态 ──
   // 2026-07-21: 三步 → 四步流程, 在提要与生成之间插入"人物关系图谱"独立步骤
@@ -1217,6 +1230,9 @@ export default function NovelPage({ user }) {
   const lastProgressTimeRef = useRef(Date.now())
 
   // ── 2026-07-21: 加载用户自定义小说模板 ──
+  // 2026-07-25: 自定义模板是可选功能, 加载失败不应阻塞页面 (4 个内置题材卡片
+  // 不依赖此 API). 改为 console.warn 静默降级, 避免移动端 token 缺失时弹出
+  // "加载自定义模板失败" toast 影响用户体验.
   const loadUserTemplates = useCallback(async () => {
     setLoadingTemplates(true)
     try {
@@ -1224,8 +1240,8 @@ export default function NovelPage({ user }) {
       const list = Array.isArray(res.data) ? res.data : []
       setUserTemplates(list)
     } catch (err) {
-      console.error('[NovelPage] loadUserTemplates failed:', err)
-      message.error('加载自定义模板失败')
+      console.warn('[NovelPage] loadUserTemplates failed (non-blocking):', err?.response?.status || err?.message)
+      setUserTemplates([])
     } finally {
       setLoadingTemplates(false)
     }
@@ -1370,7 +1386,23 @@ export default function NovelPage({ user }) {
       const novels = all.filter(r => r.reportType === 'novel')
       setHistory(novels)
     } catch (err) {
-      console.error('[NovelPage] loadHistory failed:', err)
+      // 2026-07-25: 401 由 auth.js 响应拦截器统一处理(reload 回登录页), 这里不弹错误.
+      const status = err?.response?.status
+      if (status === 401) {
+        setHistory([])
+        return
+      }
+      // 2026-07-25: 显示完整诊断信息 — 请求URL + 错误类型 + 状态码,
+      // 帮助定位"请求未到达后端"的根因(如 backend_host 配置错误、网络不通、CORS 拦截).
+      const reqUrl = err?.config?.baseURL + err?.config?.url || ''
+      const errCode = err?.code || (err?.message?.includes('Network') ? 'Network Error' : '')
+      const detail = status ? `HTTP ${status}` : (errCode || err?.message || '未知错误')
+      console.error('[NovelPage] loadHistory failed:', { url: reqUrl, err })
+      message.error({
+        content: `加载小说列表失败: ${detail}${reqUrl ? `\n请求: ${reqUrl}` : ''}`,
+        duration: 10,
+      })
+      setHistory([])
     } finally {
       setLoadingHistory(false)
     }
@@ -2875,89 +2907,116 @@ export default function NovelPage({ user }) {
         @media (max-width: 720px) { .novel-genre-grid { grid-template-columns: 1fr !important; } }
       `}</style>
 
-      {/* ── 左栏: 历史列表 280px ── */}
-      <div style={{
-        width: 280, flexShrink: 0, borderRight: '1px solid var(--ab-line)',
-        background: 'var(--ab-bg-2)', overflow: 'auto', padding: '24px 16px',
-      }} className="custom-scrollbar">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <div>
-            <div style={{ ...mono, fontSize: 10, color: 'var(--ab-text-4)', letterSpacing: '0.15em', textTransform: 'uppercase' }}>LIBRARY</div>
-            <div style={{ ...serif, fontSize: 18, fontWeight: 500, color: 'var(--ab-text)', marginTop: 2 }}>我的小说</div>
-          </div>
-          <Button size="small" type="text" icon={<PlusOutlined />} onClick={handleReset}
-            style={{ color: 'var(--ab-copper)' }} title="新建小说" />
-        </div>
-
-        {loadingHistory && <div style={{ textAlign: 'center', padding: 20 }}><Spin size="small" /></div>}
-
-        {!loadingHistory && history.length === 0 && (
-          <div style={{ textAlign: 'center', padding: '40px 16px', color: 'var(--ab-text-4)' }}>
-            <EditOutlined style={{ fontSize: 28, opacity: 0.4, marginBottom: 12 }} />
-            <div style={{ ...body, fontSize: 12.5 }}>还没有小说作品</div>
-            <div style={{ ...mono, fontSize: 10, marginTop: 4, opacity: 0.7 }}>从右侧第一步开始创作</div>
-          </div>
-        )}
-
-        {history.map(item => {
-          const g = NOVEL_GENRES.find(x => x.id === item.templateId)
-          const isActive = item.id === researchId
-          return (
-            <div key={item.id} className="novel-history-item"
-              onClick={() => loadHistoryItem(item)}
-              style={{
-                padding: '12px 12px', borderRadius: 6, marginBottom: 6, cursor: 'pointer',
-                background: isActive ? 'var(--ab-surface)' : 'transparent',
-                border: isActive ? '1px solid var(--ab-copper)' : '1px solid transparent',
-                transition: 'all 0.2s',
-              }}
-              onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = 'var(--ab-bg-3)' }}
-              onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.background = 'transparent' }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                {g && <div style={{ width: 3, height: 14, background: g.accent, borderRadius: 1 }} />}
-                <span style={{ ...serif, fontSize: 13.5, fontWeight: 500, color: 'var(--ab-text)',
-                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                  {/* 2026-07-23: 优先显示书名 (弧线标题), 回退到 topic */}
-                  {item.bookName || item.topic || '未命名'}
-                </span>
-                <CloseOutlined className="novel-history-delete"
-                  onClick={(e) => handleDeleteHistory(item.id, e)}
-                  style={{ fontSize: 11, color: 'var(--ab-text-4)', opacity: 0, transition: 'opacity 0.15s', flexShrink: 0 }} />
+      {/* ── 左栏: 历史列表 280px ──
+          Mobile: 渲染为左侧 Drawer，由 header 汉堡按钮触发。 */}
+      {(() => {
+        const sidebarInner = (
+          <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <div>
+                <div style={{ ...mono, fontSize: 10, color: 'var(--ab-text-4)', letterSpacing: '0.15em', textTransform: 'uppercase' }}>LIBRARY</div>
+                <div style={{ ...serif, fontSize: 18, fontWeight: 500, color: 'var(--ab-text)', marginTop: 2 }}>我的小说</div>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, ...mono, fontSize: 10, color: 'var(--ab-text-4)' }}>
-                {g && <span>{g.name}</span>}
-                {g && <span>·</span>}
-                <span>{(item.status || '').toUpperCase()}</span>
-                {item.progress > 0 && item.status === 'generating' && <span>· {item.progress}%</span>}
-              </div>
+              <Button size="small" type="text" icon={<PlusOutlined />} onClick={isMobile ? handleResetMobile : handleReset}
+                style={{ color: 'var(--ab-copper)' }} title="新建小说" />
             </div>
-          )
-        })}
-      </div>
+
+            {loadingHistory && <div style={{ textAlign: 'center', padding: 20 }}><Spin size="small" /></div>}
+
+            {!loadingHistory && history.length === 0 && (
+              <div style={{ textAlign: 'center', padding: '40px 16px', color: 'var(--ab-text-4)' }}>
+                <EditOutlined style={{ fontSize: 28, opacity: 0.4, marginBottom: 12 }} />
+                <div style={{ ...body, fontSize: 12.5 }}>还没有小说作品</div>
+                <div style={{ ...mono, fontSize: 10, marginTop: 4, opacity: 0.7 }}>从右侧第一步开始创作</div>
+              </div>
+            )}
+
+            {history.map(item => {
+              const g = NOVEL_GENRES.find(x => x.id === item.templateId)
+              const isActive = item.id === researchId
+              return (
+                <div key={item.id} className="novel-history-item"
+                  onClick={() => isMobile ? loadHistoryItemMobile(item) : loadHistoryItem(item)}
+                  style={{
+                    padding: '12px 12px', borderRadius: 6, marginBottom: 6, cursor: 'pointer',
+                    background: isActive ? 'var(--ab-surface)' : 'transparent',
+                    border: isActive ? '1px solid var(--ab-copper)' : '1px solid transparent',
+                    transition: 'all 0.2s',
+                  }}
+                  onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = 'var(--ab-bg-3)' }}
+                  onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.background = 'transparent' }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    {g && <div style={{ width: 3, height: 14, background: g.accent, borderRadius: 1 }} />}
+                    <span style={{ ...serif, fontSize: 13.5, fontWeight: 500, color: 'var(--ab-text)',
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                      {/* 2026-07-23: 优先显示书名 (弧线标题), 回退到 topic */}
+                      {item.bookName || item.topic || '未命名'}
+                    </span>
+                    <CloseOutlined className="novel-history-delete"
+                      onClick={(e) => handleDeleteHistory(item.id, e)}
+                      style={{ fontSize: 11, color: 'var(--ab-text-4)', opacity: 0, transition: 'opacity 0.15s', flexShrink: 0 }} />
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, ...mono, fontSize: 10, color: 'var(--ab-text-4)' }}>
+                    {g && <span>{g.name}</span>}
+                    {g && <span>·</span>}
+                    <span>{(item.status || '').toUpperCase()}</span>
+                    {item.progress > 0 && item.status === 'generating' && <span>· {item.progress}%</span>}
+                  </div>
+                </div>
+              )
+            })}
+          </>
+        )
+        return isMobile ? (
+          <Drawer
+            placement="left" open={mobileHistoryOpen} onClose={() => setMobileHistoryOpen(false)}
+            width={280} closable={false}
+            styles={{ body: { padding: '24px 16px', background: 'var(--ab-bg-2)', overflow: 'auto' }, header: { display: 'none' } }}
+          >
+            {sidebarInner}
+          </Drawer>
+        ) : (
+          <div style={{
+            width: 280, flexShrink: 0, borderRight: '1px solid var(--ab-line)',
+            background: 'var(--ab-bg-2)', overflow: 'auto', padding: '24px 16px',
+          }} className="custom-scrollbar">
+            {sidebarInner}
+          </div>
+        )
+      })()}
 
       {/* ── 主区 ──
           2026-07-21 阅读体验优化:
             - padding 从 '36px 40px 80px' → '24px 32px 60px' (减少外层留白, 让 BookReader 占更多空间)
             - maxWidth 从 1200 → 1440 (加宽整体容器, 配合用户偏好"减少两侧空白") */}
-      <div style={{ flex: 1, overflow: 'auto', padding: '24px 32px 60px' }} className="custom-scrollbar">
+      <div style={{ flex: 1, overflow: 'auto', padding: isMobile ? '20px 14px 50px' : '24px 32px 60px' }} className="custom-scrollbar">
         <div style={{ maxWidth: 1440, margin: '0 auto' }}>
           {/* 页眉 */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 36 }}>
-            <div>
-              <div style={{ ...mono, fontSize: 11, color: 'var(--ab-copper)', letterSpacing: '0.2em', textTransform: 'uppercase', marginBottom: 6 }}>
-                ✒️ Novel Atelier
-              </div>
-              <h1 style={{ ...serif, fontSize: 38, fontWeight: 400, color: 'var(--ab-text)', margin: 0, letterSpacing: '-0.02em', lineHeight: 1 }}>
-                小说创作
-              </h1>
-              <div style={{ ...body, fontSize: 13, color: 'var(--ab-text-3)', marginTop: 8 }}>
-                选题材 · 写提要 · 一键生成 · 长篇分层结构 · 自动断点续传
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: isMobile ? 24 : 36, gap: 12 }}>
+            <div style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: 12 }}>
+              {/* Mobile: 汉堡按钮打开历史列表 Drawer */}
+              {isMobile && (
+                <Button type="text" icon={<MenuOutlined />} onClick={() => setMobileHistoryOpen(true)}
+                  style={{ color: 'var(--ab-text-3)', flexShrink: 0 }} />
+              )}
+              <div style={{ minWidth: 0 }}>
+                <div style={{ ...mono, fontSize: 11, color: 'var(--ab-copper)', letterSpacing: '0.2em', textTransform: 'uppercase', marginBottom: 6 }}>
+                  ✒️ Novel Atelier
+                </div>
+                <h1 style={{ ...serif, fontSize: isMobile ? 26 : 38, fontWeight: 400, color: 'var(--ab-text)', margin: 0, letterSpacing: '-0.02em', lineHeight: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  小说创作
+                </h1>
+                {!isMobile && (
+                  <div style={{ ...body, fontSize: 13, color: 'var(--ab-text-3)', marginTop: 8 }}>
+                    选题材 · 写提要 · 一键生成 · 长篇分层结构 · 自动断点续传
+                  </div>
+                )}
               </div>
             </div>
             {researchId && (
               <Button icon={<PlusOutlined />} onClick={handleReset}
-                style={{ borderColor: 'var(--ab-line)', color: 'var(--ab-text-2)' }}>
+                style={{ borderColor: 'var(--ab-line)', color: 'var(--ab-text-2)', flexShrink: 0 }}>
                 新建小说
               </Button>
             )}
@@ -3052,7 +3111,8 @@ export default function NovelPage({ user }) {
                     可自定义章节数、每章字数、偏好重点和整体逻辑流程。
                   </div>
                 ) : (
-                  <div style={{
+                  <div className="novel-genre-grid"
+                    style={{
                     display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14,
                   }}>
                     {userTemplates.map(tpl => {
