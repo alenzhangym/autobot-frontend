@@ -102,7 +102,7 @@ export default function LogPanel({ isOpen, onClose, localTerminalOutput }) {
   if (!isOpen) return null
 
   return (
-    <div style={{
+    <div className="ab-log-panel" style={{
       width: 320, minWidth: 280, maxWidth: 400, display: 'flex', flexDirection: 'column',
       background: '#111', borderLeft: '1px solid #1f1f1f', height: '100%',
       position: 'absolute', right: 0, top: 0, bottom: 0, zIndex: 100,
