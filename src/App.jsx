@@ -40,6 +40,7 @@ import ReconciliationManagement from './ReconciliationManagement'
 import CompanyManagement from './CompanyManagement'
 import InventoryManagement from './InventoryManagement'
 import AuditLogManagement from './AuditLogManagement'
+import PlanLearningManagement from './PlanLearningManagement'
 import CrmCustomerManagement from './CrmCustomerManagement'
 import CrmContactManagement from './CrmContactManagement'
 import CrmLeadManagement from './CrmLeadManagement'
@@ -3306,6 +3307,8 @@ const handleDeleteSession = (id) => {
             <InventoryManagement user={user} companies={companies} />
           ) : activeTab === 'audit_logs' ? (
             <AuditLogManagement user={user} />
+          ) : activeTab === 'plan_learning' && isSuperAdmin ? (
+            <PlanLearningManagement user={user} />
           ) : activeTab === 'crm_customers' ? (
             <CrmCustomerManagement user={user} companies={companies} />
           ) : activeTab === 'crm_contacts' ? (
