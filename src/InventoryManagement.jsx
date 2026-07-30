@@ -90,6 +90,7 @@ export default function InventoryManagement({ user, companies = [] }) {
       currentStock: row.currentStock ?? 0,
       minStockAlert: row.minStockAlert ?? 0,
       unitPrice: row.unitPrice ?? 0,
+      avgPrice: row.avgPrice ?? 0,
       purchasePrice: row.purchasePrice ?? 0,
       location: row.location || '',
       supplierName: row.supplierName || '',
@@ -204,7 +205,7 @@ export default function InventoryManagement({ user, companies = [] }) {
 
   const handleBatchImport = async () => {
     if (!importText.trim()) { message.warning('请输入导入内容'); return }
-    // 解析每行: 型号 数量 单价 [采购价]
+    // 解析每行: 型号 数量 单价 [采购价] [均价]
     const lines = importText.trim().split('\n').map(l => l.trim()).filter(Boolean)
     const items = []
     const errors = []
@@ -215,8 +216,11 @@ export default function InventoryManagement({ user, companies = [] }) {
       const currentStock = parseInt(parts[1], 10)
       const unitPrice = parseFloat(parts[2])
       const purchasePrice = parts[3] ? parseFloat(parts[3]) : unitPrice
+      const avgPrice = parts[4] ? parseFloat(parts[4]) : null  // 可选, 不提供则后端保留原值
       if (isNaN(currentStock) || isNaN(unitPrice)) { errors.push(`第 ${i + 1} 行: 数量或单价格式错误`); continue }
-      items.push({ userPartModel, currentStock, unitPrice, purchasePrice })
+      const item = { userPartModel, currentStock, unitPrice, purchasePrice }
+      if (avgPrice != null && !isNaN(avgPrice)) item.avgPrice = avgPrice
+      items.push(item)
     }
     if (items.length === 0) { message.error('无有效数据行'); return }
 
@@ -284,17 +288,9 @@ export default function InventoryManagement({ user, companies = [] }) {
       align: 'right', render: v => v != null ? Number(v).toFixed(4) : '-' },
     { title: '均价 (¥)', dataIndex: 'avgPrice', key: 'avgPrice', width: colWidths.avgPrice,
       align: 'right',
-      render: (v, r) => {
-        if (v == null) return <span style={{ color: '#888' }}>-</span>
-        const batchCount = r.batchCount || 0
-        const isMulti = batchCount > 1
-        return (
-          <Tooltip title={isMulti ? `基于 ${batchCount} 个批次的加权均价` : '单批次/无批次, 等于单价'}>
-            <span style={{ color: isMulti ? '#52c41a' : '#888', fontWeight: isMulti ? 600 : 400 }}>
-              {Number(v).toFixed(4)}
-            </span>
-          </Tooltip>
-        )
+      render: (v) => {
+        if (v == null || Number(v) === 0) return <span style={{ color: '#666' }}>0.0000</span>
+        return <span style={{ color: '#52c41a', fontWeight: 600 }}>{Number(v).toFixed(4)}</span>
       },
       sorter: (a, b) => (a.avgPrice || 0) - (b.avgPrice || 0),
     },
@@ -417,12 +413,17 @@ export default function InventoryManagement({ user, companies = [] }) {
               <InputNumber style={{ width: '100%' }} min={0} step={1} />
             </Form.Item>
             <Row gutter={12}>
-              <Col span={12}>
+              <Col span={8}>
                 <Form.Item name="unitPrice" label="单价 (¥)">
                   <InputNumber style={{ width: '100%' }} min={0} step={0.0001} precision={4} />
                 </Form.Item>
               </Col>
-              <Col span={12}>
+              <Col span={8}>
+                <Form.Item name="avgPrice" label="均价 (¥)" tooltip="由用户维护, 可留 0 后期填写">
+                  <InputNumber style={{ width: '100%' }} min={0} step={0.0001} precision={4} />
+                </Form.Item>
+              </Col>
+              <Col span={8}>
                 <Form.Item name="purchasePrice" label="采购价 (¥)">
                   <InputNumber style={{ width: '100%' }} min={0} step={0.0001} precision={4} />
                 </Form.Item>
@@ -534,11 +535,12 @@ export default function InventoryManagement({ user, companies = [] }) {
           width={640}
         >
           <div style={{ marginBottom: 12, color: '#888', fontSize: 12 }}>
-            每行一条，格式：<Text code>型号 数量 单价 [采购价]</Text><br/>
-            已有料号的库存会被覆盖更新，没有的会新建。每次导入都会记录批次（用于均价计算）。<br/>
+            每行一条，格式：<Text code>型号 数量 单价 [采购价] [均价]</Text><br/>
+            已有料号的库存会被覆盖更新，没有的会新建。每次导入都会记录批次。<br/>
+            <span style={{ color: '#faad14' }}>均价</span>：可选，不填则保留原值，原来也没有则为 0（后期可在编辑里维护）。<br/>
             示例：
             <pre style={{ background: '#141414', padding: 8, borderRadius: 4, marginTop: 4, fontSize: 11 }}>
-{`ACLCM-7060F-701-02A 1500 0.25 0.20
+{`ACLCM-7060F-701-02A 1500 0.25 0.20 0.22
 ACM3225F2DF-101T01-D 2000 0.18
 ACM4532F2NF-101T02-D 500 0.32 0.28`}
             </pre>
@@ -547,7 +549,7 @@ ACM4532F2NF-101T02-D 500 0.32 0.28`}
             value={importText}
             onChange={e => setImportText(e.target.value)}
             rows={10}
-            placeholder="每行: 型号 数量 单价 [采购价]"
+            placeholder="每行: 型号 数量 单价 [采购价] [均价]"
             style={{ fontFamily: 'monospace', fontSize: 12 }}
           />
           {importResult && (
@@ -615,11 +617,8 @@ ACM4532F2NF-101T02-D 500 0.32 0.28`}
           />
           {batchList.length > 0 && (
             <div style={{ marginTop: 12, padding: 8, background: '#0d3a2a', borderRadius: 4, fontSize: 12, color: '#52c41a' }}>
-              均价 = Σ(单价 × 剩余数量) / Σ(剩余数量) = ¥{(() => {
-                const totalQty = batchList.reduce((s, b) => s + (b.quantityRemaining || 0), 0)
-                const totalCost = batchList.reduce((s, b) => s + (b.unitCost || 0) * (b.quantityRemaining || 0), 0)
-                return totalQty > 0 ? (totalCost / totalQty).toFixed(4) : '0.0000'
-              })()}
+              当前均价 (用户维护): ¥{Number(batchDrawerRow?.avgPrice || 0).toFixed(4)}
+              <span style={{ color: '#888', marginLeft: 8 }}>· 可在编辑里修改</span>
             </div>
           )}
         </Drawer>
