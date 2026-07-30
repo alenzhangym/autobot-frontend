@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { Layout, Table, Button, Modal, Tag, Space, message, Card, Row, Col, Tooltip, Typography, Input, Statistic, Descriptions, Collapse } from 'antd'
+import { Layout, Table, Button, Modal, Tag, Space, message, Card, Row, Col, Tooltip, Typography, Input, Statistic, Descriptions, Collapse, Segmented } from 'antd'
 import { ReloadOutlined, EyeOutlined, WarningOutlined, CheckOutlined, CloseOutlined, ExportOutlined, ExperimentOutlined } from '@ant-design/icons'
 import { Resizable } from 'react-resizable'
 import 'react-resizable/css/styles.css'
@@ -27,6 +27,9 @@ const STATUS_COLORS = {
 
 export default function PlanLearningManagement({ user }) {
   const isSuperAdmin = isSuperAdminFn(user)
+  // ERP / CRM 领域切换 — 切换时重新加载对应领域的待审核列表 + 统计
+  const [domain, setDomain] = useState('erp')
+  const apiBase = `/${domain}/learning`
 
   const [rows, setRows] = useState([])
   const [page, setPage] = useState(1)
@@ -46,7 +49,7 @@ export default function PlanLearningManagement({ user }) {
     if (!isSuperAdmin) return
     setLoading(true)
     try {
-      const res = await api.get('/erp/learning/pending', { params: { page, size: pageSize } })
+      const res = await api.get(`${apiBase}/pending`, { params: { page, size: pageSize } })
       const payload = res.data?.data || res.data || {}
       setRows(payload.data || [])
     } catch (e) {
@@ -57,18 +60,18 @@ export default function PlanLearningManagement({ user }) {
       }
       setRows([])
     } finally { setLoading(false) }
-  }, [page, pageSize, isSuperAdmin])
+  }, [page, pageSize, isSuperAdmin, apiBase])
 
   const fetchStats = useCallback(async () => {
     if (!isSuperAdmin) return
     try {
-      const res = await api.get('/erp/learning/statistics')
+      const res = await api.get(`${apiBase}/statistics`)
       const payload = res.data?.data || res.data || {}
       setStats(payload)
     } catch (e) {
       // 静默
     }
-  }, [isSuperAdmin])
+  }, [isSuperAdmin, apiBase])
 
   useEffect(() => {
     fetchPending()
@@ -77,7 +80,7 @@ export default function PlanLearningManagement({ user }) {
 
   const handleApprove = async (id) => {
     try {
-      await api.post(`/erp/learning/${id}/approve`, { note: '' })
+      await api.post(`${apiBase}/${id}/approve`, { note: '' })
       message.success(`Plan #${id} 已确认, 训练样本已生成`)
       fetchPending()
       fetchStats()
@@ -89,7 +92,7 @@ export default function PlanLearningManagement({ user }) {
   const handleReject = async () => {
     if (!rejectModal) return
     try {
-      await api.post(`/erp/learning/${rejectModal.id}/reject`, { note: rejectNote })
+      await api.post(`${apiBase}/${rejectModal.id}/reject`, { note: rejectNote })
       message.success(`Plan #${rejectModal.id} 已标记错误`)
       setRejectModal(null)
       setRejectNote('')
@@ -102,7 +105,7 @@ export default function PlanLearningManagement({ user }) {
 
   const handleExport = async () => {
     try {
-      const res = await api.post('/erp/learning/export')
+      const res = await api.post(`${apiBase}/export`)
       const payload = res.data?.data || res.data || {}
       message.success(`已导出 ${payload.exported || 0} 条训练样本`)
       fetchStats()
@@ -113,7 +116,7 @@ export default function PlanLearningManagement({ user }) {
 
   const openDetail = async (r) => {
     try {
-      const res = await api.get(`/erp/learning/${r.id}`)
+      const res = await api.get(`${apiBase}/${r.id}`)
       const payload = res.data?.data || res.data || {}
       setSelected(payload)
       setShowDetailModal(true)
@@ -192,10 +195,20 @@ export default function PlanLearningManagement({ user }) {
       <Content style={{ padding: 24, height: '100%', overflow: 'auto' }}>
         <Row justify="space-between" align="middle" style={{ marginBottom: 16 }}>
           <Col>
-            <h2 style={{ color: '#e3e3e3', margin: 0 }}>
-              <ExperimentOutlined style={{ marginRight: 8 }} />
-              模型在线学习审核
-            </h2>
+            <Space align="center">
+              <h2 style={{ color: '#e3e3e3', margin: 0 }}>
+                <ExperimentOutlined style={{ marginRight: 8 }} />
+                模型在线学习审核
+              </h2>
+              <Segmented
+                value={domain}
+                onChange={(v) => { setDomain(v); setPage(1) }}
+                options={[
+                  { label: 'ERP', value: 'erp' },
+                  { label: 'CRM', value: 'crm' },
+                ]}
+              />
+            </Space>
           </Col>
           <Col>
             <Space>

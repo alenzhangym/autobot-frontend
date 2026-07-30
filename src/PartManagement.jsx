@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { Layout, Table, Button, Modal, Form, Input, Select, Tag, Space, message, Popconfirm, Row, Col, InputNumber, Typography } from 'antd'
-import { PlusOutlined, SearchOutlined, EditOutlined, DeleteOutlined, ReloadOutlined, MinusCircleOutlined } from '@ant-design/icons'
+import { Layout, Table, Button, Modal, Form, Input, Select, Tag, Space, message, Popconfirm, Row, Col, InputNumber, Typography, Upload, Statistic, Alert } from 'antd'
+import { PlusOutlined, SearchOutlined, EditOutlined, DeleteOutlined, ReloadOutlined, MinusCircleOutlined, UploadOutlined, InboxOutlined } from '@ant-design/icons'
 import { Resizable } from 'react-resizable'
 import 'react-resizable/css/styles.css'
 import api from './auth'
@@ -38,6 +38,12 @@ export default function PartManagement({ user, companies = [] }) {
   const [form] = Form.useForm()
   const [editing, setEditing] = useState(null)
   const [partTypes, setPartTypes] = useState(DEFAULT_PART_TYPES)
+  const [showImportModal, setShowImportModal] = useState(false)
+  const [importFileList, setImportFileList] = useState([])
+  const [importing, setImporting] = useState(false)
+  const [importResult, setImportResult] = useState(null)
+  const [selectedRowKeys, setSelectedRowKeys] = useState([])
+  const [batchDeleting, setBatchDeleting] = useState(false)
   const [colWidths, setColWidths] = useState({
     partType: 100, userPartModel: 180, manufacturer: 140,
     specsJson: 200, description: 160, minPackageQty: 80, action: 120,
@@ -137,6 +143,69 @@ export default function PartManagement({ user, companies = [] }) {
     }
   }
 
+  const handleBatchDelete = async () => {
+    if (selectedRowKeys.length === 0) { message.warning('请先勾选要删除的物料'); return }
+    setBatchDeleting(true)
+    try {
+      const res = await api.post('/erp/parts/batch-delete', { partIds: selectedRowKeys })
+      const result = res.data?.data || res.data || {}
+      const deleted = result.deleted || 0
+      const skipped = result.skipped || 0
+      const errors = result.errors || []
+      if (deleted > 0 && skipped === 0) {
+        message.success(`已批量删除 ${deleted} 个物料`)
+      } else if (deleted > 0 && skipped > 0) {
+        message.warning(`已删除 ${deleted} 个, 跳过 ${skipped} 个 (存在库存关联或不存在)`)
+      } else if (deleted === 0 && skipped > 0) {
+        message.error(`未能删除任何物料, 跳过 ${skipped} 个`)
+      }
+      if (errors.length > 0) {
+        Modal.info({
+          title: '批量删除详情',
+          width: 560,
+          content: (
+            <div style={{ maxHeight: 360, overflow: 'auto' }}>
+              <div style={{ marginBottom: 8 }}>成功 {deleted} 个，跳过 {skipped} 个：</div>
+              {errors.map((e, i) => <div key={i} style={{ color: '#faad14', fontSize: 12 }}>• {e}</div>)}
+            </div>
+          )
+        })
+      }
+      setSelectedRowKeys([])
+      fetchParts()
+    } catch (e) {
+      message.error('批量删除失败: ' + (e.response?.data?.error || e.message))
+    } finally {
+      setBatchDeleting(false)
+    }
+  }
+
+  const handleImport = async () => {
+    if (importFileList.length === 0) { message.warning('请先上传文件'); return }
+    setImporting(true)
+    setImportResult(null)
+    try {
+      const formData = new FormData()
+      formData.append('file', importFileList[0].originFileObj)
+      const res = await api.post('/erp/parts/import-excel', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      })
+      setImportResult(res.data?.data || res.data)
+      message.success('导入完成')
+      fetchParts()
+    } catch (e) {
+      message.error('导入失败: ' + (e.response?.data?.error || e.message))
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  const openImport = () => {
+    setImportFileList([])
+    setImportResult(null)
+    setShowImportModal(true)
+  }
+
   const handleResize = (key) => (e, { size }) => {
     setColWidths(prev => ({ ...prev, [key]: size.width }))
   }
@@ -183,8 +252,25 @@ export default function PartManagement({ user, companies = [] }) {
               style={{ width: 320 }} allowClear
             />
             <Button icon={<ReloadOutlined />} onClick={fetchParts}>{t('erp.action.refresh')}</Button>
+            {selectedRowKeys.length > 0 && (
+              <Popconfirm
+                title={`确认批量删除选中的 ${selectedRowKeys.length} 个物料？`}
+                description="存在库存关联的物料将自动跳过"
+                onConfirm={handleBatchDelete}
+                okText="删除"
+                cancelText="取消"
+                okButtonProps={{ danger: true, loading: batchDeleting }}
+              >
+                <Button danger icon={<DeleteOutlined />} loading={batchDeleting}>
+                  批量删除 ({selectedRowKeys.length})
+                </Button>
+              </Popconfirm>
+            )}
           </Space>
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('erp.action.createPart')}</Button>
+          <Space>
+            <Button icon={<UploadOutlined />} onClick={openImport}>导入物料</Button>
+            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('erp.action.createPart')}</Button>
+          </Space>
         </div>
 
         <Table
@@ -195,6 +281,10 @@ export default function PartManagement({ user, companies = [] }) {
           scroll={{ x: 'max-content' }}
           style={{ background: 'transparent' }}
           locale={{ emptyText: t('erp.noData') }}
+          rowSelection={{
+            selectedRowKeys,
+            onChange: (keys) => setSelectedRowKeys(keys),
+          }}
         />
 
         <Modal
@@ -252,6 +342,52 @@ export default function PartManagement({ user, companies = [] }) {
               <TextArea rows={2} />
             </Form.Item>
           </Form>
+        </Modal>
+
+        {/* 导入物料 Modal — 2列格式: 料号 | 最小包装 */}
+        <Modal
+          title="导入物料 (料号 / 最小包装)"
+          open={showImportModal} onCancel={() => setShowImportModal(false)}
+          width={640}
+          footer={[
+            <Button key="cancel" onClick={() => setShowImportModal(false)}>关闭</Button>,
+            <Button key="import" type="primary" loading={importing} icon={<UploadOutlined />}
+              onClick={handleImport}>开始导入</Button>,
+          ]}
+        >
+          <Alert
+            type="info" showIcon style={{ marginBottom: 12 }}
+            message="Excel 表头格式: 料号 | 最小包装"
+            description={'第 1 行为表头会被跳过。料号必填；最小包装为空则录入 0；非数字或负数行会被跳过并在结果中提示。物料不存在则新建（类型默认"其他"），已存在则更新最小包装。'}
+          />
+          <Upload.Dragger
+            accept=".xlsx,.xls"
+            fileList={importFileList}
+            onChange={({ fileList: fl }) => setImportFileList(fl.slice(-1))}
+            beforeUpload={() => false}
+            style={{ marginBottom: 16 }}
+          >
+            <p className="ant-upload-drag-icon"><InboxOutlined /></p>
+            <p className="ant-upload-text">点击或拖拽 Excel 文件到此区域</p>
+            <p className="ant-upload-hint">支持 .xlsx / .xls 格式</p>
+          </Upload.Dragger>
+
+          {importResult && (
+            <div style={{ marginTop: 8 }}>
+              <Row gutter={16} style={{ marginBottom: 12 }}>
+                <Col span={6}><Statistic title="总行数" value={importResult.totalRows} valueStyle={{ color: '#ccc' }} /></Col>
+                <Col span={6}><Statistic title="新建物料" value={importResult.created} valueStyle={{ color: '#52c41a' }} /></Col>
+                <Col span={6}><Statistic title="更新包装" value={importResult.updated} valueStyle={{ color: '#1677ff' }} /></Col>
+                <Col span={6}><Statistic title="跳过" value={importResult.skipped} valueStyle={{ color: '#faad14' }} /></Col>
+              </Row>
+              {importResult.errors?.length > 0 && (
+                <Alert type="warning" showIcon
+                  message={importResult.errors.length + ' 个警告'}
+                  description={importResult.errors.map((e, i) => <div key={i}>{e}</div>)}
+                />
+              )}
+            </div>
+          )}
         </Modal>
       </Content>
     </Layout>

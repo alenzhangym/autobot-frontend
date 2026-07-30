@@ -221,6 +221,11 @@ export default function SessionSidebar({
           ...(hasNovelChannel ? [
             { key: 'novel', icon: <EditOutlined />, label: '小说创作' },
           ] : []),
+          // 2026-07-26: 模型学习审核 (ERP/CRM) — 仅 super admin 可见, 独立于 channel 网关
+          // Super admin 审核执行成功的 ERP/CRM plan, 确认后生成 LoRA 重训样本
+          ...(isSuperAdminFn(user) ? [
+            { key: 'plan_learning', icon: <ExperimentOutlined />, label: '模型学习审核' },
+          ] : []),
           ...(((isSuperAdminFn(user) || isCompanyAdminFn(user)) && hasErpChannel) ? [
             { key: 'dashboard', icon: <DashboardOutlined />, label: t('erp.dashboard') },
             { type: 'divider' },
@@ -243,9 +248,6 @@ export default function SessionSidebar({
                 { key: 'customer_part_mappings', icon: <LinkOutlined />, label: '客户料号映射' },
                 { key: 'import_product_relation', icon: <UploadOutlined />, label: '导入产品关系' },
                 { key: 'audit_logs', icon: <FileSearchOutlined />, label: '审计日志 (Admin)' },
-                ...(isSuperAdminFn(user) ? [
-                  { key: 'plan_learning', icon: <ExperimentOutlined />, label: '模型学习审核' },
-                ] : []),
                 { key: 'erp', icon: <ShopOutlined />, label: t('erp.dataManagement') },
                 { key: 'erp_metadata', icon: <ApiOutlined />, label: '元数据配置 (Admin)' },
               ]
