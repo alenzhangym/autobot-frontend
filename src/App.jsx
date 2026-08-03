@@ -880,6 +880,8 @@ function App() {
   const [uploadedDocuments, setUploadedDocuments] = useState([])
   const [probeResult, setProbeResult] = useState(null)
   const [currentChannel, setCurrentChannel] = useState('general')
+  // C1 (2026-07-14): 粘贴即预览 — 检测输入框中的表格形态, 提示用户声明意图
+  const [pasteTableInfo, setPasteTableInfo] = useState(null)
 
   const [selectedImage, setSelectedImage] = useState(null)
   const [selectedImageBase64, setSelectedImageBase64] = useState(null)
@@ -2362,6 +2364,37 @@ function App() {
   }
 
   /**
+   * C1 (2026-07-14): 前端轻量表格形态检测 — 对齐后端 HeaderlessTableAnalyzer 启发.
+   * 用于"粘贴即预览": 检测到表格时提示用户点快速操作声明意图, 提升识别成功率.
+   * @returns {null | {rows: number, cols: number}} 检测到表格返回行列数, 否则 null
+   */
+  const detectPastedTable = (text) => {
+    if (!text || typeof text !== 'string') return null
+    if (text.length > 20000) return null  // 大文本大概率是文档粘贴, 不检测
+    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0)
+      .filter(l => !/^\|?[\s:|-]+\|?$/.test(l) && !/^[-=]{3,}$/.test(l))  // 跳过 markdown 分隔线
+    if (lines.length < 2) return null
+    const threshold = Math.max(2, Math.floor(lines.length / 2))
+    const tabN = lines.filter(l => l.includes('\t')).length
+    const pipeN = lines.filter(l => l.includes('|')).length
+    const commaN = lines.filter(l => {
+      if (/[，]/.test(l)) return true
+      // 排除千分位数字 "198,000" 不算 CSV 分隔 (对齐后端)
+      if (/\d,\d{3}/.test(l)) return false
+      return l.includes(',')
+    }).length
+    const spaceN = lines.filter(l => l.split(/\s+/).length >= 3).length
+    let cols = 0
+    if (tabN >= threshold) cols = Math.max(...lines.filter(l => l.includes('\t')).map(l => l.split('\t').length))
+    else if (pipeN >= threshold) cols = Math.max(...lines.filter(l => l.includes('|')).map(l => l.split('|').length))
+    else if (commaN >= threshold) cols = Math.max(...lines.filter(l => l.includes(',') || l.includes('，')).map(l => l.split(/[,，]/).length))
+    else if (spaceN >= threshold) cols = Math.max(...lines.map(l => l.split(/\s+/).length))
+    else return null
+    if (cols < 2) return null
+    return { rows: lines.length, cols }
+  }
+
+  /**
    * 2026-07-01: 处理用户点发送 / 按回车.
    * - 如果 selectedQuickAction 存在: 把"标签 text"作为前缀拼到当前 input 前面, 然后发.
    *   例: selectedQuickAction.text="新建采购单", input="台庆精密... 6 项"
@@ -3703,6 +3736,27 @@ const handleDeleteSession = (id) => {
                     )}
                     {/* ── A 方案：code 会话移除「分析/构建」toggle，意图由后端基于消息+状态推断。
                           状态栏保留 codeMode='auto' 默认值；高级用户可通过 devtools 临时改 state 强制锁定。 */}
+                    {/* ── C1: 粘贴即预览 — 检测到表格时提示声明意图 (2026-07-14) ── */}
+                    {(() => {
+                      const curSess = sessions.find(s => s.id === sessionId)
+                      const sessChannel = curSess?.channel || currentChannel
+                      if (!isBusinessChannel(sessChannel)) return false
+                      return pasteTableInfo && !selectedQuickAction
+                    })() && (
+                      <div style={{
+                        display: 'flex', alignItems: 'center', gap: 8, padding: '4px 10px',
+                        background: 'rgba(212, 165, 116, 0.08)', border: '1px solid rgba(212, 165, 116, 0.25)',
+                        borderRadius: 4, marginBottom: 4, fontSize: 12, color: '#c9a97e'
+                      }}>
+                        <span>📋 检测到表格: {pasteTableInfo.rows} 行 × {pasteTableInfo.cols} 列</span>
+                        <Text style={{ color: '#888', fontSize: 11, flex: 1 }}>
+                          点上方「快速操作」声明意图可提升识别成功率，或直接发送
+                        </Text>
+                        <span role="button" aria-label="关闭表格提示"
+                          onClick={() => setPasteTableInfo(null)}
+                          style={{ cursor: 'pointer', color: '#888', padding: '0 4px' }}>✕</span>
+                      </div>
+                    )}
                     <div style={{
                       background: '#161613', borderRadius: 4, border: '1px solid #2a2620',
                       padding: '10px 14px', display: 'flex', alignItems: 'flex-end', gap: 8,
@@ -3778,7 +3832,10 @@ const handleDeleteSession = (id) => {
                       <TextArea
                         ref={chatInputRef}
                         value={input}
-                        onChange={e => setInput(e.target.value)}
+                        onChange={e => {
+                          setInput(e.target.value)
+                          setPasteTableInfo(detectPastedTable(e.target.value))
+                        }}
                         onCompositionStart={() => { window.__imeComposing = true }}
                         onCompositionEnd={() => { window.__imeComposing = false }}
                         onKeyDown={e => {
