@@ -2342,8 +2342,9 @@ function App() {
       setOrderFormHint(data.response || '')
       setOrderFormOpen(true)
     } catch (e) {
-      // 静默 — form_spec 解析失败时让用户走老路径(从 markdown 表格里复制粘贴)
+      // P2-2: formSpec 解析失败时给用户可见降级提示, 不再仅 console.debug 静默
       console.debug('[OrderFormModal] no formSpec in reply_context:', e?.message)
+      message.warning('表单数据解析失败，请从上方表格复制内容补充')
     }
   }
 
@@ -2539,7 +2540,10 @@ function App() {
         let pauseCtx = null
         try {
           pauseCtx = res.data.reply_context ? JSON.parse(res.data.reply_context) : null
-        } catch (e) { /* ignore parse error */ }
+        } catch (e) {
+          // P2-2: 解析失败给用户可见降级提示, 不再静默
+          message.warning('收到暂停确认但上下文解析失败，请按文本提示回复')
+        }
         const preview = pauseCtx?.planPreview || null
         const clarifyQuestion = pauseCtx?.clarifyQuestion || null
         // 先把暂停原因作为普通消息展示
@@ -2551,7 +2555,10 @@ function App() {
         let clarifyCtx = null
         try {
           clarifyCtx = res.data.reply_context ? JSON.parse(res.data.reply_context) : null
-        } catch (e) { /* ignore parse error */ }
+        } catch (e) {
+          // P2-2: 解析失败给用户可见降级提示, 不再静默
+          message.warning('收到澄清请求但上下文解析失败，请按文本提示回复')
+        }
         const clarifyQuestion = clarifyCtx?.clarifyQuestion || null
         if (clarifyQuestion) {
           // 有结构化 ClarifyQuestion → 弹出结构化澄清 UI

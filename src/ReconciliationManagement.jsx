@@ -31,6 +31,7 @@ export default function ReconciliationManagement({ user, companies = [] }) {
   const [customers, setCustomers] = useState([])
   const [suppliers, setSuppliers] = useState([])
   const [partyFilter, setPartyFilter] = useState(null)
+  const [clearingAll, setClearingAll] = useState(false)
 
   const fetchRecords = useCallback(async () => {
     setLoading(true)
@@ -206,6 +207,45 @@ export default function ReconciliationManagement({ user, companies = [] }) {
       await refreshExpandedDetail(recId)
     } catch (e) {
       message.error('删除失败: ' + (e.response?.data?.error || e.message))
+    }
+  }
+
+  const handleClearAll = async () => {
+    setClearingAll(true)
+    try {
+      const payload = { recType: activeTab }
+      if (statusFilter) payload.status = statusFilter
+      if (partyFilter) {
+        if (activeTab === 'OUTBOUND') payload.customerId = partyFilter
+        else payload.supplierName = partyFilter
+      }
+      const res = await api.post(`/erp/reconciliations/clear-all?companyId=${effectiveCompanyId || 0}`, payload)
+      const result = res.data?.data || res.data || {}
+      const matched = result.matched || 0
+      const deleted = result.deleted || 0
+      const skipped = result.skipped || 0
+      const errors = result.errors || []
+      if (matched === 0) { message.info('没有匹配的对账单可清空') }
+      else if (deleted > 0 && skipped === 0) message.success(`已清空 ${deleted} 个对账单`)
+      else if (deleted > 0 && skipped > 0) message.warning(`已删除 ${deleted} 个, 跳过 ${skipped} 个`)
+      else if (deleted === 0 && skipped > 0) message.error(`未能删除任何对账单, 跳过 ${skipped} 个`)
+      if (errors.length > 0) {
+        Modal.info({
+          title: '清空详情', width: 560,
+          content: (
+            <div style={{ maxHeight: 300, overflow: 'auto' }}>
+              {errors.map((e, i) => <div key={i} style={{ marginBottom: 4 }}>{e}</div>)}
+            </div>
+          )
+        })
+      }
+      setPage(1)
+      fetchRecords()
+      fetchPendingCount()
+    } catch (e) {
+      message.error('一键清空失败: ' + (e.response?.data?.error || e.message))
+    } finally {
+      setClearingAll(false)
     }
   }
 
@@ -583,6 +623,21 @@ export default function ReconciliationManagement({ user, companies = [] }) {
           )}
           <Button icon={<ReloadOutlined />} onClick={() => { setPage(1); fetchRecords(); fetchPendingCount() }}>刷新</Button>
           <Button icon={<DownloadOutlined />} onClick={openExportModal}>导出</Button>
+          <Popconfirm
+            title={`一键清空${activeTab === 'OUTBOUND' ? '出库' : '入库'}对账单`}
+            description={() => {
+              const parts = []
+              if (statusFilter) parts.push(`状态=${statusFilter === 'PENDING' ? '待对账' : '已完成'}`)
+              if (partyFilter) parts.push(activeTab === 'OUTBOUND' ? `客户` : `供应商`)
+              const cond = parts.length > 0 ? `（筛选: ${parts.join(', ')}）` : '（无筛选, 清空全部, 含已完成）'
+              return `将删除所有匹配的对账单及其对账明细${cond}, 删除后无法恢复.`
+            }}
+            onConfirm={handleClearAll}
+            okText="清空" cancelText="取消"
+            okButtonProps={{ danger: true, loading: clearingAll }}
+          >
+            <Button danger icon={<DeleteOutlined />} loading={clearingAll}>一键清空</Button>
+          </Popconfirm>
         </Space>
 
         <Table dataSource={records} columns={columns} rowKey="reconciliation_id" loading={loading}

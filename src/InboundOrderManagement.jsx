@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { Layout, Table, Button, Modal, Form, Input, Select, AutoComplete, Tag, Space, message, DatePicker, Upload, Popconfirm, Row, Col, Card, InputNumber, Typography } from 'antd'
-import { PlusOutlined, CameraOutlined, InboxOutlined, ReloadOutlined, CheckOutlined, CloseOutlined, SearchOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons'
+import { Layout, Table, Button, Modal, Form, Input, Select, AutoComplete, Tag, Space, message, DatePicker, Upload, Popconfirm, Row, Col, Card, InputNumber, Typography, Alert, Statistic } from 'antd'
+import { PlusOutlined, CameraOutlined, InboxOutlined, ReloadOutlined, CheckOutlined, CloseOutlined, SearchOutlined, DeleteOutlined, EditOutlined, UploadOutlined } from '@ant-design/icons'
 import api from './auth'
 import dayjs from 'dayjs'
 import { isSuperAdmin as isSuperAdminFn } from './utils/permissions.js';
@@ -54,6 +54,13 @@ export default function InboundOrderManagement({ user, companies = [] }) {
   const [editingReconciled, setEditingReconciled] = useState(false)
   const [suppliers, setSuppliers] = useState([])
   const [modalKey, setModalKey] = useState(0)
+
+  // ── Historical Import state ──
+  const [showImportModal, setShowImportModal] = useState(false)
+  const [importFileList, setImportFileList] = useState([])
+  const [importing, setImporting] = useState(false)
+  const [importResult, setImportResult] = useState(null)
+  const [importSupplierId, setImportSupplierId] = useState(null)
 
   useEffect(() => {
     (async () => {
@@ -287,6 +294,36 @@ export default function InboundOrderManagement({ user, companies = [] }) {
     } catch (e) { if (!e.errorFields) message.error('创建失败: ' + (e.response?.data?.error || e.message)) }
   }
 
+  // ── Historical Import ──
+  const openImport = () => {
+    setImportFileList([])
+    setImportResult(null)
+    setImportSupplierId(null)
+    setShowImportModal(true)
+  }
+
+  const handleImport = async () => {
+    if (importFileList.length === 0) { message.warning('请先上传文件'); return }
+    if (!importSupplierId) { message.warning('请选择供应商'); return }
+    setImporting(true)
+    setImportResult(null)
+    try {
+      const formData = new FormData()
+      formData.append('file', importFileList[0].originFileObj)
+      formData.append('supplier_id', importSupplierId)
+      const res = await api.post('/erp/inbound-orders/import-historical-file', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      })
+      setImportResult(res.data?.data || res.data)
+      message.success('导入完成')
+      fetchOrders()
+    } catch (e) {
+      message.error('导入失败: ' + (e.response?.data?.error || e.message))
+    } finally {
+      setImporting(false)
+    }
+  }
+
   const handleOcr = async (file) => {
     setOcrLoading(true)
     const reader = new FileReader()
@@ -395,6 +432,7 @@ export default function InboundOrderManagement({ user, companies = [] }) {
       <Col><h2 style={{ color: '#e3e3e3', margin: 0 }}>采购入库单管理</h2></Col>
       <Col><Space>
         <Upload accept="image/*" showUploadList={false} beforeUpload={handleOcr}><Button icon={<CameraOutlined />} loading={ocrLoading}>拍照识别</Button></Upload>
+        <Button icon={<UploadOutlined />} onClick={openImport}>历史导入</Button>
         <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建入库单</Button>
         <Button icon={<ReloadOutlined />} onClick={fetchOrders}>刷新</Button>
       </Space></Col>
@@ -626,6 +664,72 @@ export default function InboundOrderManagement({ user, companies = [] }) {
           <tr><td style={{ color: '#888', padding: 2 }}>数量</td><td>{ocrPreview.parsed_data.quantity || '-'}</td></tr>
           <tr><td style={{ color: '#888', padding: 2 }}>单价</td><td>{ocrPreview.parsed_data.purchase_price || ocrPreview.parsed_data.unit_price || '-'}</td></tr>
         </tbody></table>}</div>}
+    </Modal>
+
+    {/* ── Historical Import Modal ── */}
+    <Modal
+      title="导入历史入库单"
+      open={showImportModal}
+      onCancel={() => setShowImportModal(false)}
+      width={640}
+      footer={[
+        <Button key="cancel" onClick={() => setShowImportModal(false)}>关闭</Button>,
+        <Button key="import" type="primary" loading={importing} icon={<UploadOutlined />}
+          onClick={handleImport}>开始导入</Button>,
+      ]}
+    >
+      <Alert
+        type="info" showIcon style={{ marginBottom: 12 }}
+        message="支持 Excel (.xlsx/.xls) 和 CSV 文件"
+        description="表格列: 入库日期 | 入库单号 | 订单号码 | 供应商料号 | 产品名称 | 规格型号 | 数量PCS | 含税单价RMB/PCS | 含税金额RMB。系统按订单号码自动查/建采购单, 按入库单号分组创建入库单, 并增加库存。"
+      />
+      <div style={{ marginBottom: 12 }}>
+        <Select
+          showSearch
+          placeholder="选择供应商（必选，用于创建采购单）"
+          value={importSupplierId}
+          onChange={(v) => setImportSupplierId(v)}
+          style={{ width: '100%' }}
+          filterOption={(input, option) => option?.children?.toLowerCase().includes(input.toLowerCase())}
+        >
+          {suppliers.map(s => <Select.Option key={s.supplierId} value={s.supplierId}>{s.name}</Select.Option>)}
+        </Select>
+      </div>
+      <Upload.Dragger
+        accept=".xlsx,.xls,.csv"
+        fileList={importFileList}
+        onChange={({ fileList: fl }) => setImportFileList(fl.slice(-1))}
+        beforeUpload={() => false}
+        style={{ marginBottom: 16 }}
+      >
+        <p className="ant-upload-drag-icon"><InboxOutlined /></p>
+        <p className="ant-upload-text">点击或拖拽文件到此区域</p>
+        <p className="ant-upload-hint">支持 .xlsx / .xls / .csv 格式</p>
+      </Upload.Dragger>
+
+      {importResult && (
+        <div style={{ marginTop: 8 }}>
+          <Row gutter={16} style={{ marginBottom: 12 }}>
+            <Col span={8}><Statistic title="导入入库单数" value={importResult.imported || 0} valueStyle={{ color: '#52c41a' }} /></Col>
+            <Col span={8}><Statistic title="新建采购单数" value={importResult.purchaseOrdersCreated || 0} valueStyle={{ color: '#1677ff' }} /></Col>
+          </Row>
+          {importResult.orders && importResult.orders.length > 0 && (
+            <Alert
+              type="success" showIcon
+              message={`共创建 ${importResult.orders.length} 张入库单`}
+              description={
+                <div style={{ maxHeight: 200, overflow: 'auto' }}>
+                  {importResult.orders.map((o, i) => (
+                    <div key={i}>
+                      {i + 1}. 入库单号: {o.orderNumber} | 状态: {o.status} | 明细数: {o.itemCount}
+                    </div>
+                  ))}
+                </div>
+              }
+            />
+          )}
+        </div>
+      )}
     </Modal>
   </Content></Layout>)
 }

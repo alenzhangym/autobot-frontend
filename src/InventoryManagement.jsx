@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { Layout, Table, Button, Modal, Form, Input, InputNumber, Tag, Space, message, Popconfirm, Card, Row, Col, Tooltip, Typography, Switch, AutoComplete, Divider, Drawer } from 'antd'
-import { EditOutlined, ReloadOutlined, SearchOutlined, WarningOutlined, PlusOutlined, ImportOutlined, UnorderedListOutlined } from '@ant-design/icons'
+import { Layout, Table, Button, Modal, Form, Input, InputNumber, Tag, Space, message, Popconfirm, Card, Row, Col, Tooltip, Typography, Switch, AutoComplete, Divider } from 'antd'
+import { EditOutlined, ReloadOutlined, SearchOutlined, WarningOutlined, PlusOutlined, ImportOutlined, SyncOutlined } from '@ant-design/icons'
 import { Resizable } from 'react-resizable'
 import 'react-resizable/css/styles.css'
 import api from './auth'
@@ -46,9 +46,8 @@ export default function InventoryManagement({ user, companies = [] }) {
   const [selectedPartInfo, setSelectedPartInfo] = useState(null)
   const [colWidths, setColWidths] = useState({
     partType: 80, userPartModel: 180, manufacturer: 110,
-    supplierName: 130, supplierModel: 130, currentStock: 90,
-    minStockAlert: 80, unitPrice: 100, avgPrice: 100, purchasePrice: 100,
-    location: 100, batches: 80, action: 100,
+    supplierName: 130, supplierModel: 130, currentStock: 90, shippedQty: 90,
+    minStockAlert: 80, location: 100, action: 100,
   })
 
   // ── Batch import state ──
@@ -57,11 +56,11 @@ export default function InventoryManagement({ user, companies = [] }) {
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState(null)
 
-  // ── Batch detail drawer state ──
-  const [batchDrawerOpen, setBatchDrawerOpen] = useState(false)
-  const [batchDrawerLoading, setBatchDrawerLoading] = useState(false)
-  const [batchList, setBatchList] = useState([])
-  const [batchDrawerRow, setBatchDrawerRow] = useState(null)
+  // ── Sync import (clean + import) state ──
+  const [showSyncModal, setShowSyncModal] = useState(false)
+  const [syncText, setSyncText] = useState('')
+  const [syncing, setSyncing] = useState(false)
+  const [syncResult, setSyncResult] = useState(null)
 
   const fetchInventory = useCallback(async () => {
     if (!canEdit) return
@@ -89,9 +88,6 @@ export default function InventoryManagement({ user, companies = [] }) {
     form.setFieldsValue({
       currentStock: row.currentStock ?? 0,
       minStockAlert: row.minStockAlert ?? 0,
-      unitPrice: row.unitPrice ?? 0,
-      avgPrice: row.avgPrice ?? 0,
-      purchasePrice: row.purchasePrice ?? 0,
       location: row.location || '',
       supplierName: row.supplierName || '',
     })
@@ -147,8 +143,6 @@ export default function InventoryManagement({ user, companies = [] }) {
     formCreate.setFieldsValue({
       currentStock: 0,
       minStockAlert: 0,
-      unitPrice: 0,
-      purchasePrice: 0,
     })
     setSelectedPartInfo(null)
     setPartOptions([])
@@ -179,8 +173,6 @@ export default function InventoryManagement({ user, companies = [] }) {
         partId: selectedPartInfo.partId,
         currentStock: values.currentStock || 0,
         minStockAlert: values.minStockAlert || 0,
-        unitPrice: values.unitPrice || 0,
-        purchasePrice: values.purchasePrice || 0,
         supplierName: values.supplierName || selectedPartInfo.manufacturer,
         supplierModel: values.supplierModel || selectedPartInfo.userPartModel,
         location: values.location || '',
@@ -205,22 +197,17 @@ export default function InventoryManagement({ user, companies = [] }) {
 
   const handleBatchImport = async () => {
     if (!importText.trim()) { message.warning('请输入导入内容'); return }
-    // 解析每行: 型号 数量 单价 [采购价] [均价]
+    // 解析每行: 型号 数量 — 库存表只维护剩余数量, 不再记录单价/批次
     const lines = importText.trim().split('\n').map(l => l.trim()).filter(Boolean)
     const items = []
     const errors = []
     for (let i = 0; i < lines.length; i++) {
       const parts = lines[i].split(/\s+/)
-      if (parts.length < 3) { errors.push(`第 ${i + 1} 行: 格式错误, 需要 "型号 数量 单价"`); continue }
+      if (parts.length < 2) { errors.push(`第 ${i + 1} 行: 格式错误, 需要 "型号 数量"`); continue }
       const userPartModel = parts[0]
       const currentStock = parseInt(parts[1], 10)
-      const unitPrice = parseFloat(parts[2])
-      const purchasePrice = parts[3] ? parseFloat(parts[3]) : unitPrice
-      const avgPrice = parts[4] ? parseFloat(parts[4]) : null  // 可选, 不提供则后端保留原值
-      if (isNaN(currentStock) || isNaN(unitPrice)) { errors.push(`第 ${i + 1} 行: 数量或单价格式错误`); continue }
-      const item = { userPartModel, currentStock, unitPrice, purchasePrice }
-      if (avgPrice != null && !isNaN(avgPrice)) item.avgPrice = avgPrice
-      items.push(item)
+      if (isNaN(currentStock)) { errors.push(`第 ${i + 1} 行: 数量格式错误`); continue }
+      items.push({ userPartModel, currentStock })
     }
     if (items.length === 0) { message.error('无有效数据行'); return }
 
@@ -243,19 +230,59 @@ export default function InventoryManagement({ user, companies = [] }) {
     } finally { setImporting(false) }
   }
 
-  // ── Batch detail view ──
+  const openSync = () => {
+    setSyncText('')
+    setSyncResult(null)
+    setShowSyncModal(true)
+  }
 
-  const viewBatches = async (row) => {
-    setBatchDrawerRow(row)
-    setBatchDrawerOpen(true)
-    setBatchDrawerLoading(true)
-    setBatchList([])
+  const handleSyncImport = async () => {
+    if (!syncText.trim()) { message.warning('请输入同步内容'); return }
+    const lines = syncText.trim().split('\n').map(l => l.trim()).filter(Boolean)
+    const items = []
+    const errors = []
+    for (let i = 0; i < lines.length; i++) {
+      const parts = lines[i].split(/\s+/)
+      if (parts.length < 2) { errors.push(`第 ${i + 1} 行: 格式错误, 需要 "型号 数量"`); continue }
+      const userPartModel = parts[0]
+      const currentStock = parseInt(parts[1], 10)
+      if (isNaN(currentStock)) { errors.push(`第 ${i + 1} 行: 数量格式错误`); continue }
+      items.push({ userPartModel, currentStock })
+    }
+    if (items.length === 0) { message.error('无有效数据行'); return }
+
+    setSyncing(true)
     try {
-      const res = await api.get(`/erp/inventory/${row.inventoryId}/batches`)
-      setBatchList(res.data?.data || [])
+      const res = await api.post('/erp/inventory/sync-import', { items })
+      const result = res.data?.data || res.data || {}
+      setSyncResult(result)
+      const created = result.created || 0
+      const clearedInv = result.clearedInventory || 0
+      const errCount = (result.errors || []).length
+      if (errCount === 0) {
+        message.success(`同步成功: 已清空 ${clearedInv} 条库存, 新建 ${created} 条`)
+      } else {
+        message.warning(`同步完成: 清空 ${clearedInv} 条, 新建 ${created} 条, 错误 ${errCount} 条`)
+      }
+      fetchInventory()
     } catch (e) {
-      message.error('加载批次明细失败: ' + (e.response?.data?.error || e.message))
-    } finally { setBatchDrawerLoading(false) }
+      message.error('同步失败: ' + (e.response?.data?.error || e.message))
+    } finally { setSyncing(false) }
+  }
+
+  // ── Recalc shipped (重新统计已出库数量) ──
+  const [recalcLoading, setRecalcLoading] = useState(false)
+
+  const handleRecalcShipped = async () => {
+    setRecalcLoading(true)
+    try {
+      const res = await api.post('/erp/inventory/recalc-shipped')
+      const result = res.data?.data || {}
+      message.success(`已重新统计出库数量: 扫描 ${result.orders || 0} 张出库单, 更新 ${result.items || 0} 条库存`)
+      fetchInventory()
+    } catch (e) {
+      message.error('统计出库失败: ' + (e.response?.data?.error || e.message))
+    } finally { setRecalcLoading(false) }
   }
 
   const columns = [
@@ -282,35 +309,19 @@ export default function InventoryManagement({ user, companies = [] }) {
       },
       sorter: (a, b) => (a.currentStock || 0) - (b.currentStock || 0),
     },
+    { title: '已出库', dataIndex: 'shippedQty', key: 'shippedQty', width: colWidths.shippedQty,
+      align: 'right',
+      render: (v) => (
+        <span style={{ color: '#1677ff', fontWeight: 500 }}>
+          {v != null ? Number(v).toLocaleString() : '0'}
+        </span>
+      ),
+      sorter: (a, b) => (a.shippedQty || 0) - (b.shippedQty || 0),
+    },
     { title: '预警值', dataIndex: 'minStockAlert', key: 'minStockAlert', width: colWidths.minStockAlert,
       align: 'right', render: v => v || '-' },
-    { title: '单价 (¥)', dataIndex: 'unitPrice', key: 'unitPrice', width: colWidths.unitPrice,
-      align: 'right', render: v => v != null ? Number(v).toFixed(4) : '-' },
-    { title: '均价 (¥)', dataIndex: 'avgPrice', key: 'avgPrice', width: colWidths.avgPrice,
-      align: 'right',
-      render: (v) => {
-        if (v == null || Number(v) === 0) return <span style={{ color: '#666' }}>0.0000</span>
-        return <span style={{ color: '#52c41a', fontWeight: 600 }}>{Number(v).toFixed(4)}</span>
-      },
-      sorter: (a, b) => (a.avgPrice || 0) - (b.avgPrice || 0),
-    },
-    { title: '采购价 (¥)', dataIndex: 'purchasePrice', key: 'purchasePrice', width: colWidths.purchasePrice,
-      align: 'right', render: v => v != null ? Number(v).toFixed(4) : '-' },
     { title: '库位', dataIndex: 'location', key: 'location', width: colWidths.location,
       render: v => v || '-' },
-    { title: '批次', dataIndex: 'batchCount', key: 'batches', width: colWidths.batches, align: 'center',
-      render: (v, r) => {
-        const count = v || 0
-        if (count === 0) return <span style={{ color: '#666' }}>-</span>
-        return (
-          <Button size="small" type="link" icon={<UnorderedListOutlined />}
-            onClick={() => viewBatches(r)} style={{ padding: 0 }}>
-            {count}
-          </Button>
-        )
-      },
-      sorter: (a, b) => (a.batchCount || 0) - (b.batchCount || 0),
-    },
     { title: '操作', key: 'action', width: colWidths.action, fixed: 'right',
       render: (_, r) => (
         <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)}>修改</Button>
@@ -351,6 +362,22 @@ export default function InventoryManagement({ user, companies = [] }) {
           <Col><h2 style={{ color: '#e3e3e3', margin: 0 }}>库存管理</h2></Col>
           <Col><Space>
             <Button icon={<ImportOutlined />} onClick={openImport}>批量导入</Button>
+            <Popconfirm
+              title="清理同步库存"
+              description="将先清空当前公司所有库存记录, 再导入新数据. 确认前请在弹窗中粘贴完整的新库存数据."
+              onConfirm={openSync}
+              okText="继续" cancelText="取消"
+            >
+              <Button danger icon={<SyncOutlined />}>清理同步</Button>
+            </Popconfirm>
+            <Popconfirm
+              title="重新统计已出库数量"
+              description="将遍历所有已出库状态的出库单, 重新计算并覆盖已出库数量(shipped_qty). 此操作不可撤销."
+              onConfirm={handleRecalcShipped}
+              okText="确认" cancelText="取消"
+            >
+              <Button icon={<ReloadOutlined />} loading={recalcLoading}>统计出库</Button>
+            </Popconfirm>
             <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增库存</Button>
             <Button icon={<ReloadOutlined />} onClick={fetchInventory}>刷新</Button>
           </Space></Col>
@@ -383,7 +410,7 @@ export default function InventoryManagement({ user, companies = [] }) {
           rowKey="inventoryId"
           loading={loading}
           components={components}
-          scroll={{ x: 1500 }}
+          scroll={{ x: 1100 }}
           size="small"
           pagination={{
             current: page, pageSize, total, showSizeChanger: true,
@@ -412,23 +439,6 @@ export default function InventoryManagement({ user, companies = [] }) {
             <Form.Item name="minStockAlert" label="预警值" tooltip="低于此值会显示告警图标">
               <InputNumber style={{ width: '100%' }} min={0} step={1} />
             </Form.Item>
-            <Row gutter={12}>
-              <Col span={8}>
-                <Form.Item name="unitPrice" label="单价 (¥)">
-                  <InputNumber style={{ width: '100%' }} min={0} step={0.0001} precision={4} />
-                </Form.Item>
-              </Col>
-              <Col span={8}>
-                <Form.Item name="avgPrice" label="均价 (¥)" tooltip="由用户维护, 可留 0 后期填写">
-                  <InputNumber style={{ width: '100%' }} min={0} step={0.0001} precision={4} />
-                </Form.Item>
-              </Col>
-              <Col span={8}>
-                <Form.Item name="purchasePrice" label="采购价 (¥)">
-                  <InputNumber style={{ width: '100%' }} min={0} step={0.0001} precision={4} />
-                </Form.Item>
-              </Col>
-            </Row>
             <Form.Item name="supplierName" label="供应商名称">
               <Input placeholder="供应商" />
             </Form.Item>
@@ -492,18 +502,6 @@ export default function InventoryManagement({ user, companies = [] }) {
             </Form.Item>
             <Row gutter={12}>
               <Col span={12}>
-                <Form.Item name="purchasePrice" label="采购价 (¥)">
-                  <InputNumber style={{ width: '100%' }} min={0} step={0.0001} precision={4} />
-                </Form.Item>
-              </Col>
-              <Col span={12}>
-                <Form.Item name="unitPrice" label="单价 (¥)" rules={[{ required: true, message: '请输入单价' }]}>
-                  <InputNumber style={{ width: '100%' }} min={0} step={0.0001} precision={4} />
-                </Form.Item>
-              </Col>
-            </Row>
-            <Row gutter={12}>
-              <Col span={12}>
                 <Form.Item name="supplierName" label="供应商名称">
                   <Input placeholder="默认使用物料厂家" />
                 </Form.Item>
@@ -535,21 +533,20 @@ export default function InventoryManagement({ user, companies = [] }) {
           width={640}
         >
           <div style={{ marginBottom: 12, color: '#888', fontSize: 12 }}>
-            每行一条，格式：<Text code>型号 数量 单价 [采购价] [均价]</Text><br/>
-            已有料号的库存会被覆盖更新，没有的会新建。每次导入都会记录批次。<br/>
-            <span style={{ color: '#faad14' }}>均价</span>：可选，不填则保留原值，原来也没有则为 0（后期可在编辑里维护）。<br/>
+            每行一条，格式：<Text code>型号 数量</Text><br/>
+            已有料号的库存会被覆盖更新，没有的会新建。库存表只维护剩余数量，不记录单价/批次。<br/>
             示例：
             <pre style={{ background: '#141414', padding: 8, borderRadius: 4, marginTop: 4, fontSize: 11 }}>
-{`ACLCM-7060F-701-02A 1500 0.25 0.20 0.22
-ACM3225F2DF-101T01-D 2000 0.18
-ACM4532F2NF-101T02-D 500 0.32 0.28`}
+{`ACLCM-7060F-701-02A 1500
+ACM3225F2DF-101T01-D 2000
+ACM4532F2NF-101T02-D 500`}
             </pre>
           </div>
           <Input.TextArea
             value={importText}
             onChange={e => setImportText(e.target.value)}
             rows={10}
-            placeholder="每行: 型号 数量 单价 [采购价] [均价]"
+            placeholder="每行: 型号 数量"
             style={{ fontFamily: 'monospace', fontSize: 12 }}
           />
           {importResult && (
@@ -558,7 +555,17 @@ ACM4532F2NF-101T02-D 500 0.32 0.28`}
                 <span style={{ color: '#52c41a' }}>新增: {importResult.created || 0}</span>
                 <span style={{ color: '#faad14' }}>更新: {importResult.updated || 0}</span>
                 <span style={{ color: '#ff4d4f' }}>错误: {(importResult.errors || []).length}</span>
+                {(importResult.warnings || []).length > 0 && (
+                  <span style={{ color: '#faad14' }}>提示: {(importResult.warnings || []).length}</span>
+                )}
               </Space>
+              {importResult.warnings && importResult.warnings.length > 0 && (
+                <div style={{ marginTop: 8, maxHeight: 100, overflow: 'auto' }}>
+                  {importResult.warnings.map((w, i) => (
+                    <div key={`w${i}`} style={{ color: '#faad14', fontSize: 12 }}>⚠ {w}</div>
+                  ))}
+                </div>
+              )}
               {importResult.errors && importResult.errors.length > 0 && (
                 <div style={{ marginTop: 8, maxHeight: 120, overflow: 'auto' }}>
                   {importResult.errors.map((e, i) => (
@@ -570,58 +577,66 @@ ACM4532F2NF-101T02-D 500 0.32 0.28`}
           )}
         </Modal>
 
-        {/* 批次明细 Drawer */}
-        <Drawer
-          title={batchDrawerRow ? `批次明细 - ${batchDrawerRow.userPartModel || ''}` : '批次明细'}
-          open={batchDrawerOpen}
-          onClose={() => { setBatchDrawerOpen(false); setBatchDrawerRow(null); setBatchList([]) }}
-          width={680}
+        {/* 清理同步 Modal */}
+        <Modal
+          title="清理同步库存"
+          open={showSyncModal}
+          onOk={handleSyncImport}
+          onCancel={() => { setShowSyncModal(false); setSyncResult(null) }}
+          confirmLoading={syncing}
+          okText="清空并导入"
+          cancelText="取消"
+          width={640}
+          okButtonProps={{ danger: true }}
         >
-          {batchDrawerRow && (
-            <div style={{ marginBottom: 16, padding: 12, background: '#141414', borderRadius: 4, fontSize: 13 }}>
-              <Row gutter={16}>
-                <Col span={8}><span style={{ color: '#888' }}>当前库存:</span> <Text strong>{batchDrawerRow.currentStock ?? 0}</Text></Col>
-                <Col span={8}><span style={{ color: '#888' }}>单价:</span> ¥{Number(batchDrawerRow.unitPrice || 0).toFixed(4)}</Col>
-                <Col span={8}><span style={{ color: '#888' }}>均价:</span> <Text strong style={{ color: '#52c41a' }}>¥{Number(batchDrawerRow.avgPrice || batchDrawerRow.unitPrice || 0).toFixed(4)}</Text></Col>
-              </Row>
-              <div style={{ marginTop: 8 }}>
-                <span style={{ color: '#888' }}>供应商:</span> {batchDrawerRow.supplierName || '-'} ·
-                <span style={{ color: '#888', marginLeft: 8 }}>库位:</span> {batchDrawerRow.location || '-'}
-              </div>
-            </div>
-          )}
-          <Table
-            dataSource={batchList}
-            rowKey="batchId"
-            loading={batchDrawerLoading}
-            size="small"
-            pagination={false}
-            scroll={{ y: 400 }}
-            columns={[
-              { title: '批次号', dataIndex: 'batchNumber', key: 'batchNumber', width: 180,
-                render: v => <Text code style={{ fontSize: 11 }}>{v || '-'}</Text> },
-              { title: '入库日期', dataIndex: 'receivedDate', key: 'receivedDate', width: 110,
-                render: v => v || '-' },
-              { title: '初始数量', dataIndex: 'initialQuantity', key: 'initialQuantity', align: 'right', width: 90,
-                render: v => v ?? '-' },
-              { title: '剩余数量', dataIndex: 'quantityRemaining', key: 'quantityRemaining', align: 'right', width: 90,
-                render: v => <span style={{ color: (v || 0) > 0 ? '#52c41a' : '#888', fontWeight: 600 }}>{v ?? 0}</span> },
-              { title: '单价 (¥)', dataIndex: 'unitCost', key: 'unitCost', align: 'right', width: 100,
-                render: v => v != null ? Number(v).toFixed(4) : '-' },
-              { title: '状态', dataIndex: 'status', key: 'status', width: 80,
-                render: v => {
-                  const color = v === 'ACTIVE' ? 'green' : (v === 'DEPLETED' ? 'default' : 'orange')
-                  return <Tag color={color}>{v || '-'}</Tag>
-                }},
-            ]}
+          <div style={{ marginBottom: 12, color: '#ff4d4f', fontSize: 12 }}>
+            ⚠ 危险操作: 将先清空当前公司<b>所有库存记录</b>, 再用下方数据全量导入.<br/>
+            请确认已粘贴完整的新库存数据, 否则缺失的物料库存将变为 0.
+          </div>
+          <div style={{ marginBottom: 12, color: '#888', fontSize: 12 }}>
+            每行一条，格式：<Text code>型号 数量</Text><br/>
+            库存表只维护剩余数量，不记录单价/批次。<br/>
+            示例：
+            <pre style={{ background: '#141414', padding: 8, borderRadius: 4, marginTop: 4, fontSize: 11 }}>
+{`ACLCM-7060F-701-02A 1500
+ACM3225F2DF-101T01-D 2000
+ACM4532F2NF-101T02-D 500`}
+            </pre>
+          </div>
+          <Input.TextArea
+            value={syncText}
+            onChange={e => setSyncText(e.target.value)}
+            rows={10}
+            placeholder="每行: 型号 数量"
+            style={{ fontFamily: 'monospace', fontSize: 12 }}
           />
-          {batchList.length > 0 && (
-            <div style={{ marginTop: 12, padding: 8, background: '#0d3a2a', borderRadius: 4, fontSize: 12, color: '#52c41a' }}>
-              当前均价 (用户维护): ¥{Number(batchDrawerRow?.avgPrice || 0).toFixed(4)}
-              <span style={{ color: '#888', marginLeft: 8 }}>· 可在编辑里修改</span>
+          {syncResult && (
+            <div style={{ marginTop: 12, padding: 12, background: '#141414', borderRadius: 4 }}>
+              <Space size={16} wrap>
+                <span style={{ color: '#ff4d4f' }}>已清空库存: {syncResult.clearedInventory || 0}</span>
+                <span style={{ color: '#52c41a' }}>新建: {syncResult.created || 0}</span>
+                <span style={{ color: '#ff4d4f' }}>错误: {(syncResult.errors || []).length}</span>
+                {(syncResult.warnings || []).length > 0 && (
+                  <span style={{ color: '#faad14' }}>提示: {(syncResult.warnings || []).length}</span>
+                )}
+              </Space>
+              {syncResult.warnings && syncResult.warnings.length > 0 && (
+                <div style={{ marginTop: 8, maxHeight: 100, overflow: 'auto' }}>
+                  {syncResult.warnings.map((w, i) => (
+                    <div key={`sw${i}`} style={{ color: '#faad14', fontSize: 12 }}>⚠ {w}</div>
+                  ))}
+                </div>
+              )}
+              {syncResult.errors && syncResult.errors.length > 0 && (
+                <div style={{ marginTop: 8, maxHeight: 120, overflow: 'auto' }}>
+                  {syncResult.errors.map((e, i) => (
+                    <div key={i} style={{ color: '#ff4d4f', fontSize: 12 }}>• {e}</div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
-        </Drawer>
+        </Modal>
       </Content>
     </Layout>
   )

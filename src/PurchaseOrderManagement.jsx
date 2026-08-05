@@ -33,6 +33,9 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
 
   const [showModal, setShowModal] = useState(false)
   const [editing, setEditing] = useState(null)
+  const [selectedRowKeys, setSelectedRowKeys] = useState([])
+  const [batchDeleting, setBatchDeleting] = useState(false)
+  const [clearingAll, setClearingAll] = useState(false)
   const [form] = Form.useForm()
   const [items, setItems] = useState([emptyItem()])
   const [parts, setParts] = useState([])
@@ -175,9 +178,74 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
     try { await api.delete(`/erp/purchase-orders/${id}?companyId=${effectiveCompanyId || 0}`); message.success('已删除'); fetchOrders() }
     catch (e) { message.error('删除失败: ' + (e.response?.data?.error || e.message)) }
   }
+  const handleBatchDelete = async () => {
+    if (selectedRowKeys.length === 0) { message.warning('请先勾选要删除的采购单'); return }
+    setBatchDeleting(true)
+    try {
+      const res = await api.post(`/erp/purchase-orders/batch-delete?companyId=${effectiveCompanyId || 0}`, { purchaseIds: selectedRowKeys })
+      const result = res.data?.data || res.data || {}
+      const deleted = result.deleted || 0
+      const skipped = result.skipped || 0
+      const errors = result.errors || []
+      if (deleted > 0 && skipped === 0) message.success(`已批量删除 ${deleted} 个采购单`)
+      else if (deleted > 0 && skipped > 0) message.warning(`已删除 ${deleted} 个, 跳过 ${skipped} 个`)
+      else if (deleted === 0 && skipped > 0) message.error(`未能删除任何采购单, 跳过 ${skipped} 个`)
+      if (errors.length > 0) {
+        Modal.info({
+          title: '批量删除详情', width: 560,
+          content: (
+            <div style={{ maxHeight: 300, overflow: 'auto' }}>
+              {errors.map((e, i) => <div key={i} style={{ marginBottom: 4 }}>{e}</div>)}
+            </div>
+          )
+        })
+      }
+      setSelectedRowKeys([])
+      fetchOrders()
+    } catch (e) {
+      message.error('批量删除失败: ' + (e.response?.data?.error || e.message))
+    } finally {
+      setBatchDeleting(false)
+    }
+  }
   const handleStatusChange = async (id, status) => {
     try { await api.put(`/erp/purchase-orders/${id}/status?companyId=${effectiveCompanyId || 0}`, { status }); message.success('状态已更新'); fetchOrders() }
     catch (e) { message.error('操作失败: ' + (e.response?.data?.error || e.message)) }
+  }
+  const handleClearAll = async () => {
+    setClearingAll(true)
+    try {
+      const payload = {}
+      if (statusFilter) payload.status = statusFilter
+      if (supplierFilter) payload.supplierName = supplierFilter
+      if (keyword) payload.keyword = keyword
+      const res = await api.post(`/erp/purchase-orders/clear-all?companyId=${effectiveCompanyId || 0}`, payload)
+      const result = res.data?.data || res.data || {}
+      const matched = result.matched || 0
+      const deleted = result.deleted || 0
+      const skipped = result.skipped || 0
+      const errors = result.errors || []
+      if (matched === 0) { message.info('没有匹配的采购单可清空') }
+      else if (deleted > 0 && skipped === 0) message.success(`已清空 ${deleted} 个采购单`)
+      else if (deleted > 0 && skipped > 0) message.warning(`已删除 ${deleted} 个, 跳过 ${skipped} 个`)
+      else if (deleted === 0 && skipped > 0) message.error(`未能删除任何采购单, 跳过 ${skipped} 个`)
+      if (errors.length > 0) {
+        Modal.info({
+          title: '清空详情', width: 560,
+          content: (
+            <div style={{ maxHeight: 300, overflow: 'auto' }}>
+              {errors.map((e, i) => <div key={i} style={{ marginBottom: 4 }}>{e}</div>)}
+            </div>
+          )
+        })
+      }
+      setSelectedRowKeys([])
+      fetchOrders()
+    } catch (e) {
+      message.error('一键清空失败: ' + (e.response?.data?.error || e.message))
+    } finally {
+      setClearingAll(false)
+    }
   }
 
   const addItem = () => setItems([...items, emptyItem()])
@@ -246,9 +314,40 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
               options={Object.entries(STATUS_MAP).map(([k, v]) => ({ value: k, label: v.label }))} />
             <Button icon={<ReloadOutlined />} onClick={() => { setPage(1); fetchOrders() }}>刷新</Button>
           </Space>
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>录入采购单</Button>
+          <Space>
+            {selectedRowKeys.length > 0 && (
+              <Popconfirm
+                title={`确认批量删除选中的 ${selectedRowKeys.length} 个采购单？将级联删除关联的入库单`}
+                onConfirm={handleBatchDelete}
+                okText="删除" cancelText="取消"
+                okButtonProps={{ danger: true, loading: batchDeleting }}
+              >
+                <Button danger icon={<DeleteOutlined />} loading={batchDeleting}>
+                  批量删除 ({selectedRowKeys.length})
+                </Button>
+              </Popconfirm>
+            )}
+            <Popconfirm
+              title="一键清空采购单"
+              description={() => {
+                const parts = []
+                if (statusFilter) parts.push(`状态=${STATUS_MAP[statusFilter]?.label || statusFilter}`)
+                if (supplierFilter) parts.push(`供应商≈${supplierFilter}`)
+                if (keyword) parts.push(`关键词≈${keyword}`)
+                const cond = parts.length > 0 ? `（筛选: ${parts.join(', ')}）` : '（无筛选, 清空全部）'
+                return `将删除所有匹配的采购单并级联删除关联的入库单${cond}, 删除后无法恢复.`
+              }}
+              onConfirm={handleClearAll}
+              okText="清空" cancelText="取消"
+              okButtonProps={{ danger: true, loading: clearingAll }}
+            >
+              <Button danger icon={<DeleteOutlined />} loading={clearingAll}>一键清空</Button>
+            </Popconfirm>
+            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>录入采购单</Button>
+          </Space>
         </Space>
         <Table dataSource={orders} columns={columns} rowKey="purchase_id" loading={loading}
+          rowSelection={{ selectedRowKeys, onChange: (keys) => setSelectedRowKeys(keys) }}
           expandable={{ expandedRowRender, onExpand: (expanded, record) => { if (expanded) fetchExpandedItems(record) } }}
           pagination={{ current: page, pageSize, total, showSizeChanger: true, onChange: (p, ps) => { setPage(p); setPageSize(ps) } }} scroll={{ x: 1100 }} />
         <Modal title={editing ? '编辑采购单' : '录入采购单'} open={showModal} onOk={handleSave} width={900} okText="保存" destroyOnHidden

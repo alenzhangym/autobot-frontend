@@ -44,6 +44,8 @@ export default function CustomerManagement({ user, companies = [] }) {
   const [colWidths, setColWidths] = useState({
     name: 160, industry: 120, source: 100, level: 90, status: 90, phone: 140, address: 200, action: 160,
   })
+  const [selectedRowKeys, setSelectedRowKeys] = useState([])
+  const [batchDeleting, setBatchDeleting] = useState(false)
 
   const fetchCustomers = useCallback(async () => {
     setLoading(true)
@@ -114,6 +116,37 @@ export default function CustomerManagement({ user, companies = [] }) {
     }
   }
 
+  const handleBatchDelete = async () => {
+    if (selectedRowKeys.length === 0) { message.warning('请先勾选要删除的客户'); return }
+    setBatchDeleting(true)
+    try {
+      const res = await api.post('/erp/customers/batch-delete', { customerIds: selectedRowKeys })
+      const result = res.data?.data || res.data || {}
+      const deleted = result.deleted || 0
+      const skipped = result.skipped || 0
+      const errors = result.errors || []
+      if (deleted > 0 && skipped === 0) message.success(`已批量删除 ${deleted} 个客户`)
+      else if (deleted > 0 && skipped > 0) message.warning(`已删除 ${deleted} 个, 跳过 ${skipped} 个`)
+      else if (deleted === 0 && skipped > 0) message.error(`未能删除任何客户, 跳过 ${skipped} 个`)
+      if (errors.length > 0) {
+        Modal.info({
+          title: '批量删除详情', width: 560,
+          content: (
+            <div style={{ maxHeight: 300, overflow: 'auto' }}>
+              {errors.map((e, i) => <div key={i} style={{ marginBottom: 4 }}>{e}</div>)}
+            </div>
+          )
+        })
+      }
+      setSelectedRowKeys([])
+      fetchCustomers()
+    } catch (e) {
+      message.error('批量删除失败: ' + (e.response?.data?.error || e.message))
+    } finally {
+      setBatchDeleting(false)
+    }
+  }
+
   const handleResize = (key) => (e, { size }) => {
     setColWidths(prev => ({ ...prev, [key]: size.width }))
   }
@@ -171,12 +204,28 @@ export default function CustomerManagement({ user, companies = [] }) {
                 {companies.map(c => <Select.Option key={c.id} value={c.id}>{c.name}</Select.Option>)}
               </Select>
             )}
+            {selectedRowKeys.length > 0 && (
+              <Popconfirm
+                title={`确认批量删除选中的 ${selectedRowKeys.length} 个客户？`}
+                onConfirm={handleBatchDelete}
+                okText="删除" cancelText="取消"
+                okButtonProps={{ danger: true, loading: batchDeleting }}
+              >
+                <Button danger icon={<DeleteOutlined />} loading={batchDeleting}>
+                  批量删除 ({selectedRowKeys.length})
+                </Button>
+              </Popconfirm>
+            )}
           </Space>
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增客户</Button>
         </div>
 
         <Table
           dataSource={customers} columns={mergedColumns} rowKey={r => r.id || r.customerId} loading={loading}
+          rowSelection={{
+            selectedRowKeys,
+            onChange: (keys) => setSelectedRowKeys(keys),
+          }}
           pagination={{ current: page, pageSize, total, showSizeChanger: true,
             onChange: (p, ps) => { setPage(p); setPageSize(ps) }}}
           components={{ header: { cell: ResizableTitle } }}

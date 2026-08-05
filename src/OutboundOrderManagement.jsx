@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { Layout, Table, Button, Modal, Form, Input, InputNumber, Select, AutoComplete, Tag, Space, message, DatePicker, Upload, Descriptions, Popconfirm, Row, Col, Card } from 'antd'
-import { PlusOutlined, CameraOutlined, SendOutlined, ReloadOutlined, EyeOutlined, CheckOutlined, CloseOutlined, TruckOutlined, SearchOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons'
+import { Layout, Table, Button, Modal, Form, Input, InputNumber, Select, AutoComplete, Tag, Space, message, DatePicker, Upload, Descriptions, Popconfirm, Row, Col, Card, Alert, Statistic } from 'antd'
+import { PlusOutlined, CameraOutlined, SendOutlined, ReloadOutlined, EyeOutlined, CheckOutlined, CloseOutlined, TruckOutlined, SearchOutlined, DeleteOutlined, EditOutlined, UploadOutlined, InboxOutlined } from '@ant-design/icons'
 import api from './auth'
 import { isSuperAdmin as isSuperAdminFn } from './utils/permissions.js'
 
@@ -55,6 +55,12 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
   const [editingOrder, setEditingOrder] = useState(null)
   const [editingReconciled, setEditingReconciled] = useState(false)
   const [editItems, setEditItems] = useState([])
+
+  // ── Historical Import state ──
+  const [showImportModal, setShowImportModal] = useState(false)
+  const [importFileList, setImportFileList] = useState([])
+  const [importing, setImporting] = useState(false)
+  const [importResult, setImportResult] = useState(null)
 
   // ── Substitute (替代物料) selector modal state ──
   const [subModal, setSubModal] = useState({ visible: false, target: null, model: '', subs: [], manual: [], sameType: [], partType: '', loading: false, query: '', freeQuery: '', freeResults: [], freeLoading: false })
@@ -534,6 +540,34 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
     return false
   }
 
+  // ── Historical Import ──
+  const openImport = () => {
+    setImportFileList([])
+    setImportResult(null)
+    setShowImportModal(true)
+  }
+
+  const handleImport = async () => {
+    if (importFileList.length === 0) { message.warning('请先上传文件'); return }
+    setImporting(true)
+    setImportResult(null)
+    try {
+      const formData = new FormData()
+      formData.append('file', importFileList[0].originFileObj)
+      // 新格式表格自带客户名, 无需前端选择客户
+      const res = await api.post('/erp/outbound-orders/import-sales-orders-file', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      })
+      setImportResult(res.data?.data || res.data)
+      message.success('导入完成')
+      fetchOrders()
+    } catch (e) {
+      message.error('导入失败: ' + (e.response?.data?.error || e.message))
+    } finally {
+      setImporting(false)
+    }
+  }
+
   const confirmOcrCreate = async () => {
     if (!ocrPreview?.parsed_data) return
     const parsed = ocrPreview.parsed_data
@@ -689,6 +723,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
               <Upload accept="image/*" showUploadList={false} beforeUpload={handleOcrUpload}>
                 <Button icon={<CameraOutlined />} loading={ocrLoading}>拍照识别</Button>
               </Upload>
+              <Button icon={<UploadOutlined />} onClick={openImport}>历史导入</Button>
               <Button type="primary" icon={<PlusOutlined />} onClick={() => { setShowCreateModal(true); setItems([emptyItem()]); setSelectedCustId(null); setSalesOrders([]) }}>新建出库单</Button>
               <Button icon={<ReloadOutlined />} onClick={fetchOrders}>刷新</Button>
             </Space>
@@ -1127,6 +1162,60 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
                   <Descriptions.Item label="数量">{ocrPreview.parsed_data.quantity || '-'}</Descriptions.Item>
                   <Descriptions.Item label="单价">{ocrPreview.parsed_data.unit_price || '-'}</Descriptions.Item>
                 </Descriptions>
+              )}
+            </div>
+          )}
+        </Modal>
+
+        {/* ── Historical Import Modal ── */}
+        <Modal
+          title="导入历史出库单"
+          open={showImportModal}
+          onCancel={() => setShowImportModal(false)}
+          width={640}
+          footer={[
+            <Button key="cancel" onClick={() => setShowImportModal(false)}>关闭</Button>,
+            <Button key="import" type="primary" loading={importing} icon={<UploadOutlined />}
+              onClick={handleImport}>开始导入</Button>,
+          ]}
+        >
+          <Alert
+            type="info" showIcon style={{ marginBottom: 12 }}
+            message="支持 Excel (.xlsx/.xls) 和 CSV 文件"
+            description="表格列: 客户 | 订单日期 | 订单号 | 客户料号 | 品名规格 | 订单数量 | 单位 | 未税价 | 含税价 | RDHY含税单价 | 金额 | 订单交期。系统按订单号合并创建销售单, 按客户名自动查/建客户。订单交期有值视为已出库(创建出库单+扣减库存+对账), 无值视为未出库。"
+          />
+          <Upload.Dragger
+            accept=".xlsx,.xls,.csv"
+            fileList={importFileList}
+            onChange={({ fileList: fl }) => setImportFileList(fl.slice(-1))}
+            beforeUpload={() => false}
+            style={{ marginBottom: 16 }}
+          >
+            <p className="ant-upload-drag-icon"><InboxOutlined /></p>
+            <p className="ant-upload-text">点击或拖拽文件到此区域</p>
+            <p className="ant-upload-hint">支持 .xlsx / .xls / .csv 格式</p>
+          </Upload.Dragger>
+
+          {importResult && (
+            <div style={{ marginTop: 8 }}>
+              <Row gutter={16} style={{ marginBottom: 12 }}>
+                <Col span={8}><Statistic title="导入出库单数" value={importResult.imported || 0} valueStyle={{ color: '#52c41a' }} /></Col>
+                <Col span={8}><Statistic title="新建销售单数" value={importResult.salesOrdersCreated || 0} valueStyle={{ color: '#1677ff' }} /></Col>
+              </Row>
+              {importResult.orders && importResult.orders.length > 0 && (
+                <Alert
+                  type="success" showIcon
+                  message={`共创建 ${importResult.orders.length} 张出库单`}
+                  description={
+                    <div style={{ maxHeight: 200, overflow: 'auto' }}>
+                      {importResult.orders.map((o, i) => (
+                        <div key={i}>
+                          {i + 1}. 出库单号: {o.orderNumber} | 状态: {o.status} | 明细数: {o.itemCount}
+                        </div>
+                      ))}
+                    </div>
+                  }
+                />
               )}
             </div>
           )}
