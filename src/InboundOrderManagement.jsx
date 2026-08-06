@@ -311,7 +311,7 @@ export default function InboundOrderManagement({ user, companies = [] }) {
       const formData = new FormData()
       formData.append('file', importFileList[0].originFileObj)
       formData.append('supplier_id', importSupplierId)
-      const res = await api.post('/erp/inbound-orders/import-historical-file', formData, {
+      const res = await api.post('/erp/inbound-orders/import-auto', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       })
       setImportResult(res.data?.data || res.data)
@@ -680,8 +680,8 @@ export default function InboundOrderManagement({ user, companies = [] }) {
     >
       <Alert
         type="info" showIcon style={{ marginBottom: 12 }}
-        message="支持 Excel (.xlsx/.xls) 和 CSV 文件"
-        description="表格列: 入库日期 | 入库单号 | 订单号码 | 供应商料号 | 产品名称 | 规格型号 | 数量PCS | 含税单价RMB/PCS | 含税金额RMB。系统按订单号码自动查/建采购单, 按入库单号分组创建入库单, 并增加库存。"
+        message="支持 Excel (.xlsx/.xls) 和 CSV 文件，自动识别两种格式"
+        description="① 指送客戶格式: 含 訂單單號/客戶產品品名/訂單數量/已出貨數量/單價 等列，按訂單單號查/建采购单，以已出貨數量为入库数量增加库存。② 历史入库单格式: 入库日期|入库单号|订单号码|...|数量PCS|含税单价|含税金额。供应商均以前端选择的供应商为准。"
       />
       <div style={{ marginBottom: 12 }}>
         <Select

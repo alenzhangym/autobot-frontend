@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Button, Menu, Avatar, Tooltip, Dropdown, Space, Tag } from 'antd';
-import { PlusOutlined, FileTextOutlined, DatabaseOutlined, LogoutOutlined, SettingOutlined, TeamOutlined, DeleteOutlined, PlayCircleOutlined, DownOutlined, ShopOutlined, FileSearchOutlined, CodeOutlined, MessageOutlined, SendOutlined, DashboardOutlined, InboxOutlined, ToolOutlined, UsergroupAddOutlined, CrownOutlined, LinkOutlined, UploadOutlined, SnippetsOutlined, ShoppingCartOutlined, AuditOutlined, SearchOutlined, ContainerOutlined, RocketOutlined, ApiOutlined, ReadOutlined, EditOutlined, ExperimentOutlined } from '@ant-design/icons';
+import { PlusOutlined, FileTextOutlined, DatabaseOutlined, LogoutOutlined, SettingOutlined, TeamOutlined, DeleteOutlined, PlayCircleOutlined, DownOutlined, ShopOutlined, FileSearchOutlined, CodeOutlined, MessageOutlined, SendOutlined, DashboardOutlined, InboxOutlined, ToolOutlined, UsergroupAddOutlined, CrownOutlined, LinkOutlined, UploadOutlined, SnippetsOutlined, ShoppingCartOutlined, AuditOutlined, SearchOutlined, ContainerOutlined, RocketOutlined, ApiOutlined, ReadOutlined, EditOutlined, ExperimentOutlined, BarChartOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useUserStore } from '../store/useUserStore';
 import api, { getLocalAgentBaseUrl } from '../auth';
@@ -242,6 +242,7 @@ export default function SessionSidebar({
               children: [
                 { key: 'parts', icon: <ToolOutlined />, label: t('erp.parts') },
                 { key: 'inventory', icon: <ContainerOutlined />, label: '库存管理 (Admin)' },
+                { key: 'profit_analysis', icon: <BarChartOutlined />, label: '利润分析' },
                 { key: 'customers', icon: <TeamOutlined />, label: t('erp.customers') },
                 { key: 'crm_contacts', icon: <UsergroupAddOutlined />, label: '联系人管理' },
                 { key: 'suppliers', icon: <UsergroupAddOutlined />, label: t('erp.suppliers') },

@@ -27,6 +27,8 @@ import {
   TeamOutlined,
   ShoppingCartOutlined,
   SolutionOutlined,
+  ReadOutlined,
+  BookOutlined,
 } from '@ant-design/icons'
 import ThemeSwitcher from './components/ThemeSwitcher'
 import { initTheme } from './themes'
@@ -499,12 +501,12 @@ const agentCategories = [
     id: 'ERP',
     title: 'ERP 进销存',
     subtitle: 'Commerce Operations',
-    description: '采购 / 入库 / 出库 / 销售 / 对账 / 库存',
+    description: '采购 / 入库 / 出库 / 销售 / 对账 / 库存 / 利润分析',
     accent: 'teal',
     icon: <ShoppingCartOutlined />,
     channels: CHANNELS_BY_TASK_TYPE.OTHER || [],
     agents: [
-      { name: 'ERPOrchestrator', desc: 'ERP 流程编排与执行 (LLM ReAct)', features: ['采购单管理', '销售单管理', '入库 / 出库', '库存查询', '财务对账', '审计日志', '数据看板'] },
+      { name: 'ERPOrchestrator', desc: 'ERP 流程编排与执行 (LLM ReAct)', features: ['采购/销售单', '入库/出库', '对账', '库存管理', '利润分析', 'Excel 导入', '批量同步', '审计日志', '数据看板'] },
     ]
   },
   {
@@ -517,6 +519,37 @@ const agentCategories = [
     channels: [],
     agents: [
       { name: 'CRMOrchestrator', desc: 'CRM 流程编排与执行 (LLM ReAct)', features: ['客户与联系人', '线索与商机', '合同管理', '回款计划与记录', '跟进记录', '统一客户主数据'] },
+    ]
+  },
+  {
+    id: 'academic',
+    title: '学术分析',
+    subtitle: 'Research & Report',
+    description: '论文检索 / 深度研究 / 报告生成（四阶段流水线）',
+    accent: 'copper',
+    icon: <ReadOutlined />,
+    channels: [],
+    agents: [
+      { name: 'SearchAgent', desc: '多源论文检索', features: ['Perplexity', 'FeedCoop', '本地知识库'] },
+      { name: 'OutlineArchitect', desc: '报告大纲规划', features: ['内置模板', '用户自定义模板'] },
+      { name: 'SectionGenerator', desc: '章节逐段生成', features: ['长文档', '异步进度', '断点续传'] },
+      { name: 'DebateReviewer', desc: '辩论评审与修订', features: ['ReAct 闭环', '段落扩展', 'LLM 校准'] },
+      { name: 'SynthesisAgent', desc: '报告合成与导出', features: ['DOCX', 'PDF', '大纲/章节审核'] },
+    ]
+  },
+  {
+    id: 'novel',
+    title: '小说创作',
+    subtitle: 'Fiction Pipeline',
+    description: '题材化小说分层生成 — 角色图谱 / 大纲 / 卷章',
+    accent: 'rose',
+    icon: <BookOutlined />,
+    channels: [],
+    agents: [
+      { name: 'ArcGenerator', desc: '故事弧线与角色关系图谱', features: ['多弧线候选', '关系图谱', '角色配置'] },
+      { name: 'OutlineGenerator', desc: '分层大纲生成', features: ['卷/章配置', '章节计数', '风格偏好'] },
+      { name: 'ChapterGenerator', desc: '章节逐章生成', features: ['异步进度', '章节审核', '断点续传'] },
+      { name: 'AssemblyAgent', desc: '成书与导出', features: ['DOCX', 'PDF', '过短段落扩展'] },
     ]
   },
 ]
@@ -887,7 +920,7 @@ function HomeContent({ onLoginClick }) {
             fontFamily: 'var(--ab-font-body)',
           }}>
             基于大语言模型的多 Agent 协作平台 — 代码工程、数据分析、文档编排、
-            ERP 进销存与 CRM 客户关系任务在同一控制中心内自动化执行。
+            ERP 进销存、CRM 客户关系、学术研究与小说创作任务在同一控制中心内自动化执行。
           </p>
 
           <div className="ab-reveal ab-reveal-4" style={{ display: 'flex', alignItems: 'center', gap: 24, flexWrap: 'wrap' }}>
@@ -942,9 +975,9 @@ function HomeContent({ onLoginClick }) {
             flexWrap: 'wrap',
           }}>
             {[
-              { k: 'AGENTS', v: '15+' },
+              { k: 'AGENTS', v: '20+' },
               { k: 'CHANNELS', v: '05' },
-              { k: 'TASK TYPES', v: '04 + ERP + CRM' },
+              { k: 'TASK TYPES', v: '04 + ERP + CRM + 学术/小说' },
               { k: 'LANGUAGES', v: 'JAVA / TS / GO' },
             ].map(s => (
               <div key={s.k}>
@@ -972,8 +1005,8 @@ function HomeContent({ onLoginClick }) {
             Core <em>capability</em> matrix
           </h2>
           <p style={{ color: 'var(--ab-text-3)', fontSize: 15, lineHeight: 1.7, fontFamily: 'var(--ab-font-body)' }}>
-            六个任务域, 每个域由专职 Agent 编排执行 — 从推理、检索到代码生成、SQL 执行到 ERP/CRM 业务,
-            端到端无需人工切换工具。
+            八个任务域, 每个域由专职 Agent 编排执行 — 从推理检索、代码生成、SQL 执行, 到 ERP/CRM 业务、
+            学术研究与小说创作, 端到端无需人工切换工具。
           </p>
         </div>
 
@@ -1018,7 +1051,7 @@ function HomeContent({ onLoginClick }) {
                         {category.icon}
                       </div>
                       <span className="ab-mono-dim" style={{ fontSize: 10 }}>
-                        {String(idx + 1).padStart(2, '0')} / 05
+                        {String(idx + 1).padStart(2, '0')} / 08
                       </span>
                     </div>
 

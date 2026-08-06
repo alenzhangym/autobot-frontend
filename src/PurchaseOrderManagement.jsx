@@ -249,6 +249,7 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
   }
 
   const addItem = () => setItems([...items, emptyItem()])
+
   const removeItem = (key) => { if (items.length <= 1) return; setItems(items.filter(it => it.key !== key)) }
   const updateItem = (key, field, val) => setItems(items.map(it => it.key === key ? { ...it, [field]: val } : it))
 
