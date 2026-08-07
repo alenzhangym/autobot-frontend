@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Layout, Table, Button, Modal, Form, Input, InputNumber, Select, AutoComplete, Tag, Space, message, DatePicker, Upload, Descriptions, Popconfirm, Row, Col, Card, Alert, Statistic } from 'antd'
-import { PlusOutlined, CameraOutlined, SendOutlined, ReloadOutlined, EyeOutlined, CheckOutlined, CloseOutlined, TruckOutlined, SearchOutlined, DeleteOutlined, EditOutlined, UploadOutlined, InboxOutlined } from '@ant-design/icons'
+import { PlusOutlined, SendOutlined, ReloadOutlined, EyeOutlined, CheckOutlined, CloseOutlined, TruckOutlined, SearchOutlined, DeleteOutlined, EditOutlined, UploadOutlined, InboxOutlined } from '@ant-design/icons'
 import api from './auth'
 import { isSuperAdmin as isSuperAdminFn } from './utils/permissions.js'
 
@@ -30,8 +30,6 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
   const [expandedRowKeys, setExpandedRowKeys] = useState([])
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [createForm] = Form.useForm()
-  const [ocrLoading, setOcrLoading] = useState(false)
-  const [ocrPreview, setOcrPreview] = useState(null)
   const [customers, setCustomers] = useState([])
   const [items, setItems] = useState([emptyItem()])
   const [itemFilter, setItemFilter] = useState('')
@@ -51,6 +49,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
   const [selectedCustId, setSelectedCustId] = useState(null)
   const [salesOrders, setSalesOrders] = useState([])
   const [soLoading, setSoLoading] = useState(false)
+  const [selectedSoId, setSelectedSoId] = useState(null)
   const [showEditModal, setShowEditModal] = useState(false)
   const [editingOrder, setEditingOrder] = useState(null)
   const [editingReconciled, setEditingReconciled] = useState(false)
@@ -322,25 +321,49 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
     setItems(allRows.length > 0 ? allRows : [emptyItem()])
   }
 
+  // 加载销售单列表: 优先按当前客户, 支持按销售单号关键字搜索(供直接粘贴单号检索)
+  const loadSalesOrders = async (keyword) => {
+    const customerId = createForm.getFieldValue('customerId')
+    setSoLoading(true)
+    try {
+      const params = { limit: 100 }
+      const kw = (keyword || '').trim()
+      if (kw) params.keyword = kw
+      else if (customerId) params.customerId = customerId
+      if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
+      const res = await api.get('/erp/sales-orders', { params })
+      const soPayload = res.data?.data || res.data || {}
+      setSalesOrders((soPayload.data || []).filter(so => so.status !== 'SHIPPED'))
+    } catch (e) { /* ignore */ }
+    setSoLoading(false)
+  }
+
+  const soSearchTimer = useRef(null)
+  const handleSoSearch = (value) => {
+    if (soSearchTimer.current) clearTimeout(soSearchTimer.current)
+    soSearchTimer.current = setTimeout(() => loadSalesOrders(value), 300)
+  }
+
   const handleCustomerChange = async (customerId) => {
     setSelectedCustId(customerId)
     setItems([emptyItem()])
     setCustMappings([])
     setItemFilter('')
     setSalesOrders([])
+    setSelectedSoId(null)
+    createForm.setFieldValue('salesOrderId', null)
     if (!customerId) return
-    // 拉取该客户的全部销售单，并自动带入物料明细作为参考
-    setSoLoading(true)
-    try {
-      const params = { customerId, limit: 100 }
-      if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
-      const res = await api.get('/erp/sales-orders', { params })
-      const soPayload = res.data?.data || res.data || {}
-      const list = (soPayload.data || []).filter(so => so.status !== 'SHIPPED')
-      setSalesOrders(list)
-      await buildItemsFromSalesOrders(list)
-    } catch (e) { /* ignore */ }
-    setSoLoading(false)
+    // 选择客户后，仅列出该客户的销售单供选择（不自动带入全部物料）
+    loadSalesOrders('')
+  }
+
+  // 选择销售单后，带入该销售单的物料明细作为参考
+  const handleSoChange = async (soId) => {
+    setSelectedSoId(soId)
+    setItemFilter('')
+    if (!soId) { setItems([emptyItem()]); return }
+    const so = salesOrders.find(s => s.sales_id === soId)
+    if (so) await buildItemsFromSalesOrders([so])
   }
 
   const fetchOrders = useCallback(async () => {
@@ -497,6 +520,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
       }))
       const body = {
         customerId: values.customerId,
+        salesOrderId: values.salesOrderId,
         items: orderItems,
       }
       await api.post('/erp/outbound-orders', body)
@@ -519,25 +543,6 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
       }
       message.error('创建失败: ' + (errData?.message || e.message))
     }
-  }
-
-  const handleOcrUpload = async (file) => {
-    setOcrLoading(true)
-    try {
-      const reader = new FileReader()
-      reader.onload = async (e) => {
-        const base64 = e.target.result.split(',')[1]
-        const res = await api.post('/erp/outbound-orders/ocr', { image: base64 })
-        setOcrPreview(res.data)
-        message.success('图片识别完成, 请确认后创建')
-      }
-      reader.readAsDataURL(file)
-    } catch (e) {
-      message.error('OCR识别失败: ' + (e.response?.data?.error || e.message))
-    } finally {
-      setOcrLoading(false)
-    }
-    return false
   }
 
   // ── Historical Import ──
@@ -565,32 +570,6 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
       message.error('导入失败: ' + (e.response?.data?.error || e.message))
     } finally {
       setImporting(false)
-    }
-  }
-
-  const confirmOcrCreate = async () => {
-    if (!ocrPreview?.parsed_data) return
-    const parsed = ocrPreview.parsed_data
-    const items = []
-    if (parsed.part_type) {
-      items.push({
-        partType: parsed.part_type,
-        model: parsed.user_part_model || '',
-        qty: parsed.quantity || 0,
-        unitPrice: parsed.unit_price || 0,
-      })
-    }
-    try {
-      await api.post('/erp/outbound-orders', {
-        customerName: parsed.customer_name,
-        orderDate: new Date().toISOString().split('T')[0],
-        items,
-      })
-      message.success('已从图片创建出库单')
-      setOcrPreview(null)
-      fetchOrders()
-    } catch (e) {
-      message.error('创建失败: ' + (e.response?.data?.error || e.message))
     }
   }
 
@@ -720,11 +699,8 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
           </Col>
           <Col>
             <Space>
-              <Upload accept="image/*" showUploadList={false} beforeUpload={handleOcrUpload}>
-                <Button icon={<CameraOutlined />} loading={ocrLoading}>拍照识别</Button>
-              </Upload>
               <Button icon={<UploadOutlined />} onClick={openImport}>历史导入</Button>
-              <Button type="primary" icon={<PlusOutlined />} onClick={() => { setShowCreateModal(true); setItems([emptyItem()]); setSelectedCustId(null); setSalesOrders([]) }}>新建出库单</Button>
+              <Button type="primary" icon={<PlusOutlined />} onClick={() => { setShowCreateModal(true); setItems([emptyItem()]); setSelectedCustId(null); setSalesOrders([]); setSelectedSoId(null) }}>新建出库单</Button>
               <Button icon={<ReloadOutlined />} onClick={fetchOrders}>刷新</Button>
             </Space>
           </Col>
@@ -836,38 +812,23 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
                   {customers.map(c => <Select.Option key={c.customerId} value={c.customerId}>{c.name}</Select.Option>)}
                 </Select>
               </Form.Item></Col>
+              <Col span={24}><Form.Item label="销售单" name="salesOrderId" rules={[{ required: true, message: '请选择销售单（必须先建立销售单才能新建出库单）' }]}>
+                <Select showSearch placeholder="选择销售单（可输入销售单号搜索）" loading={soLoading} allowClear
+                  onChange={handleSoChange}
+                  onSearch={handleSoSearch}
+                  onFocus={() => { if (!salesOrders.length && createForm.getFieldValue('customerId')) loadSalesOrders('') }}
+                  notFoundContent={soLoading ? '加载中...' : '该客户暂无销售单，请先创建销售单'}
+                  filterOption={false}>
+                  {salesOrders.map(so => <Select.Option key={so.sales_id} value={so.sales_id}>{so.so_number}（{so.status}）</Select.Option>)}
+                </Select>
+              </Form.Item></Col>
             </Row>
           </Form>
-          {/* 参考销售单列表 - 仅供用户参考销售单信息，非必选 */}
-          {salesOrders.length > 0 && (
-            <div style={{ background: '#0d1a26', border: '1px solid #1f3a52', borderRadius: 4, padding: 8, marginBottom: 8 }}>
-              <div style={{ color: '#69b1ff', fontSize: 12, fontWeight: 500, marginBottom: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span>📋 该客户的全部销售单（参考信息，共 {salesOrders.length} 单）</span>
-                <span style={{ color: '#666', fontSize: 11, fontWeight: 'normal' }}>下方物料明细已自动带入</span>
-              </div>
-              <div style={{ maxHeight: 80, overflow: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', color: '#ccc', fontSize: 11 }}>
-                  <thead><tr style={{ borderBottom: '1px solid #1f3a52' }}>
-                    <th style={{ padding: 3, textAlign: 'left' }}>销售单号</th>
-                    <th style={{ padding: 3, textAlign: 'left' }}>下单日期</th>
-                    <th style={{ padding: 3, textAlign: 'left' }}>客户PO</th>
-                    <th style={{ padding: 3, textAlign: 'left' }}>状态</th>
-                    <th style={{ padding: 3, textAlign: 'right' }}>金额</th>
-                  </tr></thead>
-                  <tbody>{salesOrders.map(so => (
-                    <tr key={so.sales_id} style={{ borderBottom: '1px solid #162a3a' }}>
-                      <td style={{ padding: 3, color: '#69b1ff' }}>{so.so_number || '-'}</td>
-                      <td style={{ padding: 3 }}>{so.order_date || '-'}</td>
-                      <td style={{ padding: 3 }}>{so.customer_po || '-'}</td>
-                      <td style={{ padding: 3 }}>{so.status || '-'}</td>
-                      <td style={{ padding: 3, textAlign: 'right' }}>{so.total_amount != null ? '¥' + Number(so.total_amount).toFixed(2) : '-'}</td>
-                    </tr>
-                  ))}</tbody>
-                </table>
-              </div>
-            </div>
+          {selectedSoId && salesOrders.find(s => s.sales_id === selectedSoId) ? (
+            <div style={{ color: '#69b1ff', fontSize: 12, marginBottom: 8 }}>已选择销售单，下方物料明细已自动带入，可编辑本次出库数量与单价。</div>
+          ) : (
+            <div style={{ color: '#888', fontSize: 12, marginBottom: 8 }}>选择客户后请选择一张销售单，未选择销售单无法新建出库单。</div>
           )}
-          {soLoading && <div style={{ color: '#888', fontSize: 12, marginBottom: 8 }}>正在加载该客户的销售单...</div>}
           <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ color: '#888', fontSize: 13, fontWeight: 500 }}>
               物料明细 {itemFilter && <span style={{ color: '#69b1ff' }}>（{filteredItems.length} / {items.length}）</span>}
@@ -934,7 +895,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
             )}
           </div>
           <div style={{ color: '#888', fontSize: 12, marginTop: 8 }}>
-            选择客户后自动列出其全部销售单并带入物料明细，可直接编辑本次出库数量与单价后保存。
+            选择客户后，必须选择一张销售单才能新建出库单；未选择销售单时系统会提示先建立销售单。
           </div>
         </Modal>
 
@@ -1136,35 +1097,6 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
               </div>
             )
           })()}
-        </Modal>
-
-        {/* ── OCR Preview Modal ── */}
-        <Modal
-          title="OCR识别结果预览"
-          open={!!ocrPreview}
-          onOk={confirmOcrCreate}
-          onCancel={() => setOcrPreview(null)}
-          okText="确认创建"
-          width={600}
-        >
-          {ocrPreview && (
-            <div>
-              <div style={{ color: '#888', marginBottom: 8 }}>识别文本:</div>
-              <pre style={{ background: '#111', padding: 12, borderRadius: 8, color: '#ccc', maxHeight: 150, overflow: 'auto', fontSize: 12 }}>
-                {(ocrPreview.raw_text || '').substring(0, 500)}
-              </pre>
-              {ocrPreview.parsed_data && (
-                <Descriptions bordered size="small" column={2} style={{ marginTop: 12 }}>
-                  <Descriptions.Item label="类型">{ocrPreview.parsed_data.intent || '-'}</Descriptions.Item>
-                  <Descriptions.Item label="客户">{ocrPreview.parsed_data.customer_name || '-'}</Descriptions.Item>
-                  <Descriptions.Item label="品类">{ocrPreview.parsed_data.part_type || '-'}</Descriptions.Item>
-                  <Descriptions.Item label="型号">{ocrPreview.parsed_data.user_part_model || '-'}</Descriptions.Item>
-                  <Descriptions.Item label="数量">{ocrPreview.parsed_data.quantity || '-'}</Descriptions.Item>
-                  <Descriptions.Item label="单价">{ocrPreview.parsed_data.unit_price || '-'}</Descriptions.Item>
-                </Descriptions>
-              )}
-            </div>
-          )}
         </Modal>
 
         {/* ── Historical Import Modal ── */}

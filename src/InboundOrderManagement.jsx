@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Layout, Table, Button, Modal, Form, Input, Select, AutoComplete, Tag, Space, message, DatePicker, Upload, Popconfirm, Row, Col, Card, InputNumber, Typography, Alert, Statistic } from 'antd'
-import { PlusOutlined, CameraOutlined, InboxOutlined, ReloadOutlined, CheckOutlined, CloseOutlined, SearchOutlined, DeleteOutlined, EditOutlined, UploadOutlined } from '@ant-design/icons'
+import { PlusOutlined, InboxOutlined, ReloadOutlined, CheckOutlined, CloseOutlined, SearchOutlined, DeleteOutlined, EditOutlined, UploadOutlined } from '@ant-design/icons'
 import api from './auth'
 import dayjs from 'dayjs'
 import { isSuperAdmin as isSuperAdminFn } from './utils/permissions.js';
@@ -41,12 +41,11 @@ export default function InboundOrderManagement({ user, companies = [] }) {
     if (!kw) return items
     return items.filter(it => (it.model || '').toString().toLowerCase().includes(kw))
   }, [items, itemFilter])
-  const [ocrLoading, setOcrLoading] = useState(false)
-  const [ocrPreview, setOcrPreview] = useState(null)
   const [parts, setParts] = useState([])
   const [partTypes, setPartTypes] = useState(PART_TYPES)
   const [purchaseOrders, setPurchaseOrders] = useState([])
   const [poLoading, setPoLoading] = useState(false)
+  const [selectedPoId, setSelectedPoId] = useState(null)
   const [showEditModal, setShowEditModal] = useState(false)
   const [editForm] = Form.useForm()
   const [editItems, setEditItems] = useState([])
@@ -227,29 +226,54 @@ export default function InboundOrderManagement({ user, companies = [] }) {
     setItems(allRows.length > 0 ? allRows : [emptyItem()])
   }
 
-  const handleSupplierChange = async (supplierName) => {
-    setItems([emptyItem()])
-    setPurchaseOrders([])
-    setItemFilter('')
-    if (!supplierName) return
-    // 拉取该供应商全部采购单，并自动带入物料明细作为参考
+  // 加载采购单列表: 优先按当前供应商, 支持按采购单号关键字搜索(供直接粘贴单号检索)
+  const loadPurchaseOrders = async (keyword) => {
+    const supplierName = createForm.getFieldValue('supplierName')
     setPoLoading(true)
     try {
-      const params = { supplierName, limit: 100 }
+      const params = { limit: 100 }
+      const kw = (keyword || '').trim()
+      if (kw) params.keyword = kw
+      else if (supplierName) params.supplierName = supplierName
       if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
       const res = await api.get('/erp/purchase-orders', { params })
       const poPayload = res.data?.data || res.data || {}
-      const list = (poPayload.data || []).filter(po => po.status !== 'RECEIVED')
-      setPurchaseOrders(list)
-      await buildItemsFromPurchaseOrders(list)
+      setPurchaseOrders((poPayload.data || []).filter(po => po.status !== 'RECEIVED'))
     } catch (e) { /* ignore */ }
     setPoLoading(false)
+  }
+
+  const poSearchTimer = useRef(null)
+  const handlePoSearch = (value) => {
+    if (poSearchTimer.current) clearTimeout(poSearchTimer.current)
+    poSearchTimer.current = setTimeout(() => loadPurchaseOrders(value), 300)
+  }
+
+  const handleSupplierChange = async (supplierName) => {
+    setItems([emptyItem()])
+    setPurchaseOrders([])
+    setSelectedPoId(null)
+    createForm.setFieldValue('purchaseOrderId', null)
+    setItemFilter('')
+    if (!supplierName) return
+    // 选择供应商后，仅列出该供应商的采购单供选择（不自动带入全部物料）
+    loadPurchaseOrders('')
+  }
+
+  // 选择采购单后，带入该采购单的物料明细作为参考
+  const handlePoChange = async (poId) => {
+    setSelectedPoId(poId)
+    setItemFilter('')
+    if (!poId) { setItems([emptyItem()]); return }
+    const po = purchaseOrders.find(p => p.purchase_id === poId)
+    if (po) await buildItemsFromPurchaseOrders([po])
   }
 
   const openCreate = () => {
     createForm.resetFields()
     setItems([emptyItem()])
     setPurchaseOrders([])
+    setSelectedPoId(null)
     setModalKey(prev => prev + 1)
     setShowCreateModal(true)
   }
@@ -287,6 +311,7 @@ export default function InboundOrderManagement({ user, companies = [] }) {
       }))
       await api.post('/erp/inbound-orders', {
         supplierName: values.supplierName,
+        purchaseOrderId: values.purchaseOrderId,
         items: orderItems,
       })
       message.success(`入库单已到货 (${orderItems.length} 项物料)`)
@@ -322,38 +347,6 @@ export default function InboundOrderManagement({ user, companies = [] }) {
     } finally {
       setImporting(false)
     }
-  }
-
-  const handleOcr = async (file) => {
-    setOcrLoading(true)
-    const reader = new FileReader()
-    reader.onload = async (e) => {
-      try {
-        const res = await api.post('/erp/inbound-orders/ocr', { image: e.target.result.split(',')[1] })
-        const parsed = res.data.parsed_data
-        if (parsed) {
-          createForm.setFieldsValue({ supplierName: parsed.supplier_name || parsed.manufacturer || '' })
-          setItems([{ key: Date.now(), partType: parsed.part_type || '', model: parsed.user_part_model || '',
-            manufacturer: parsed.manufacturer || '', qty: parsed.quantity || null,
-            unitPrice: parsed.purchase_price || parsed.unit_price || null, location: '', notes: '' }])
-        }
-        setOcrPreview(res.data); message.success('图片识别完成，已填入表单')
-      } catch (err) { message.error('OCR失败: ' + (err.response?.data?.error || err.message)) }
-      setOcrLoading(false)
-    }
-    reader.readAsDataURL(file)
-    return false
-  }
-
-  const confirmOcr = async () => {
-    if (!ocrPreview?.parsed_data) return
-    const p = ocrPreview.parsed_data
-    try {
-      await api.post('/erp/inbound-orders', { supplierName: p.supplier_name || p.manufacturer, orderDate: new Date().toISOString().split('T')[0],
-        items: [{ partType: p.part_type, model: p.user_part_model, qty: p.quantity || 0,
-          unitPrice: p.purchase_price || p.unit_price || 0, manufacturer: p.manufacturer || '' }] })
-      message.success('已从图片创建入库单'); setOcrPreview(null); fetchOrders()
-    } catch (e) { message.error('创建失败') }
   }
 
   const itemsSummary = (r) => {
@@ -431,7 +424,6 @@ export default function InboundOrderManagement({ user, companies = [] }) {
     <Row justify="space-between" align="middle" style={{ marginBottom: 16 }}>
       <Col><h2 style={{ color: '#e3e3e3', margin: 0 }}>采购入库单管理</h2></Col>
       <Col><Space>
-        <Upload accept="image/*" showUploadList={false} beforeUpload={handleOcr}><Button icon={<CameraOutlined />} loading={ocrLoading}>拍照识别</Button></Upload>
         <Button icon={<UploadOutlined />} onClick={openImport}>历史导入</Button>
         <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建入库单</Button>
         <Button icon={<ReloadOutlined />} onClick={fetchOrders}>刷新</Button>
@@ -483,36 +475,24 @@ export default function InboundOrderManagement({ user, companies = [] }) {
               {suppliers.map(s => <Select.Option key={s.supplierId} value={s.name}>{s.name}</Select.Option>)}
             </Select>
           </Form.Item></Col>
+          <Col span={24}><Form.Item name="purchaseOrderId" label="采购单" rules={[{ required: true, message: '请选择采购单（必须先建立采购单才能新建入库单）' }]}>
+            <Select showSearch placeholder="选择采购单（可输入采购单号搜索）" loading={poLoading} allowClear
+              onChange={handlePoChange}
+              onSearch={handlePoSearch}
+              onFocus={() => { if (!purchaseOrders.length && createForm.getFieldValue('supplierName')) loadPurchaseOrders('') }}
+              notFoundContent={poLoading ? '加载中...' : '该供应商暂无采购单，请先创建采购单'}
+              filterOption={false}
+            >
+              {purchaseOrders.map(po => <Select.Option key={po.purchase_id} value={po.purchase_id}>{po.po_number}（{po.status}）</Select.Option>)}
+            </Select>
+          </Form.Item></Col>
         </Row>
       </Form>
-      {/* 参考采购单列表 - 仅供用户参考采购单信息，非必选 */}
-      {purchaseOrders.length > 0 && (
-        <div style={{ background: '#0d1a26', border: '1px solid #1f3a52', borderRadius: 4, padding: 8, marginBottom: 8 }}>
-          <div style={{ color: '#69b1ff', fontSize: 12, fontWeight: 500, marginBottom: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span>📋 该供应商的全部采购单（参考信息，共 {purchaseOrders.length} 单）</span>
-            <span style={{ color: '#666', fontSize: 11, fontWeight: 'normal' }}>下方物料明细已自动带入</span>
-          </div>
-          <div style={{ maxHeight: 80, overflow: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', color: '#ccc', fontSize: 11 }}>
-              <thead><tr style={{ borderBottom: '1px solid #1f3a52' }}>
-                <th style={{ padding: 3, textAlign: 'left' }}>采购单号</th>
-                <th style={{ padding: 3, textAlign: 'left' }}>采购日期</th>
-                <th style={{ padding: 3, textAlign: 'left' }}>状态</th>
-                <th style={{ padding: 3, textAlign: 'right' }}>金额</th>
-              </tr></thead>
-              <tbody>{purchaseOrders.map(po => (
-                <tr key={po.purchase_id} style={{ borderBottom: '1px solid #162a3a' }}>
-                  <td style={{ padding: 3, color: '#69b1ff' }}>{po.po_number || '-'}</td>
-                  <td style={{ padding: 3 }}>{po.order_date || '-'}</td>
-                  <td style={{ padding: 3 }}>{po.status || '-'}</td>
-                  <td style={{ padding: 3, textAlign: 'right' }}>{po.total_amount != null ? '¥' + Number(po.total_amount).toFixed(2) : '-'}</td>
-                </tr>
-              ))}</tbody>
-            </table>
-          </div>
-        </div>
+      {selectedPoId && purchaseOrders.find(p => p.purchase_id === selectedPoId) ? (
+        <div style={{ color: '#69b1ff', fontSize: 12, marginBottom: 8 }}>已选择采购单，下方物料明细已自动带入，可编辑本次入库数量与单价。</div>
+      ) : (
+        <div style={{ color: '#888', fontSize: 12, marginBottom: 8 }}>选择供应商后请选择一张采购单，未选择采购单无法新建入库单。</div>
       )}
-      {poLoading && <div style={{ color: '#888', fontSize: 12, marginBottom: 8 }}>正在加载该供应商的采购单...</div>}
       <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <span style={{ color: '#888', fontSize: 13, fontWeight: 500 }}>
           物料明细 {itemFilter && <span style={{ color: '#69b1ff' }}>（{filteredItems.length} / {items.length}）</span>}
@@ -582,7 +562,7 @@ export default function InboundOrderManagement({ user, companies = [] }) {
         )}
       </div>
       <div style={{ color: '#888', fontSize: 12, marginTop: 8 }}>
-         选择供应商后自动列出其全部采购单并带入物料明细，可直接编辑本次入库数量与单价后保存。
+        选择供应商后，必须选择一张采购单才能新建入库单；未选择采购单时系统会提示先建立采购单。
       </div>
     </Modal>
 
@@ -653,19 +633,6 @@ export default function InboundOrderManagement({ user, companies = [] }) {
       </div>
     </Modal>
 
-    {/* ── OCR Preview ── */}
-    <Modal title="OCR识别预览" open={!!ocrPreview} onOk={confirmOcr} onCancel={() => setOcrPreview(null)} okText="确认创建" width={550}>
-      {ocrPreview && <div><pre style={{ background: '#111', padding: 12, borderRadius: 8, color: '#ccc', maxHeight: 100, overflow: 'auto', fontSize: 12 }}>{(ocrPreview.raw_text || '').substring(0, 400)}</pre>
-        {ocrPreview.parsed_data && <table style={{ width: '100%', marginTop: 12, color: '#ccc', fontSize: 12 }}><tbody>
-          <tr><td style={{ color: '#888', padding: 2 }}>类型</td><td>{ocrPreview.parsed_data.intent || '-'}</td></tr>
-          <tr><td style={{ color: '#888', padding: 2 }}>供应商</td><td>{ocrPreview.parsed_data.supplier_name || ocrPreview.parsed_data.manufacturer || '-'}</td></tr>
-          <tr><td style={{ color: '#888', padding: 2 }}>品类</td><td>{ocrPreview.parsed_data.part_type || '-'}</td></tr>
-          <tr><td style={{ color: '#888', padding: 2 }}>型号</td><td>{ocrPreview.parsed_data.user_part_model || '-'}</td></tr>
-          <tr><td style={{ color: '#888', padding: 2 }}>数量</td><td>{ocrPreview.parsed_data.quantity || '-'}</td></tr>
-          <tr><td style={{ color: '#888', padding: 2 }}>单价</td><td>{ocrPreview.parsed_data.purchase_price || ocrPreview.parsed_data.unit_price || '-'}</td></tr>
-        </tbody></table>}</div>}
-    </Modal>
-
     {/* ── Historical Import Modal ── */}
     <Modal
       title="导入历史入库单"
@@ -680,8 +647,8 @@ export default function InboundOrderManagement({ user, companies = [] }) {
     >
       <Alert
         type="info" showIcon style={{ marginBottom: 12 }}
-        message="支持 Excel (.xlsx/.xls) 和 CSV 文件，自动识别两种格式"
-        description="① 指送客戶格式: 含 訂單單號/客戶產品品名/訂單數量/已出貨數量/單價 等列，按訂單單號查/建采购单，以已出貨數量为入库数量增加库存。② 历史入库单格式: 入库日期|入库单号|订单号码|...|数量PCS|含税单价|含税金额。供应商均以前端选择的供应商为准。"
+        message="支持 Excel (.xlsx/.xls) 和 CSV 文件，自动识别 6 种主流采购单/出货明细格式"
+        description="① 历史入库单(岑科): 送货日期/送货单号/订单号码/客户料号/产品名称/规格型号/数量/含税单价/含税金额。② 通用出货(宏业兴): .../送货单号/送货日期/规格型号/数量/单位/单价/金额，单位K自动×1000。③ 销售出货(宏昕和): 出货日期/送货单号/订单号/规格型号/数量/单位/含税单价/金额。④ 繁体出货(庆邦): 出貨單號/出貨日期/出貨數量/客戶品名/客戶單號/原幣單價/原幣含稅。⑤ 文善: 日期(YY.MM.DD)/订单/品名/单位K/单价/金额。⑥ 宽表汇总(昆山台庆): 出貨單號/出貨日期/訂單單號/規格/實際出貨料號/單位/出貨數量/原幣單價/原幣含稅。系统按列名自动识别，供应商均以前端选择的供应商为准。"
       />
       <div style={{ marginBottom: 12 }}>
         <Select
