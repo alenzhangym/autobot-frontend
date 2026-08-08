@@ -73,6 +73,7 @@ import ReVerifyProgressToast from './components/ReVerifyProgressToast'
 import AcademicResearchPage from './AcademicResearchPage'
 import AcademicStatsPage from './AcademicStatsPage'
 import NovelPage from './NovelPage'
+import TranslationCheckPage from './TranslationCheckPage'
 import LlmManagement from './LlmManagement'
 import { useUserStore } from './store/useUserStore'
 import { useDataStore } from './store/useDataStore'
@@ -3460,6 +3461,10 @@ const handleDeleteSession = (id) => {
           ) : activeTab === 'novel' ? (
             <Content style={{ background: '#0a0a0a', overflow: 'auto' }}>
               <NovelPage user={user} />
+            </Content>
+          ) : activeTab === 'translation_check' ? (
+            <Content style={{ background: 'var(--ab-bg)', overflow: 'hidden' }}>
+              <TranslationCheckPage user={user} />
             </Content>
           ) : activeTab === 'academic_stats' && isSuperAdmin ? (
             <Content style={{ background: '#0a0a0a', overflow: 'auto' }}>

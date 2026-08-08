@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { Layout, Table, Button, Modal, Form, Input, InputNumber, Select, AutoComplete, Tag, Space, message, DatePicker, Upload, Descriptions, Popconfirm, Row, Col, Card, Alert, Statistic } from 'antd'
+import { Layout, Table, Button, Modal, Form, Input, InputNumber, Select, AutoComplete, Tag, Space, message, DatePicker, Upload, Descriptions, Popconfirm, Row, Col, Card, Alert, Statistic, Checkbox } from 'antd'
 import { PlusOutlined, SendOutlined, ReloadOutlined, EyeOutlined, CheckOutlined, CloseOutlined, TruckOutlined, SearchOutlined, DeleteOutlined, EditOutlined, UploadOutlined, InboxOutlined } from '@ant-design/icons'
 import api from './auth'
 import { isSuperAdmin as isSuperAdminFn } from './utils/permissions.js'
@@ -61,6 +61,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
   const [importText, setImportText] = useState('')
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState(null)
+  const [importUpdateStock, setImportUpdateStock] = useState(true)
 
   // ── Substitute (替代物料) selector modal state ──
   const [subModal, setSubModal] = useState({ visible: false, target: null, model: '', subs: [], manual: [], sameType: [], partType: '', loading: false, query: '', freeQuery: '', freeResults: [], freeLoading: false })
@@ -551,6 +552,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
     setImportFileList([])
     setImportText('')
     setImportResult(null)
+    setImportUpdateStock(true)
     setShowImportModal(true)
   }
 
@@ -562,10 +564,11 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
     try {
       let res
       if (hasText) {
-        res = await api.post('/erp/outbound-orders/import-simple', { text: importText })
+        res = await api.post('/erp/outbound-orders/import-simple', { text: importText, updateStock: importUpdateStock })
       } else {
         const formData = new FormData()
         formData.append('file', importFileList[0].originFileObj)
+        formData.append('updateStock', String(importUpdateStock))
         res = await api.post('/erp/outbound-orders/import-simple-file', formData, {
           headers: { 'Content-Type': 'multipart/form-data' }
         })
@@ -1127,6 +1130,13 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
             message="支持 Excel (.xlsx/.xls)、CSV 或直接粘贴文本导入"
             description="表格需包含以下列：销售单号、物料号、数量、单价、日期，可选列：替代料号、客户料号。系统按列名自动识别（列顺序不限）。一个销售单可分批多次出库：按（销售单号, 日期）分组生成多张出库单。有替代料号时扣减替代料号库存并记录替代料号。销售单号必须已存在（请先用销售单导入创建销售单）。"
           />
+          <Checkbox
+            checked={importUpdateStock}
+            onChange={e => setImportUpdateStock(e.target.checked)}
+            style={{ marginBottom: 12 }}
+          >
+            修改库存数据（勾选则按数量扣减库存，不勾选仅记录出库单、不修改库存计数）
+          </Checkbox>
           <Input.TextArea
             rows={5}
             placeholder={"在此粘贴表格内容（列头 + 数据行），例如：\n销售单号\t物料号\t数量\t单价\t日期\nSO20260801-01\tHPC6045BMV-221M\t500\t0.85\t2026/08/05\nSO20260801-01\tHPC6045BMV-221M\t300\t0.85\t2026/08/10"}

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { Layout, Table, Button, Modal, Form, Input, Select, AutoComplete, Tag, Space, message, DatePicker, Upload, Popconfirm, Row, Col, Card, InputNumber, Typography, Alert, Statistic } from 'antd'
+import { Layout, Table, Button, Modal, Form, Input, Select, AutoComplete, Tag, Space, message, DatePicker, Upload, Popconfirm, Row, Col, Card, InputNumber, Typography, Alert, Statistic, Checkbox } from 'antd'
 import { PlusOutlined, InboxOutlined, ReloadOutlined, CheckOutlined, CloseOutlined, SearchOutlined, DeleteOutlined, EditOutlined, UploadOutlined } from '@ant-design/icons'
 import api from './auth'
 import dayjs from 'dayjs'
@@ -60,6 +60,7 @@ export default function InboundOrderManagement({ user, companies = [] }) {
   const [importText, setImportText] = useState('')
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState(null)
+  const [importUpdateStock, setImportUpdateStock] = useState(true)
 
   useEffect(() => {
     (async () => {
@@ -324,6 +325,7 @@ export default function InboundOrderManagement({ user, companies = [] }) {
     setImportFileList([])
     setImportText('')
     setImportResult(null)
+    setImportUpdateStock(true)
     setShowImportModal(true)
   }
 
@@ -335,10 +337,11 @@ export default function InboundOrderManagement({ user, companies = [] }) {
     try {
       let res
       if (hasText) {
-        res = await api.post('/erp/inbound-orders/import-simple', { text: importText })
+        res = await api.post('/erp/inbound-orders/import-simple', { text: importText, updateStock: importUpdateStock })
       } else {
         const formData = new FormData()
         formData.append('file', importFileList[0].originFileObj)
+        formData.append('updateStock', String(importUpdateStock))
         res = await api.post('/erp/inbound-orders/import-simple-file', formData, {
           headers: { 'Content-Type': 'multipart/form-data' }
         })
@@ -655,6 +658,13 @@ export default function InboundOrderManagement({ user, companies = [] }) {
         message="支持 Excel (.xlsx/.xls)、CSV 或直接粘贴文本导入"
         description="表格需包含以下列：采购单号、到货日期、物料号、数量、单价。系统按列名自动识别（列顺序不限），供应商通过采购单号自动关联已存在的采购单获取，无需手动选择。"
       />
+      <Checkbox
+        checked={importUpdateStock}
+        onChange={e => setImportUpdateStock(e.target.checked)}
+        style={{ marginBottom: 12 }}
+      >
+        修改库存数据（勾选则按数量增加库存，不勾选仅记录入库单、不修改库存计数）
+      </Checkbox>
       <Input.TextArea
         rows={5}
         placeholder="在此粘贴表格内容（列头 + 数据行），例如：&#10;采购单号\t到货日期\t物料号\t数量\t单价&#10;PO20260001\t2026/08/08\tHPC6045BMV-221M\t1000\t0.85"

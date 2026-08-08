@@ -50,6 +50,8 @@ export default function SessionSidebar({
   const hasAcademicChannel = CHANNELS.some(ch => ch.key === 'academic');
   // 2026-07-20: novel channel 网关 — 公司勾选 novel channel 后该用户可见"小说创作"入口
   const hasNovelChannel = CHANNELS.some(ch => ch.key === 'novel');
+  // 2026-08-08: translation_check channel 网关 — 公司勾选后该公司用户可见"翻译核对"入口
+  const hasTranslationCheckChannel = CHANNELS.some(ch => ch.key === 'translation_check');
 
   // Probe monitor availability once on mount; cheap, no polling
   const [monitorAvailable, setMonitorAvailable] = useState(false)
@@ -220,6 +222,11 @@ export default function SessionSidebar({
           // 公司管理员在"公司管理"页勾选 novel channel 后, 该公司所有用户可见此入口
           ...(hasNovelChannel ? [
             { key: 'novel', icon: <EditOutlined />, label: '小说创作' },
+          ] : []),
+          // 2026-08-08: 翻译核对入口 — 受 hasTranslationCheckChannel 网关控制
+          // 公司管理员在"公司管理"页勾选 translation_check channel 后, 该公司所有用户可见此入口
+          ...(hasTranslationCheckChannel ? [
+            { key: 'translation_check', icon: <SearchOutlined />, label: '翻译核对' },
           ] : []),
           // 2026-07-26: 模型学习审核 (ERP/CRM) — 仅 super admin 可见, 独立于 channel 网关
           // Super admin 审核执行成功的 ERP/CRM plan, 确认后生成 LoRA 重训样本

@@ -124,6 +124,22 @@ export const CHANNELS = [
     capabilities: ['题材选择', '分层大纲', '卷章生成', '断点续传'],
     agentNames: [],
   },
+  // 2026-08-08: 翻译核对 channel — 中文→英文字幕翻译核对工具
+  // isPageOnly=true: 仅作为菜单 tab, 不出现在"新建会话"下拉
+  // isBaseDefault 未设置: 公司需在管理页显式勾选"translation_check"channel 才能授权用户访问
+  // 授权后用户在侧栏看到"翻译核对"入口, 进入 TranslationCheckPage 左右对照核对
+  {
+    key: 'translation_check',
+    label: '翻译核对',
+    desc: '中译英字幕逐句核对修正',
+    icon: '🔍',
+    antIcon: <SearchOutlined />,
+    taskType: null,
+    subType: null,
+    isPageOnly: true,
+    capabilities: ['逐句配对', '特殊标签约束', '关键/非关键错误标注'],
+    agentNames: [],
+  },
 ];
 
 // ── 历史会话 channel 兼容 (Phase 4: erp/crm 合并为 cross) ──
