@@ -57,9 +57,9 @@ export default function InboundOrderManagement({ user, companies = [] }) {
   // ── Historical Import state ──
   const [showImportModal, setShowImportModal] = useState(false)
   const [importFileList, setImportFileList] = useState([])
+  const [importText, setImportText] = useState('')
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState(null)
-  const [importSupplierId, setImportSupplierId] = useState(null)
 
   useEffect(() => {
     (async () => {
@@ -322,23 +322,27 @@ export default function InboundOrderManagement({ user, companies = [] }) {
   // ── Historical Import ──
   const openImport = () => {
     setImportFileList([])
+    setImportText('')
     setImportResult(null)
-    setImportSupplierId(null)
     setShowImportModal(true)
   }
 
   const handleImport = async () => {
-    if (importFileList.length === 0) { message.warning('请先上传文件'); return }
-    if (!importSupplierId) { message.warning('请选择供应商'); return }
+    const hasText = importText.trim().length > 0
+    if (!hasText && importFileList.length === 0) { message.warning('请上传文件或粘贴内容'); return }
     setImporting(true)
     setImportResult(null)
     try {
-      const formData = new FormData()
-      formData.append('file', importFileList[0].originFileObj)
-      formData.append('supplier_id', importSupplierId)
-      const res = await api.post('/erp/inbound-orders/import-auto', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      })
+      let res
+      if (hasText) {
+        res = await api.post('/erp/inbound-orders/import-simple', { text: importText })
+      } else {
+        const formData = new FormData()
+        formData.append('file', importFileList[0].originFileObj)
+        res = await api.post('/erp/inbound-orders/import-simple-file', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' }
+        })
+      }
       setImportResult(res.data?.data || res.data)
       message.success('导入完成')
       fetchOrders()
@@ -648,21 +652,17 @@ export default function InboundOrderManagement({ user, companies = [] }) {
     >
       <Alert
         type="info" showIcon style={{ marginBottom: 12 }}
-        message="支持 Excel (.xlsx/.xls) 和 CSV 文件，自动识别 6 种主流采购单/出货明细格式"
-        description="① 历史入库单(岑科): 送货日期/送货单号/订单号码/客户料号/产品名称/规格型号/数量/含税单价/含税金额。② 通用出货(宏业兴): .../送货单号/送货日期/规格型号/数量/单位/单价/金额，单位K自动×1000。③ 销售出货(宏昕和): 出货日期/送货单号/订单号/规格型号/数量/单位/含税单价/金额。④ 繁体出货(庆邦): 出貨單號/出貨日期/出貨數量/客戶品名/客戶單號/原幣單價/原幣含稅。⑤ 文善: 日期(YY.MM.DD)/订单/品名/单位K/单价/金额。⑥ 宽表汇总(昆山台庆): 出貨單號/出貨日期/訂單單號/規格/實際出貨料號/單位/出貨數量/原幣單價/原幣含稅。系统按列名自动识别，供应商均以前端选择的供应商为准。"
+        message="支持 Excel (.xlsx/.xls)、CSV 或直接粘贴文本导入"
+        description="表格需包含以下列：采购单号、到货日期、物料号、数量、单价。系统按列名自动识别（列顺序不限），供应商通过采购单号自动关联已存在的采购单获取，无需手动选择。"
       />
-      <div style={{ marginBottom: 12 }}>
-        <Select
-          showSearch
-          placeholder="选择供应商（必选，用于创建采购单）"
-          value={importSupplierId}
-          onChange={(v) => setImportSupplierId(v)}
-          style={{ width: '100%' }}
-          filterOption={(input, option) => option?.children?.toLowerCase().includes(input.toLowerCase())}
-        >
-          {suppliers.map(s => <Select.Option key={s.supplierId} value={s.supplierId}>{s.name}</Select.Option>)}
-        </Select>
-      </div>
+      <Input.TextArea
+        rows={5}
+        placeholder="在此粘贴表格内容（列头 + 数据行），例如：&#10;采购单号\t到货日期\t物料号\t数量\t单价&#10;PO20260001\t2026/08/08\tHPC6045BMV-221M\t1000\t0.85"
+        value={importText}
+        onChange={e => setImportText(e.target.value)}
+        style={{ marginBottom: 12 }}
+      />
+      <div style={{ textAlign: 'center', color: '#666', fontSize: 12, marginBottom: 12 }}>或上传文件</div>
       <Upload.Dragger
         accept=".xlsx,.xls,.csv"
         fileList={importFileList}
@@ -678,8 +678,7 @@ export default function InboundOrderManagement({ user, companies = [] }) {
       {importResult && (
         <div style={{ marginTop: 8 }}>
           <Row gutter={16} style={{ marginBottom: 12 }}>
-            <Col span={8}><Statistic title="导入入库单数" value={importResult.imported || 0} valueStyle={{ color: '#52c41a' }} /></Col>
-            <Col span={8}><Statistic title="新建采购单数" value={importResult.purchaseOrdersCreated || 0} valueStyle={{ color: '#1677ff' }} /></Col>
+            <Col span={12}><Statistic title="导入入库单数" value={importResult.imported || 0} valueStyle={{ color: '#52c41a' }} /></Col>
           </Row>
           {importResult.orders && importResult.orders.length > 0 && (
             <Alert

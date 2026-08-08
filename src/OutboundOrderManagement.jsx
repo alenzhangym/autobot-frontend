@@ -58,6 +58,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
   // ── Historical Import state ──
   const [showImportModal, setShowImportModal] = useState(false)
   const [importFileList, setImportFileList] = useState([])
+  const [importText, setImportText] = useState('')
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState(null)
 
@@ -548,22 +549,28 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
   // ── Historical Import ──
   const openImport = () => {
     setImportFileList([])
+    setImportText('')
     setImportResult(null)
     setShowImportModal(true)
   }
 
   const handleImport = async () => {
-    if (importFileList.length === 0) { message.warning('请先上传文件'); return }
+    const hasText = importText.trim().length > 0
+    if (!hasText && importFileList.length === 0) { message.warning('请上传文件或粘贴内容'); return }
     setImporting(true)
     setImportResult(null)
     try {
-      const formData = new FormData()
-      formData.append('file', importFileList[0].originFileObj)
-      // 新格式表格自带客户名, 无需前端选择客户
-      const res = await api.post('/erp/outbound-orders/import-sales-orders-file', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      })
-      setImportResult(res.data?.data || res.data)
+      let res
+      if (hasText) {
+        res = await api.post('/erp/outbound-orders/import-simple', { text: importText })
+      } else {
+        const formData = new FormData()
+        formData.append('file', importFileList[0].originFileObj)
+        res = await api.post('/erp/outbound-orders/import-simple-file', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' }
+        })
+      }
+      setImportResult(res.data || res.data?.data)
       message.success('导入完成')
       fetchOrders()
     } catch (e) {
@@ -703,7 +710,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
           </Col>
           <Col>
             <Space>
-              <Button icon={<UploadOutlined />} onClick={openImport}>历史导入</Button>
+              <Button icon={<UploadOutlined />} onClick={openImport}>导入</Button>
               <Button type="primary" icon={<PlusOutlined />} onClick={() => { setShowCreateModal(true); setItems([emptyItem()]); setSelectedCustId(null); setSalesOrders([]); setSelectedSoId(null) }}>新建出库单</Button>
               <Button icon={<ReloadOutlined />} onClick={fetchOrders}>刷新</Button>
             </Space>
@@ -1105,7 +1112,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
 
         {/* ── Historical Import Modal ── */}
         <Modal
-          title="导入历史出库单"
+          title="导入出库单"
           open={showImportModal}
           onCancel={() => setShowImportModal(false)}
           width={640}
@@ -1117,9 +1124,17 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
         >
           <Alert
             type="info" showIcon style={{ marginBottom: 12 }}
-            message="支持 Excel (.xlsx/.xls) 和 CSV 文件"
-            description="表格列: 客户 | 订单日期 | 订单号 | 客户料号 | 品名规格 | 订单数量 | 单位 | 未税价 | 含税价 | RDHY含税单价 | 金额 | 订单交期。系统按订单号合并创建销售单, 按客户名自动查/建客户。订单交期有值视为已出库(创建出库单+扣减库存+对账), 无值视为未出库。"
+            message="支持 Excel (.xlsx/.xls)、CSV 或直接粘贴文本导入"
+            description="表格需包含以下列：销售单号、物料号、数量、单价、日期，可选列：替代料号、客户料号。系统按列名自动识别（列顺序不限）。一个销售单可分批多次出库：按（销售单号, 日期）分组生成多张出库单。有替代料号时扣减替代料号库存并记录替代料号。销售单号必须已存在（请先用销售单导入创建销售单）。"
           />
+          <Input.TextArea
+            rows={5}
+            placeholder={"在此粘贴表格内容（列头 + 数据行），例如：\n销售单号\t物料号\t数量\t单价\t日期\nSO20260801-01\tHPC6045BMV-221M\t500\t0.85\t2026/08/05\nSO20260801-01\tHPC6045BMV-221M\t300\t0.85\t2026/08/10"}
+            value={importText}
+            onChange={e => setImportText(e.target.value)}
+            style={{ marginBottom: 12 }}
+          />
+          <div style={{ textAlign: 'center', color: '#666', fontSize: 12, marginBottom: 12 }}>或上传文件</div>
           <Upload.Dragger
             accept=".xlsx,.xls,.csv"
             fileList={importFileList}
@@ -1135,8 +1150,8 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
           {importResult && (
             <div style={{ marginTop: 8 }}>
               <Row gutter={16} style={{ marginBottom: 12 }}>
-                <Col span={8}><Statistic title="导入出库单数" value={importResult.imported || 0} valueStyle={{ color: '#52c41a' }} /></Col>
-                <Col span={8}><Statistic title="新建销售单数" value={importResult.salesOrdersCreated || 0} valueStyle={{ color: '#1677ff' }} /></Col>
+                <Col span={12}><Statistic title="明细行数" value={importResult.imported || 0} valueStyle={{ color: '#52c41a' }} /></Col>
+                <Col span={12}><Statistic title="新建出库单数" value={importResult.outboundOrdersCreated || 0} valueStyle={{ color: '#1677ff' }} /></Col>
               </Row>
               {importResult.orders && importResult.orders.length > 0 && (
                 <Alert

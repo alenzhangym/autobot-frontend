@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { Layout, Table, Button, Modal, Form, Input, Select, AutoComplete, Tag, Space, message, Popconfirm, Typography, InputNumber, Card, DatePicker } from 'antd'
-import { PlusOutlined, ReloadOutlined, SearchOutlined, DeleteOutlined, EditOutlined, MinusCircleOutlined } from '@ant-design/icons'
+import { Layout, Table, Button, Modal, Form, Input, Select, AutoComplete, Tag, Space, message, Popconfirm, Typography, InputNumber, Card, DatePicker, Upload, Alert, Row, Col, Statistic } from 'antd'
+import { PlusOutlined, ReloadOutlined, SearchOutlined, DeleteOutlined, EditOutlined, MinusCircleOutlined, UploadOutlined, InboxOutlined } from '@ant-design/icons'
 import api from './auth'
 import dayjs from 'dayjs'
 import { isSuperAdmin as isSuperAdminFn } from './utils/permissions.js';
@@ -40,6 +40,13 @@ export default function SalesOrderManagement({ user, companies = [] }) {
   const [customerPartMappings, setCustomerPartMappings] = useState([])
   const [parts, setParts] = useState([])
   const [selectedCustomerId, setSelectedCustomerId] = useState(null)
+
+  // ── Simplified Import state ──
+  const [showImportModal, setShowImportModal] = useState(false)
+  const [importFileList, setImportFileList] = useState([])
+  const [importText, setImportText] = useState('')
+  const [importing, setImporting] = useState(false)
+  const [importResult, setImportResult] = useState(null)
 
   const fetchOrders = useCallback(async () => {
     setLoading(true)
@@ -354,6 +361,40 @@ export default function SalesOrderManagement({ user, companies = [] }) {
   const removeItem = (key) => { if (items.length <= 1) return; setItems(items.filter(it => it.key !== key)) }
   const updateItem = (key, field, val) => setItems(items.map(it => it.key === key ? { ...it, [field]: val, dirty: true } : it))
 
+  // ── Simplified Import ──
+  const openImport = () => {
+    setImportFileList([])
+    setImportText('')
+    setImportResult(null)
+    setShowImportModal(true)
+  }
+
+  const handleImport = async () => {
+    const hasText = importText.trim().length > 0
+    if (!hasText && importFileList.length === 0) { message.warning('请上传文件或粘贴内容'); return }
+    setImporting(true)
+    setImportResult(null)
+    try {
+      let res
+      if (hasText) {
+        res = await api.post('/erp/sales-orders/import-simple', { text: importText })
+      } else {
+        const formData = new FormData()
+        formData.append('file', importFileList[0].originFileObj)
+        res = await api.post('/erp/sales-orders/import-simple-file', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' }
+        })
+      }
+      setImportResult(res.data?.data || res.data)
+      message.success('导入完成')
+      setPage(1); fetchOrders()
+    } catch (e) {
+      message.error('导入失败: ' + (e.response?.data?.error || e.message))
+    } finally {
+      setImporting(false)
+    }
+  }
+
   const [expandedItems, setExpandedItems] = useState({})
   const fetchExpandedItems = async (record) => {
     if (expandedItems[record.sales_id]) return
@@ -446,6 +487,7 @@ export default function SalesOrderManagement({ user, companies = [] }) {
               <Button danger icon={<DeleteOutlined />} loading={clearingAll}>一键清空</Button>
             </Popconfirm>
             <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>录入销售单</Button>
+            <Button icon={<UploadOutlined />} onClick={openImport}>导入</Button>
           </Space>
         </Space>
         <Table dataSource={orders} columns={columns} rowKey="sales_id" loading={loading}
@@ -498,6 +540,69 @@ export default function SalesOrderManagement({ user, companies = [] }) {
               ))}
             </Card>
           </Form>
+        </Modal>
+
+        {/* ── Simplified Import Modal ── */}
+        <Modal
+          title="导入销售单"
+          open={showImportModal}
+          onCancel={() => setShowImportModal(false)}
+          width={640}
+          footer={[
+            <Button key="cancel" onClick={() => setShowImportModal(false)}>关闭</Button>,
+            <Button key="import" type="primary" loading={importing} icon={<UploadOutlined />}
+              onClick={handleImport}>开始导入</Button>,
+          ]}
+        >
+          <Alert
+            type="info" showIcon style={{ marginBottom: 12 }}
+            message="支持 Excel (.xlsx/.xls)、CSV 或直接粘贴文本导入"
+            description="表格需包含以下列：客户名称、销售单号、下单日期、物料号、数量、单价。系统按列名自动识别（列顺序不限）。一个销售单号对应多行物料记录时合并为一张销售单；客户不存在时自动创建。"
+          />
+          <Input.TextArea
+            rows={5}
+            placeholder={"在此粘贴表格内容（列头 + 数据行），例如：\n客户名称\t销售单号\t下单日期\t物料号\t数量\t单价\n深圳市华芯电子有限公司\tSO20260801-01\t2026/08/01\tHPC6045BMV-221M\t1000\t0.85"}
+            value={importText}
+            onChange={e => setImportText(e.target.value)}
+            style={{ marginBottom: 12 }}
+          />
+          <div style={{ textAlign: 'center', color: '#666', fontSize: 12, marginBottom: 12 }}>或上传文件</div>
+          <Upload.Dragger
+            accept=".xlsx,.xls,.csv"
+            fileList={importFileList}
+            onChange={({ fileList: fl }) => setImportFileList(fl.slice(-1))}
+            beforeUpload={() => false}
+            style={{ marginBottom: 16 }}
+          >
+            <p className="ant-upload-drag-icon"><InboxOutlined /></p>
+            <p className="ant-upload-text">点击或拖拽文件到此区域</p>
+            <p className="ant-upload-hint">支持 .xlsx / .xls / .csv 格式</p>
+          </Upload.Dragger>
+
+          {importResult && (
+            <div style={{ marginTop: 8 }}>
+              <Row gutter={16} style={{ marginBottom: 12 }}>
+                <Col span={8}><Statistic title="明细行数" value={importResult.imported || 0} valueStyle={{ color: '#52c41a' }} /></Col>
+                <Col span={8}><Statistic title="新建销售单数" value={importResult.salesOrdersCreated || 0} valueStyle={{ color: '#1677ff' }} /></Col>
+                <Col span={8}><Statistic title="失败单数" value={importResult.failed || 0} valueStyle={{ color: importResult.failed ? '#ff4d4f' : '#52c41a' }} /></Col>
+              </Row>
+              {importResult.orders && importResult.orders.length > 0 && (
+                <Alert
+                  type={importResult.failed ? 'warning' : 'success'} showIcon
+                  message={`共处理 ${importResult.orders.length} 张销售单`}
+                  description={
+                    <div style={{ maxHeight: 200, overflow: 'auto' }}>
+                      {importResult.orders.map((o, i) => (
+                        <div key={i}>
+                          {i + 1}. 销售单号: {o.orderNumber} | 状态: {o.status} {o.error ? `| 错误: ${o.error}` : ''}
+                        </div>
+                      ))}
+                    </div>
+                  }
+                />
+              )}
+            </div>
+          )}
         </Modal>
       </Content>
     </Layout>
