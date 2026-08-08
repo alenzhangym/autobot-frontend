@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { Layout, Table, Button, Modal, Form, Input, Select, Tag, Space, message, Popconfirm, InputNumber, Card, DatePicker, AutoComplete, Typography } from 'antd'
-import { PlusOutlined, ReloadOutlined, SearchOutlined, DeleteOutlined, EditOutlined, MinusCircleOutlined } from '@ant-design/icons'
+import { Layout, Table, Button, Modal, Form, Input, Select, Tag, Space, message, Popconfirm, InputNumber, Card, DatePicker, AutoComplete, Typography, Upload, Alert, Statistic, Row, Col } from 'antd'
+import { PlusOutlined, ReloadOutlined, SearchOutlined, DeleteOutlined, EditOutlined, MinusCircleOutlined, UploadOutlined, InboxOutlined } from '@ant-design/icons'
 import api from './auth'
 import dayjs from 'dayjs'
 import { isSuperAdmin as isSuperAdminFn } from './utils/permissions.js';
@@ -40,6 +40,12 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
   const [items, setItems] = useState([emptyItem()])
   const [parts, setParts] = useState([])
   const [suppliers, setSuppliers] = useState([])
+
+  const [showImportModal, setShowImportModal] = useState(false)
+  const [importFileList, setImportFileList] = useState([])
+  const [importing, setImporting] = useState(false)
+  const [importResult, setImportResult] = useState(null)
+  const [importText, setImportText] = useState('')
 
   const fetchOrders = useCallback(async () => {
     setLoading(true)
@@ -93,6 +99,50 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
   const openCreate = () => {
     setEditing(null); form.resetFields(); setItems([emptyItem()])
     fetchParts(); fetchSuppliers(); setShowModal(true)
+  }
+
+  // ── 一键导入 ──
+  const openImport = () => {
+    setImportFileList([])
+    setImportText('')
+    setImportResult(null)
+    setShowImportModal(true)
+  }
+
+  const handleImport = async () => {
+    if (importFileList.length === 0) { message.warning('请先上传文件'); return }
+    setImporting(true)
+    setImportResult(null)
+    try {
+      const formData = new FormData()
+      formData.append('file', importFileList[0].originFileObj)
+      const res = await api.post('/erp/purchase-orders/import-file', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      })
+      setImportResult(res.data?.data || res.data)
+      message.success('导入完成')
+      fetchOrders()
+    } catch (e) {
+      message.error('导入失败: ' + (e.response?.data?.error || e.message))
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  const handleTextImport = async () => {
+    if (!importText || !importText.trim()) { message.warning('请先粘贴表格内容'); return }
+    setImporting(true)
+    setImportResult(null)
+    try {
+      const res = await api.post('/erp/purchase-orders/import', { text: importText })
+      setImportResult(res.data?.data || res.data)
+      message.success('导入完成')
+      fetchOrders()
+    } catch (e) {
+      message.error('导入失败: ' + (e.response?.data?.error || e.message))
+    } finally {
+      setImporting(false)
+    }
   }
 
   const openEdit = async (record) => {
@@ -285,6 +335,7 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
     { title: '状态', dataIndex: 'status', width: 90, render: s => <Tag color={STATUS_MAP[s]?.color}>{STATUS_MAP[s]?.label || s}</Tag> },
     { title: '付款', dataIndex: 'payment_status', width: 80, render: s => s === 'PAID' ? <Tag color="green">已付</Tag> : s === 'PARTIAL' ? <Tag color="orange">部分</Tag> : <Tag>未付</Tag> },
     { title: '创建时间', dataIndex: 'created_at', width: 160, render: v => v ? dayjs(v).format('MM-DD HH:mm') : '-' },
+    { title: '创建人', dataIndex: 'createdBy_name', key: 'createdBy', width: 90, render: v => v || '-' },
     { title: '操作', key: 'actions', width: 180, fixed: 'right', render: (_, r) => (
       <Space>
         <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)}>编辑</Button>
@@ -344,6 +395,7 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
             >
               <Button danger icon={<DeleteOutlined />} loading={clearingAll}>一键清空</Button>
             </Popconfirm>
+            <Button icon={<UploadOutlined />} onClick={openImport}>一键导入</Button>
             <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>录入采购单</Button>
           </Space>
         </Space>
@@ -381,6 +433,71 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
               ))}
             </Card>
           </Form>
+        </Modal>
+
+        {/* ── 一键导入 Modal ── */}
+        <Modal
+          title="一键导入采购单"
+          open={showImportModal}
+          onCancel={() => setShowImportModal(false)}
+          width={640}
+          footer={[
+            <Button key="cancel" onClick={() => setShowImportModal(false)}>关闭</Button>,
+            <Button key="import" type="primary" loading={importing} icon={<UploadOutlined />}
+              onClick={handleImport}>上传文件导入</Button>,
+            <Button key="textimport" type="primary" loading={importing} icon={<InboxOutlined />}
+              onClick={handleTextImport}>粘贴内容导入</Button>,
+          ]}
+        >
+          <Alert
+            type="info" showIcon style={{ marginBottom: 12 }}
+            message="支持 Excel (.xlsx/.xls)、CSV 文件，或直接粘贴表格内容，按列名自动识别"
+            description="约定格式（顺序不限）：供应商名称、采购单号、订单日期、数量、物料号/料号/型号/品名、单价。系统自动按采购单号分组创建采购单，物料不存在时自动创建，供应商名称自动带出。"
+          />
+          <Upload.Dragger
+            accept=".xlsx,.xls,.csv"
+            fileList={importFileList}
+            onChange={({ fileList: fl }) => { setImportFileList(fl.slice(-1)); setImportText('') }}
+            beforeUpload={() => false}
+            style={{ marginBottom: 16 }}
+          >
+            <p className="ant-upload-drag-icon"><InboxOutlined /></p>
+            <p className="ant-upload-text">点击或拖拽文件到此区域</p>
+            <p className="ant-upload-hint">支持 .xlsx / .xls / .csv 格式</p>
+          </Upload.Dragger>
+          <div style={{ marginBottom: 8, color: '#888', fontSize: 12 }}>或直接粘贴表格内容（Tab / 空格 / 逗号分隔，含表头）：</div>
+          <Input.TextArea
+            rows={6}
+            value={importText}
+            onChange={e => { setImportText(e.target.value); setImportFileList([]) }}
+            placeholder={'供应商名称\t采购单号\t订单日期\t数量\t物料号\t单价\n供应商A\tPO-001\t2026-08-01\t100\tC-001\t1.25'}
+            style={{ background: '#111', borderColor: '#333', color: '#e3e3e3' }}
+          />
+
+          {importResult && (
+            <div style={{ marginTop: 8 }}>
+              <Row gutter={16} style={{ marginBottom: 12 }}>
+                <Col span={8}><Statistic title="导入采购单数" value={importResult.imported || 0} valueStyle={{ color: '#52c41a' }} /></Col>
+                <Col span={8}><Statistic title="新建采购单数" value={importResult.purchaseOrdersCreated || 0} valueStyle={{ color: '#1677ff' }} /></Col>
+                <Col span={8}><Statistic title="导入明细数" value={importResult.itemsImported || 0} valueStyle={{ color: '#faad14' }} /></Col>
+              </Row>
+              {importResult.orders && importResult.orders.length > 0 && (
+                <Alert
+                  type="success" showIcon
+                  message={`共创建 ${importResult.orders.length} 张采购单`}
+                  description={
+                    <div style={{ maxHeight: 200, overflow: 'auto' }}>
+                      {importResult.orders.map((o, i) => (
+                        <div key={i}>
+                          {i + 1}. 采购单号: {o.orderNumber} | 状态: {o.status} | 明细数: {o.itemCount}
+                        </div>
+                      ))}
+                    </div>
+                  }
+                />
+              )}
+            </div>
+          )}
         </Modal>
       </Content>
     </Layout>

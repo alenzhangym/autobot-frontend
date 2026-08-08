@@ -369,6 +369,7 @@ export default function InboundOrderManagement({ user, companies = [] }) {
         : <Tag color="default">未对账</Tag> },
     { title: '到货', dataIndex: 'receivedDate', key: 'rdate', width: 100, render: v => v || '-' },
     { title: '状态', dataIndex: 'status', key: 'status', width: 65, render: s => { const i = STATUS_MAP[s] || { label: s, color: 'default' }; return <Tag color={i.color}>{i.label}</Tag> } },
+    { title: '创建人', dataIndex: 'createdByName', key: 'createdBy', width: 90, render: v => v || '-' },
     { title: '操作', key: 'act', width: 180, fixed: 'right',
       render: (_, r) => {
         const s = r.status

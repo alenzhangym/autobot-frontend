@@ -226,7 +226,7 @@ export default function SessionSidebar({
           ...(isSuperAdminFn(user) ? [
             { key: 'plan_learning', icon: <ExperimentOutlined />, label: '模型学习审核' },
           ] : []),
-          ...(((isSuperAdminFn(user) || isCompanyAdminFn(user)) && hasErpChannel) ? [
+          ...(hasErpChannel ? [
             { key: 'dashboard', icon: <DashboardOutlined />, label: t('erp.dashboard') },
             { type: 'divider' },
             { key: 'erp_trade', icon: <ShopOutlined />, label: '进销存交易',
@@ -254,7 +254,7 @@ export default function SessionSidebar({
               ]
             }
           ] : []),
-          ...(((isSuperAdminFn(user) || isCompanyAdminFn(user)) && hasCrmChannel) ? [
+          ...(hasCrmChannel ? [
             { key: 'crm', icon: <TeamOutlined />, label: '客户关系管理',
               children: [
                 { key: 'crm_leads', icon: <CrownOutlined />, label: '线索管理' },

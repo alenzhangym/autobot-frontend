@@ -610,6 +610,10 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
       render: (v) => v || '-',
     },
     {
+      title: '创建人', dataIndex: 'createdByName', key: 'createdBy', width: 90,
+      render: (v) => v || '-',
+    },
+    {
       title: '操作', key: 'actions', width: 180, fixed: 'right',
       render: (_, record) => {
         const s = record.status
