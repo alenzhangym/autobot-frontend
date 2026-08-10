@@ -339,6 +339,34 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
     }
   }
 
+  const handleRecalcAll = async () => {
+    setClearingAll(true)
+    try {
+      const res = await api.post(`/erp/purchase-orders/recalc-all-amount?companyId=${effectiveCompanyId || 0}`)
+      const r = res.data?.data || res.data || {}
+      const matched = r.matched || 0
+      const updated = r.updated || 0
+      const errors = r.errors || []
+      if (updated > 0) message.success(`已重算 ${updated}/${matched} 张采购单金额`)
+      else message.info('没有需要重算的采购单')
+      if (errors.length > 0) {
+        Modal.info({
+          title: '批量重算详情', width: 560,
+          content: (
+            <div style={{ maxHeight: 300, overflow: 'auto' }}>
+              {errors.map((e, i) => <div key={i} style={{ marginBottom: 4 }}>{e}</div>)}
+            </div>
+          )
+        })
+      }
+      fetchOrders()
+    } catch (e) {
+      message.error('批量重算失败: ' + (e.response?.data?.error || e.message))
+    } finally {
+      setClearingAll(false)
+    }
+  }
+
   const handleExportFile = async (format) => {
     try {
       const values = await exportForm.validateFields()
@@ -469,6 +497,15 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
               okButtonProps={{ danger: true, loading: clearingAll }}
             >
               <Button danger icon={<DeleteOutlined />} loading={clearingAll}>一键清空</Button>
+            </Popconfirm>
+            <Popconfirm
+              title="确认批量重算全部采购单金额？"
+              description="将按明细行的含税单价/估价单价 × 数量重新计算并覆盖所有采购单金额，用于修复历史单据金额为0的问题。"
+              okText="重算" cancelText="取消"
+              onConfirm={handleRecalcAll}
+              okButtonProps={{ loading: clearingAll }}
+            >
+              <Button icon={<ReloadOutlined />} loading={clearingAll}>批量重算金额</Button>
             </Popconfirm>
             <Button icon={<DownloadOutlined />} onClick={() => { exportForm.resetFields(); fetchSuppliers(); setExportOpen(true) }}>导出</Button>
             <Button icon={<UploadOutlined />} onClick={openImport}>一键导入</Button>
