@@ -71,7 +71,7 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
     } finally { setLoading(false) }
   }, [page, pageSize, keyword, statusFilter, supplierFilter, effectiveCompanyId, isSuperAdmin])
 
-  useEffect(() => { fetchOrders(); fetchSuppliers() }, [fetchOrders, fetchSuppliers])
+  useEffect(() => { fetchOrders() }, [fetchOrders])
 
   const fetchParts = useCallback(async () => {
     try {
@@ -101,6 +101,8 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
       setSuppliers(Array.isArray(suppliersList) ? suppliersList.map(s => ({ value: s.name, label: s.name })) : [])
     } catch (e) { /* ignore */ }
   }, [effectiveCompanyId, isSuperAdmin])
+
+  useEffect(() => { fetchSuppliers() }, [fetchSuppliers])
 
   const openCreate = () => {
     setEditing(null); form.resetFields(); setItems([emptyItem()])
