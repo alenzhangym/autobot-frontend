@@ -40,6 +40,9 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
   const [items, setItems] = useState([emptyItem()])
   const [parts, setParts] = useState([])
   const [suppliers, setSuppliers] = useState([])
+  const [existingPo, setExistingPo] = useState(null)
+  const [existingPoItems, setExistingPoItems] = useState([])
+  const [poLookupLoading, setPoLookupLoading] = useState(false)
 
   const [showImportModal, setShowImportModal] = useState(false)
   const [importFileList, setImportFileList] = useState([])
@@ -98,7 +101,36 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
 
   const openCreate = () => {
     setEditing(null); form.resetFields(); setItems([emptyItem()])
+    setExistingPo(null); setExistingPoItems([])
     fetchParts(); fetchSuppliers(); setShowModal(true)
+  }
+
+  // ── 用户输入采购单号 → 查询是否已存在, 存在则拉出原物料明细供追加 ──
+  const handlePoLookup = async () => {
+    const poNumber = form.getFieldValue('poNumber')
+    if (!poNumber || !poNumber.trim()) { message.warning('请先输入采购单号'); return }
+    setPoLookupLoading(true)
+    try {
+      const params = {}
+      if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
+      const res = await api.get(`/erp/purchase-orders/by-number/${encodeURIComponent(poNumber.trim())}`, { params })
+      const detail = res.data?.data || res.data || {}
+      if (detail.exists) {
+        setExistingPo(detail)
+        setExistingPoItems(detail.items || [])
+        // 自动带出原采购单的供应商与预计到货日期, 简化追加录入
+        form.setFieldsValue({
+          supplierName: detail.supplier_name || form.getFieldValue('supplierName'),
+          expectedDeliveryDate: detail.expected_delivery_date ? dayjs(detail.expected_delivery_date) : form.getFieldValue('expectedDeliveryDate'),
+        })
+        message.success(`采购单 ${poNumber.trim()} 已存在，将追加物料（原明细 ${(detail.items || []).length} 条）`)
+      } else {
+        setExistingPo(null); setExistingPoItems([])
+        message.info(`采购单号 ${poNumber.trim()} 不存在，将新建采购单`)
+      }
+    } catch (e) {
+      message.error('查询采购单失败: ' + (e.response?.data?.error || e.message))
+    } finally { setPoLookupLoading(false) }
   }
 
   // ── 一键导入 ──
@@ -153,10 +185,12 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
       const res = await api.get(`/erp/purchase-orders/${record.purchase_id}`, { params })
       const detail = res.data?.data || res.data
       form.setFieldsValue({
+        poNumber: detail.po_number,
         supplierName: detail.supplier_name,
         expectedDeliveryDate: detail.expected_delivery_date ? dayjs(detail.expected_delivery_date) : null,
         paymentStatus: detail.payment_status, notes: detail.notes
       })
+      setExistingPo(null); setExistingPoItems([])
       const its = (detail.items || []).map(it => ({
         key: Date.now() + Math.random(), partType: null, partId: it.part_id, partLabel: '',
         orderedQty: it.ordered_qty, estimatedUnitPrice: it.estimated_unit_price,
@@ -202,6 +236,7 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
         return
       }
       const payload = {
+        poNumber: values.poNumber ? values.poNumber.trim() : undefined,
         supplierName: values.supplierName,
         expectedDeliveryDate: values.expectedDeliveryDate ? values.expectedDeliveryDate.format('YYYY-MM-DD') : null,
         status: editing ? editing.status : 'ORDERED',
@@ -217,9 +252,10 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
         message.success('已更新')
       } else {
         await api.post('/erp/purchase-orders', payload)
-        message.success('已创建')
+        message.success(existingPo ? '已追加物料' : '已创建')
       }
       setShowModal(false); setEditing(null); form.resetFields(); setItems([emptyItem()])
+      setExistingPo(null); setExistingPoItems([])
       setPage(1); fetchOrders()
     } catch (e) {
       if (!e.errorFields) message.error('保存失败: ' + (e.response?.data?.error || e.message))
@@ -410,6 +446,14 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
           onCancel={() => { setShowModal(false); setEditing(null); form.resetFields(); setItems([emptyItem()]) }}>
           <Form form={form} layout="vertical">
             <Space wrap>
+              <Form.Item name="poNumber" label="采购单号"
+                tooltip="留空则系统自动生成；输入已存在的单号将追加物料到原采购单">
+                <Space.Compact style={{ width: 260 }}>
+                  <Input placeholder="留空自动生成" disabled={!!editing}
+                    onPressEnter={handlePoLookup} />
+                  {!editing && <Button type="primary" loading={poLookupLoading} onClick={handlePoLookup}>查询</Button>}
+                </Space.Compact>
+              </Form.Item>
               <Form.Item name="supplierName" label="供应商" rules={[{ required: true, message: '请输入' }]}>
                 <AutoComplete placeholder="供应商名称" style={{ width: 200 }} options={suppliers} /></Form.Item>
               <Form.Item name="expectedDeliveryDate" label="预计到货" rules={[{ required: true, message: '请选择预计到货日期' }]}><DatePicker style={{ width: 160 }} /></Form.Item>
@@ -417,7 +461,20 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
                 <Select style={{ width: 120 }} options={[{ value: 'UNPAID', label: '未付款' }, { value: 'PARTIAL', label: '部分付款' }, { value: 'PAID', label: '已付款' }]} /></Form.Item>
             </Space>
             <Form.Item name="notes" label="备注"><Input.TextArea rows={2} /></Form.Item>
-            <Card size="small" title="物料明细" extra={<Button type="dashed" icon={<PlusOutlined />} onClick={addItem}>添加物料</Button>} style={{ marginTop: 16 }}>
+            {existingPo && (
+              <Card size="small" title={<>原采购单 <Text strong>{existingPo.po_number}</Text> 已有明细（下方录入将追加到该采购单）</>}
+                style={{ marginTop: 16, borderColor: '#f0b90b' }}>
+                <Table size="small" dataSource={existingPoItems} rowKey="item_id" pagination={false}
+                  columns={[
+                    { title: '物料型号', dataIndex: 'user_part_model', render: (v, r) => v || r.part_id || '-' },
+                    { title: '订量', dataIndex: 'ordered_qty', width: 80 },
+                    { title: '已收', dataIndex: 'received_qty', width: 80 },
+                    { title: '估价', dataIndex: 'estimated_unit_price', width: 100, render: v => v != null ? Number(v).toFixed(4) : '-' },
+                    { title: '含税单价', dataIndex: 'tax_inclusive_unit_price', width: 100, render: v => v != null ? Number(v).toFixed(4) : '-' },
+                  ]} />
+              </Card>
+            )}
+            <Card size="small" title={existingPo ? '追加物料明细' : '物料明细'} extra={<Button type="dashed" icon={<PlusOutlined />} onClick={addItem}>添加物料</Button>} style={{ marginTop: 16 }}>
               {items.map((it) => (
                 <Space key={it.key} style={{ marginBottom: 10, width: '100%' }} align="start" wrap>
                   <Select placeholder="物料类型" style={{ width: 120 }}

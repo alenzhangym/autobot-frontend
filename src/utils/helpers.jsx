@@ -55,6 +55,11 @@ export const cleanScriptSrc = (html) => {
     fixed = fixed.replace(new RegExp(`src=["']?${path}["']?`, 'gi'), `src="${cdn}"`);
   }
 
+  // srcdoc iframe 内相对路径（如 /echarts.min.js）无法可靠解析到宿主源，导致 echarts 未加载、
+  // 图表黑屏。改写为基于当前页面 origin 的绝对本地路径（echarts.min.js 由前端 dist 本地提供），
+  // 保证 iframe 内加载成功且不依赖外部 CDN。
+  fixed = fixed.replace(/src=["']?\/echarts\.min\.js["']?/gi, `src="${window.location.origin}/echarts.min.js"`);
+
   return fixed;
 };
 
