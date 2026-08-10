@@ -367,6 +367,18 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
     }
   }
 
+  const handleRecalcAmount = async (id) => {
+    try {
+      const res = await api.post(`/erp/purchase-orders/${id}/recalc-amount?companyId=${effectiveCompanyId || 0}`)
+      const r = res.data?.data || res.data || {}
+      const total = r.total_amount != null ? Number(r.total_amount).toLocaleString() : '-'
+      message.success(`已重新计算金额: ${total}`)
+      fetchOrders()
+    } catch (e) {
+      message.error('重算金额失败: ' + (e.response?.data?.error || e.message))
+    }
+  }
+
   const handleExportFile = async (format) => {
     try {
       const values = await exportForm.validateFields()
@@ -439,8 +451,15 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
     { title: '付款', dataIndex: 'payment_status', width: 80, render: s => s === 'PAID' ? <Tag color="green">已付</Tag> : s === 'PARTIAL' ? <Tag color="orange">部分</Tag> : <Tag>未付</Tag> },
     { title: '创建时间', dataIndex: 'created_at', width: 160, render: v => v ? dayjs(v).format('MM-DD HH:mm') : '-' },
     { title: '创建人', dataIndex: 'createdBy_name', key: 'createdBy', width: 90, render: v => v || '-' },
-    { title: '操作', key: 'actions', width: 180, fixed: 'right', render: (_, r) => (
+    { title: '操作', key: 'actions', width: 240, fixed: 'right', render: (_, r) => (
       <Space>
+        <Popconfirm
+          title="确认重新计算金额？"
+          description="将按明细行的含税单价/估价单价 × 数量重新计算并覆盖该采购单金额。"
+          okText="重算" cancelText="取消"
+          onConfirm={() => handleRecalcAmount(r.purchase_id)}>
+          <Button size="small" icon={<ReloadOutlined />}>重算金额</Button>
+        </Popconfirm>
         <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)}>编辑</Button>
         <Popconfirm
           title={`确认删除采购单 ${r.po_number}?`}
