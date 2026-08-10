@@ -12,7 +12,7 @@ const { Text } = Typography
 const PART_TYPES = ['电容', '电感', '磁珠', '电阻', 'PCB板材', 'IC', '二极管', '三极管', '晶振', '连接器', '继电器', '保险丝', '传感器', '变压器', '其他']
 
 const STATUS_MAP = {
-  RECEIVED:  { label: '已到货', color: 'blue' },
+  RECEIVED:  { label: '已入库', color: 'blue' },
   CANCELLED: { label: '已取消', color: 'red' },
 }
 
