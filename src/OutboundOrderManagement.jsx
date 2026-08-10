@@ -62,6 +62,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState(null)
   const [importUpdateStock, setImportUpdateStock] = useState(true)
+  const [clearingAll, setClearingAll] = useState(false)
 
   // ── Substitute (替代物料) selector modal state ──
   const [subModal, setSubModal] = useState({ visible: false, target: null, model: '', subs: [], manual: [], sameType: [], partType: '', loading: false, query: '', freeQuery: '', freeResults: [], freeLoading: false })
@@ -707,6 +708,39 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
     )
   }
 
+  const handleClearAll = async () => {
+    setClearingAll(true)
+    try {
+      const payload = {}
+      if (filters.keyword) payload.keyword = filters.keyword
+      const res = await api.post('/erp/outbound-orders/clear-all', payload)
+      const result = res.data?.data || res.data || {}
+      const matched = result.matched || 0
+      const deleted = result.deleted || 0
+      const skipped = result.skipped || 0
+      const errors = result.errors || []
+      if (matched === 0) { message.info('没有匹配的出库单可清空') }
+      else if (deleted > 0 && skipped === 0) message.success(`已清空 ${deleted} 个出库单`)
+      else if (deleted > 0 && skipped > 0) message.warning(`已删除 ${deleted} 个, 跳过 ${skipped} 个`)
+      else if (deleted === 0 && skipped > 0) message.error(`未能删除任何出库单, 跳过 ${skipped} 个`)
+      if (errors.length > 0) {
+        Modal.info({
+          title: '清空详情', width: 560,
+          content: (
+            <div style={{ maxHeight: 300, overflow: 'auto' }}>
+              {errors.map((e, i) => <div key={i} style={{ marginBottom: 4 }}>{e}</div>)}
+            </div>
+          )
+        })
+      }
+      fetchOrders()
+    } catch (e) {
+      message.error('一键清空失败: ' + (e.response?.data?.error || e.message))
+    } finally {
+      setClearingAll(false)
+    }
+  }
+
   return (
     <Layout style={{ background: '#0d0d0d', height: '100%', overflow: 'hidden' }}>
       <Content style={{ padding: 24, height: '100%', overflow: 'auto' }}>
@@ -718,6 +752,20 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
           <Col>
             <Space>
               <Button icon={<UploadOutlined />} onClick={openImport}>导入</Button>
+              <Popconfirm
+                title="一键清空出库单"
+                description={() => {
+                  const parts = []
+                  if (filters.keyword) parts.push(`客户料号≈${filters.keyword}`)
+                  const cond = parts.length > 0 ? `（筛选: ${parts.join(', ')}）` : '（无筛选, 清空全部）'
+                  return `将删除所有匹配的出库单并回退库存/销售单数量${cond}, 删除后无法恢复.`
+                }}
+                onConfirm={handleClearAll}
+                okText="清空" cancelText="取消"
+                okButtonProps={{ danger: true, loading: clearingAll }}
+              >
+                <Button danger icon={<DeleteOutlined />} loading={clearingAll}>一键清空</Button>
+              </Popconfirm>
               <Button type="primary" icon={<PlusOutlined />} onClick={() => { setShowCreateModal(true); setItems([emptyItem()]); setSelectedCustId(null); setSalesOrders([]); setSelectedSoId(null) }}>新建出库单</Button>
               <Button icon={<ReloadOutlined />} onClick={fetchOrders}>刷新</Button>
             </Space>

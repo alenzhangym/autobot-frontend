@@ -61,6 +61,7 @@ export default function InboundOrderManagement({ user, companies = [] }) {
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState(null)
   const [importUpdateStock, setImportUpdateStock] = useState(true)
+  const [clearingAll, setClearingAll] = useState(false)
 
   useEffect(() => {
     (async () => {
@@ -430,11 +431,58 @@ export default function InboundOrderManagement({ user, companies = [] }) {
     </div>)
   }
 
+  const handleClearAll = async () => {
+    setClearingAll(true)
+    try {
+      const payload = {}
+      if (filters.supplierName) payload.supplierName = filters.supplierName
+      const res = await api.post('/erp/inbound-orders/clear-all', payload)
+      const result = res.data?.data || res.data || {}
+      const matched = result.matched || 0
+      const deleted = result.deleted || 0
+      const skipped = result.skipped || 0
+      const errors = result.errors || []
+      if (matched === 0) { message.info('没有匹配的入库单可清空') }
+      else if (deleted > 0 && skipped === 0) message.success(`已清空 ${deleted} 个入库单`)
+      else if (deleted > 0 && skipped > 0) message.warning(`已删除 ${deleted} 个, 跳过 ${skipped} 个`)
+      else if (deleted === 0 && skipped > 0) message.error(`未能删除任何入库单, 跳过 ${skipped} 个`)
+      if (errors.length > 0) {
+        Modal.info({
+          title: '清空详情', width: 560,
+          content: (
+            <div style={{ maxHeight: 300, overflow: 'auto' }}>
+              {errors.map((e, i) => <div key={i} style={{ marginBottom: 4 }}>{e}</div>)}
+            </div>
+          )
+        })
+      }
+      fetchOrders()
+    } catch (e) {
+      message.error('一键清空失败: ' + (e.response?.data?.error || e.message))
+    } finally {
+      setClearingAll(false)
+    }
+  }
+
   return (<Layout style={{ background: '#0d0d0d', height: '100%', overflow: 'hidden' }}><Content style={{ padding: 24, height: '100%', overflow: 'auto' }}>
     <Row justify="space-between" align="middle" style={{ marginBottom: 16 }}>
       <Col><h2 style={{ color: '#e3e3e3', margin: 0 }}>采购入库单管理</h2></Col>
       <Col><Space>
         <Button icon={<UploadOutlined />} onClick={openImport}>历史导入</Button>
+        <Popconfirm
+          title="一键清空入库单"
+          description={() => {
+            const parts = []
+            if (filters.supplierName) parts.push(`供应商=${filters.supplierName}`)
+            const cond = parts.length > 0 ? `（筛选: ${parts.join(', ')}）` : '（无筛选, 清空全部）'
+            return `将删除所有匹配的入库单并回退库存/采购单数量${cond}, 删除后无法恢复.`
+          }}
+          onConfirm={handleClearAll}
+          okText="清空" cancelText="取消"
+          okButtonProps={{ danger: true, loading: clearingAll }}
+        >
+          <Button danger icon={<DeleteOutlined />} loading={clearingAll}>一键清空</Button>
+        </Popconfirm>
         <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建入库单</Button>
         <Button icon={<ReloadOutlined />} onClick={fetchOrders}>刷新</Button>
       </Space></Col>
