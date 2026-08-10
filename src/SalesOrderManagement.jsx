@@ -555,6 +555,16 @@ export default function SalesOrderManagement({ user, companies = [] }) {
             <Form.Item name="notes" label="备注"><Input.TextArea rows={2} /></Form.Item>
             <Card size="small" title={<span>物料明细 {!selectedCustomerId && <Text type="secondary" style={{fontSize:12}}>（请先选择客户）</Text>}</span>}
               extra={<Button type="dashed" icon={<PlusOutlined />} onClick={addItem} disabled={!selectedCustomerId}>添加物料</Button>} style={{ marginTop: 16 }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8, color: '#888', fontSize: 12, paddingLeft: 4 }}>
+                <span style={{ width: 120 }}>物料类型</span>
+                <span style={{ width: 240 }}>客户料号 / 物料号</span>
+                <span style={{ width: 220 }}>物料编码</span>
+                <span style={{ width: 80 }}>订量</span>
+                <span style={{ width: 100 }}>单价</span>
+                <span style={{ width: 100 }}>含税单价</span>
+                <span style={{ width: 100 }}>小计</span>
+                <span style={{ width: 32 }}> </span>
+              </div>
               {items.map((it) => (
                 <Space key={it.key} style={{ marginBottom: 10, width: '100%' }} align="start" wrap>
                   <Select placeholder="物料类型" style={{ width: 120 }} disabled={!selectedCustomerId}

@@ -512,6 +512,15 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
               </Card>
             )}
             <Card size="small" title={existingPo ? '追加物料明细' : '物料明细'} extra={<Button type="dashed" icon={<PlusOutlined />} onClick={addItem}>添加物料</Button>} style={{ marginTop: 16 }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8, color: '#888', fontSize: 12, paddingLeft: 4 }}>
+                <span style={{ width: 120 }}>物料类型</span>
+                <span style={{ width: 240 }}>物料</span>
+                <span style={{ width: 180 }}>型号</span>
+                <span style={{ width: 80 }}>订量</span>
+                <span style={{ width: 100 }}>预估单价</span>
+                <span style={{ width: 100 }}>含税单价</span>
+                <span style={{ width: 32 }}> </span>
+              </div>
               {items.map((it) => (
                 <Space key={it.key} style={{ marginBottom: 10, width: '100%' }} align="start" wrap>
                   <Select placeholder="物料类型" style={{ width: 120 }}
