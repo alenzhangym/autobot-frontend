@@ -16,7 +16,7 @@ const STATUS_MAP = {
 
 const PART_TYPES = ['电容', '电感', '磁珠', '电阻', 'PCB板材', 'IC', '二极管', '三极管', '晶振', '连接器', '继电器', '其他']
 
-const emptyItem = () => ({ key: Date.now(), partType: null, partId: null, partLabel: '', orderedQty: null, estimatedUnitPrice: null, taxInclusiveUnitPrice: null })
+const emptyItem = () => ({ key: Date.now(), partType: '其他', partId: null, partLabel: '', orderedQty: null, estimatedUnitPrice: null, taxInclusiveUnitPrice: null })
 
 export default function PurchaseOrderManagement({ user, companies = [] }) {
   const isSuperAdmin = isSuperAdminFn(user)
@@ -195,7 +195,7 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
       })
       setExistingPo(null); setExistingPoItems([])
       const its = (detail.items || []).map(it => ({
-        key: Date.now() + Math.random(), partType: null, partId: it.part_id, partLabel: '',
+        key: Date.now() + Math.random(), partType: it.part_type || '其他', partId: it.part_id, partLabel: it.user_part_model || '',
         orderedQty: it.ordered_qty, estimatedUnitPrice: it.estimated_unit_price,
         taxInclusiveUnitPrice: it.tax_inclusive_unit_price
       }))
