@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Layout, Table, Button, Modal, Form, Input, Select, AutoComplete, Tag, Space, message, DatePicker, Upload, Popconfirm, Row, Col, Card, InputNumber, Typography, Alert, Statistic, Checkbox } from 'antd'
-import { PlusOutlined, InboxOutlined, ReloadOutlined, CheckOutlined, CloseOutlined, SearchOutlined, DeleteOutlined, EditOutlined, UploadOutlined } from '@ant-design/icons'
+import { PlusOutlined, InboxOutlined, ReloadOutlined, CheckOutlined, CloseOutlined, SearchOutlined, DeleteOutlined, EditOutlined, UploadOutlined, DownloadOutlined } from '@ant-design/icons'
 import api from './auth'
 import dayjs from 'dayjs'
 import { isSuperAdmin as isSuperAdminFn } from './utils/permissions.js';
@@ -30,6 +30,9 @@ export default function InboundOrderManagement({ user, companies = [] }) {
   const [pageSize, setPageSize] = useState(20)
   const [loading, setLoading] = useState(false)
   const [filters, setFilters] = useState({ supplierName: '', dateFrom: '', dateTo: '' })
+  const [exportOpen, setExportOpen] = useState(false)
+  const [exportForm] = Form.useForm()
+  const [exporting, setExporting] = useState(false)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [createForm] = Form.useForm()
   const [items, setItems] = useState([emptyItem()])
@@ -459,6 +462,38 @@ export default function InboundOrderManagement({ user, companies = [] }) {
     }
   }
 
+  const handleExportFile = async (format) => {
+    try {
+      const values = await exportForm.validateFields()
+      setExporting(true)
+      const params = { format }
+      if (effectiveCompanyId) params.companyId = effectiveCompanyId
+      if (values.supplierName) params.supplierName = values.supplierName
+      if (values.dateRange && values.dateRange.length === 2) {
+        params.dateFrom = values.dateRange[0].format('YYYY-MM-DD')
+        params.dateTo = values.dateRange[1].format('YYYY-MM-DD')
+      }
+      const res = await api.get('/erp/inbound-orders/export/file', { params, responseType: 'blob' })
+      const disposition = res.headers?.['content-disposition'] || ''
+      const match = disposition.match(/filename\*=UTF-8''([^;]+)/)
+      const filename = match ? decodeURIComponent(match[1]) : `入库单明细.${format}`
+      const url = window.URL.createObjectURL(new Blob([res.data]))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      window.URL.revokeObjectURL(url)
+      message.success(`已下载 ${format.toUpperCase()} 文件`)
+      setExportOpen(false)
+    } catch (e) {
+      if (e?.errorFields) return
+      const msg = e?.response?.data?.error || e.message
+      message.error('下载失败: ' + (e.response?.data instanceof Blob ? '服务器错误' : msg))
+    } finally { setExporting(false) }
+  }
+
   return (<Layout style={{ background: '#0d0d0d', height: '100%', overflow: 'hidden' }}><Content style={{ padding: 24, height: '100%', overflow: 'auto' }}>
     <Row justify="space-between" align="middle" style={{ marginBottom: 16 }}>
       <Col><h2 style={{ color: '#e3e3e3', margin: 0 }}>采购入库单管理</h2></Col>
@@ -478,6 +513,7 @@ export default function InboundOrderManagement({ user, companies = [] }) {
         >
           <Button danger icon={<DeleteOutlined />} loading={clearingAll}>一键清空</Button>
         </Popconfirm>
+        <Button icon={<DownloadOutlined />} onClick={() => { exportForm.resetFields(); setExportOpen(true) }}>导出</Button>
         <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新建入库单</Button>
         <Button icon={<ReloadOutlined />} onClick={fetchOrders}>刷新</Button>
       </Space></Col>
@@ -747,6 +783,33 @@ export default function InboundOrderManagement({ user, companies = [] }) {
           )}
         </div>
       )}
+    </Modal>
+
+    {/* ── Export Modal ── */}
+    <Modal
+      title="导出入库单"
+      open={exportOpen}
+      onCancel={() => setExportOpen(false)}
+      width={520}
+      footer={[
+        <Button key="cancel" onClick={() => setExportOpen(false)}>取消</Button>,
+        <Button key="csv" loading={exporting} onClick={() => handleExportFile('csv')}>导出 CSV</Button>,
+        <Button key="xlsx" type="primary" loading={exporting} icon={<DownloadOutlined />}
+          onClick={() => handleExportFile('xlsx')}>导出 Excel</Button>,
+      ]}
+    >
+      <Form form={exportForm} layout="vertical">
+        <Form.Item name="supplierName" label="供应商">
+          <Select showSearch placeholder="按供应商筛选（可选）" allowClear
+            filterOption={(input, option) => option?.children?.toLowerCase().includes(input.toLowerCase())}
+          >
+            {suppliers.map(s => <Select.Option key={s.supplierId} value={s.name}>{s.name}</Select.Option>)}
+          </Select>
+        </Form.Item>
+        <Form.Item name="dateRange" label="订单日期范围">
+          <RangePicker style={{ width: '100%' }} />
+        </Form.Item>
+      </Form>
     </Modal>
   </Content></Layout>)
 }
