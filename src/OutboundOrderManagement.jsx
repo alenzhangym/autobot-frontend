@@ -52,7 +52,6 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
   const [selectedSoId, setSelectedSoId] = useState(null)
   const [showEditModal, setShowEditModal] = useState(false)
   const [editingOrder, setEditingOrder] = useState(null)
-  const [editingReconciled, setEditingReconciled] = useState(false)
   const [editItems, setEditItems] = useState([])
 
   // ── Historical Import state ──
@@ -420,7 +419,6 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
       if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
       const res = await api.get(`/erp/outbound-orders/${record.orderId}`, { params })
       const detail = res.data
-      setEditingReconciled(!!detail.reconciled)
       const its = (detail.items || []).map((it, idx) => ({
         key: Date.now() + Math.random(),
         originalIndex: idx,
@@ -606,12 +604,6 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
     {
       title: '总金额', dataIndex: 'totalAmount', key: 'totalAmount', width: 100,
       render: (v) => v != null ? '¥' + Number(v).toFixed(2) : '-',
-    },
-    {
-      title: '对账状态', dataIndex: 'reconciled', key: 'reconciled', width: 95,
-      render: (v) => v
-        ? <Tag color="green">已对账</Tag>
-        : <Tag color="default">未对账</Tag>,
     },
     {
       title: '状态', dataIndex: 'status', key: 'status', width: 90,
@@ -810,25 +802,18 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
         {/* ── Stats ── */}
         {(() => {
           const totalAmt = orders.reduce((s, o) => s + (o.totalAmount || 0), 0)
-          const reconciledCount = orders.filter(o => o.reconciled).length
           return (
             <Row gutter={16} style={{ marginBottom: 16 }}>
-              <Col span={8}>
+              <Col span={12}>
                 <Card size="small" style={{ background: '#141414', border: '1px solid #222', textAlign: 'center' }}>
                   <div style={{ color: '#888', fontSize: 12 }}>出库单数</div>
                   <div style={{ color: '#e3e3e3', fontSize: 22, fontWeight: 600 }}>{orders.length}</div>
                 </Card>
               </Col>
-              <Col span={8}>
+              <Col span={12}>
                 <Card size="small" style={{ background: '#141414', border: '1px solid #222', textAlign: 'center' }}>
                   <div style={{ color: '#888', fontSize: 12 }}>总金额</div>
                   <div style={{ color: '#e3e3e3', fontSize: 22, fontWeight: 600 }}>¥{totalAmt.toFixed(2)}</div>
-                </Card>
-              </Col>
-              <Col span={8}>
-                <Card size="small" style={{ background: '#141414', border: '1px solid #222', textAlign: 'center' }}>
-                  <div style={{ color: '#888', fontSize: 12 }}>已对账数</div>
-                  <div style={{ color: reconciledCount > 0 ? '#52c41a' : '#e3e3e3', fontSize: 22, fontWeight: 600 }}>{reconciledCount} / {orders.length}</div>
                 </Card>
               </Col>
             </Row>
@@ -973,7 +958,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
           title={`编辑出库单 ${editingOrder?.orderNumber || ''}`}
           open={showEditModal}
           onOk={handleEditSave}
-          onCancel={() => { setShowEditModal(false); setEditingOrder(null); setEditItems([]); setEditingReconciled(false) }}
+          onCancel={() => { setShowEditModal(false); setEditingOrder(null); setEditItems([]) }}
           okText="保存"
           width={900}
           destroyOnHidden
@@ -988,11 +973,6 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
                 <Descriptions.Item label="发货日期">{editingOrder.shipDate || '-'}</Descriptions.Item>
                 <Descriptions.Item label="总金额">¥{Number(editingOrder.totalAmount || 0).toFixed(2)}</Descriptions.Item>
               </Descriptions>
-              {editingReconciled && (
-                <div style={{ background: '#3a2a14', border: '1px solid #faad14', color: '#faad14', padding: 8, borderRadius: 4, marginBottom: 12, fontSize: 12 }}>
-                  ⚠ 该出库单已对账完成，单价不可修改。
-                </div>
-              )}
               <div style={{ marginBottom: 8, color: '#888', fontSize: 13, fontWeight: 500 }}>物料明细</div>
               <div style={{ maxHeight: 280, overflow: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', color: '#ccc', fontSize: 12 }}>
@@ -1030,10 +1010,8 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
                       <td style={{ padding: 2 }}><InputNumber size="small" style={{ width: '100%' }} placeholder="0" min={0} value={it.qty}
                         onChange={v => setEditItems(prev => prev.map(x => x.key === it.key ? { ...x, qty: v, dirty: true } : x))} /></td>
                       <td style={{ padding: 2 }}><InputNumber size="small" style={{ width: '100%' }} placeholder="0.00" min={0} step={0.01} value={it.unitPrice}
-                        disabled={editingReconciled}
                         onChange={v => setEditItems(prev => prev.map(x => x.key === it.key ? { ...x, unitPrice: v, dirty: true } : x))} /></td>
                       <td style={{ padding: 2 }}><InputNumber size="small" style={{ width: '100%' }} placeholder="0.00" min={0} step={0.01} value={it.taxInclusiveUnitPrice}
-                        disabled={editingReconciled}
                         onChange={v => setEditItems(prev => prev.map(x => x.key === it.key ? { ...x, taxInclusiveUnitPrice: v, dirty: true } : x))} /></td>
                       <td style={{ padding: 2, textAlign: 'right', color: '#888', fontSize: 11 }}>{it.qty && it.unitPrice ? '¥' + (it.qty * it.unitPrice).toFixed(2) : ''}</td>
                     </tr>

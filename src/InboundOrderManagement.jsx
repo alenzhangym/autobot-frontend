@@ -50,7 +50,6 @@ export default function InboundOrderManagement({ user, companies = [] }) {
   const [editForm] = Form.useForm()
   const [editItems, setEditItems] = useState([])
   const [editingOrder, setEditingOrder] = useState(null)
-  const [editingReconciled, setEditingReconciled] = useState(false)
   const [suppliers, setSuppliers] = useState([])
   const [modalKey, setModalKey] = useState(0)
 
@@ -120,7 +119,6 @@ export default function InboundOrderManagement({ user, companies = [] }) {
         supplierName: detail.supplierName,
         orderDate: detail.orderDate ? dayjs(detail.orderDate) : null,
       })
-      setEditingReconciled(!!detail.reconciled)
       // Ensure current supplierName is in Select options even if not in master list
       if (detail.supplierName && !suppliers.some(s => s.name === detail.supplierName)) {
         setSuppliers(prev => [...prev, { supplierId: -Date.now(), name: detail.supplierName }])
@@ -374,9 +372,6 @@ export default function InboundOrderManagement({ user, companies = [] }) {
     { title: '采购日期', dataIndex: 'orderDate', key: 'odate', width: 100 },
     { title: '物料摘要', key: 'summary', width: 160, render: (_, r) => itemsSummary(r) },
     { title: '金额', dataIndex: 'totalAmount', key: 'amount', width: 90, render: v => v ? '¥' + Number(v).toFixed(2) : '-' },
-    { title: '对账状态', dataIndex: 'reconciled', key: 'reconciled', width: 95, render: v => v
-        ? <Tag color="green">已对账</Tag>
-        : <Tag color="default">未对账</Tag> },
     { title: '到货', dataIndex: 'receivedDate', key: 'rdate', width: 100, render: v => v || '-' },
     { title: '状态', dataIndex: 'status', key: 'status', width: 65, render: s => { const i = STATUS_MAP[s] || { label: s, color: 'default' }; return <Tag color={i.color}>{i.label}</Tag> } },
     { title: '创建人', dataIndex: 'createdByName', key: 'createdBy', width: 90, render: v => v || '-' },
@@ -499,19 +494,14 @@ export default function InboundOrderManagement({ user, companies = [] }) {
     </Card>
     {(() => {
       const totalAmt = orders.reduce((s, o) => s + (o.totalAmount || 0), 0)
-      const reconciledCount = orders.filter(o => o.reconciled).length
       return (<Row gutter={16} style={{ marginBottom: 16 }}>
-        <Col span={8}><Card size="small" style={{ background: '#141414', border: '1px solid #222', textAlign: 'center' }}>
+        <Col span={12}><Card size="small" style={{ background: '#141414', border: '1px solid #222', textAlign: 'center' }}>
           <div style={{ color: '#888', fontSize: 12 }}>入库单数</div>
           <div style={{ color: '#e3e3e3', fontSize: 22, fontWeight: 600 }}>{orders.length}</div>
         </Card></Col>
-        <Col span={8}><Card size="small" style={{ background: '#141414', border: '1px solid #222', textAlign: 'center' }}>
+        <Col span={12}><Card size="small" style={{ background: '#141414', border: '1px solid #222', textAlign: 'center' }}>
           <div style={{ color: '#888', fontSize: 12 }}>总金额</div>
           <div style={{ color: '#e3e3e3', fontSize: 22, fontWeight: 600 }}>¥{totalAmt.toFixed(2)}</div>
-        </Card></Col>
-        <Col span={8}><Card size="small" style={{ background: '#141414', border: '1px solid #222', textAlign: 'center' }}>
-          <div style={{ color: '#888', fontSize: 12 }}>已对账数</div>
-          <div style={{ color: reconciledCount > 0 ? '#52c41a' : '#e3e3e3', fontSize: 22, fontWeight: 600 }}>{reconciledCount} / {orders.length}</div>
         </Card></Col>
       </Row>)
     })()}
@@ -628,7 +618,7 @@ export default function InboundOrderManagement({ user, companies = [] }) {
     </Modal>
 
     {/* ── Edit Modal ── */}
-    <Modal title="编辑入库单草稿" open={showEditModal} onOk={handleEditSave} onCancel={() => { setShowEditModal(false); setEditItems([]); setEditingOrder(null); setEditingReconciled(false) }}
+    <Modal title="编辑入库单草稿" open={showEditModal} onOk={handleEditSave} onCancel={() => { setShowEditModal(false); setEditItems([]); setEditingOrder(null) }}
       okText="保存" width={1000} destroyOnHidden>
       <Form form={editForm} layout="vertical">
         <Row gutter={16}>
@@ -641,11 +631,6 @@ export default function InboundOrderManagement({ user, companies = [] }) {
           </Form.Item></Col>
           <Col span={12}><Form.Item name="orderDate" label="采购日期"><DatePicker style={{ width: '100%' }} /></Form.Item></Col>
         </Row>
-        {editingReconciled && (
-          <div style={{ background: '#3a2a14', border: '1px solid #faad14', color: '#faad14', padding: 8, borderRadius: 4, marginBottom: 12, fontSize: 12 }}>
-            ⚠ 该入库单已对账完成，单价不可修改。
-          </div>
-        )}
       </Form>
       <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <span style={{ color: '#888', fontSize: 13, fontWeight: 500 }}>物料明细</span>
@@ -681,10 +666,8 @@ export default function InboundOrderManagement({ user, companies = [] }) {
               <td style={{ padding: 2 }}><InputNumber size="small" style={{ width: '100%' }} placeholder="0" min={0} value={it.qty}
                 onChange={v => updateEditItem(it.key, 'qty', v)} /></td>
               <td style={{ padding: 2 }}><InputNumber size="small" style={{ width: '100%' }} placeholder="0.00" min={0} step={0.01} value={it.unitPrice}
-                disabled={editingReconciled}
                 onChange={v => updateEditItem(it.key, 'unitPrice', v)} /></td>
               <td style={{ padding: 2 }}><InputNumber size="small" style={{ width: '100%' }} placeholder="0.00" min={0} step={0.01} value={it.taxInclusiveUnitPrice}
-                disabled={editingReconciled}
                 onChange={v => updateEditItem(it.key, 'taxInclusiveUnitPrice', v)} /></td>
               <td style={{ padding: 2, textAlign: 'right', color: '#888', fontSize: 11 }}>{it.qty && it.unitPrice ? '¥' + (it.qty * it.unitPrice).toFixed(2) : ''}</td>
               <td style={{ padding: 2 }}><Input size="small" style={{ width: '100%' }} placeholder="库位" value={it.location}
