@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react'
 import { Layout, Menu, Button, Input, List, Typography, Space, Table, message, Modal, Form, Select, InputNumber } from 'antd'
-import { PlusOutlined, DatabaseOutlined, TableOutlined, SaveOutlined, EditOutlined } from '@ant-design/icons'
+import { PlusOutlined, DatabaseOutlined, TableOutlined, SaveOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons'
 import api, { getLocalAgentBaseUrl } from './auth'
 
 const { Sider, Content } = Layout
 const { Text, Title } = Typography
 const { TextArea } = Input
 
-export default function DatabaseManagement({ dbConfigs, fetchDbConfigs, onAddDbConfig, onUpdateDbConfig, user }) {
+export default function DatabaseManagement({ dbConfigs, fetchDbConfigs, onAddDbConfig, onUpdateDbConfig, onDeleteDbConfig, user }) {
   const safeDbConfigs = Array.isArray(dbConfigs) ? dbConfigs : []
   const [selectedConfigId, setSelectedConfigId] = useState(null)
   const [tables, setTables] = useState([])
@@ -177,7 +177,8 @@ export default function DatabaseManagement({ dbConfigs, fetchDbConfigs, onAddDbC
   const loadDescriptions = async (configId) => {
     try {
       const res = await api.get(`/db-schemas/${configId}/descriptions`)
-      setDescriptions(res.data || { tables: {}, columns: {}, db: '' })
+      // 后端返回 ApiResult 信封 { code, message, data: { db, tables, columns } }
+      setDescriptions(res.data?.data || { tables: {}, columns: {}, db: '' })
     } catch (error) {
       console.error('Failed to load descriptions', e)
     }
@@ -209,6 +210,28 @@ export default function DatabaseManagement({ dbConfigs, fetchDbConfigs, onAddDbC
       newDesc.columns[key1][key2] = value
     }
     setDescriptions(newDesc)
+  }
+
+  const handleDeleteConfig = (config) => {
+    Modal.confirm({
+      title: 'Delete this database config?',
+      content: `Are you sure you want to delete "${config.name}"? This cannot be undone.`,
+      okText: 'Delete',
+      okButtonProps: { danger: true },
+      cancelText: 'Cancel',
+      onOk: async () => {
+        if (!onDeleteDbConfig) return
+        const success = await onDeleteDbConfig(config.id)
+        if (success) {
+          if (String(selectedConfigId) === String(config.id)) {
+            setSelectedConfigId(null)
+            setTables([])
+            setSelectedTable(null)
+            setColumns([])
+          }
+        }
+      }
+    })
   }
 
   const columnsDef = [
@@ -258,7 +281,15 @@ export default function DatabaseManagement({ dbConfigs, fetchDbConfigs, onAddDbC
           items={safeDbConfigs.map(c => ({
             key: c.id,
             icon: <DatabaseOutlined />,
-            label: c.name
+            label: (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span>
+                <DeleteOutlined
+                  onClick={(e) => { e.stopPropagation(); handleDeleteConfig(c) }}
+                  style={{ color: '#ff4d4f', cursor: 'pointer', fontSize: 14 }}
+                />
+              </div>
+            )
           }))}
         />
         )}

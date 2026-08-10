@@ -1374,6 +1374,9 @@ function App() {
 
                   window.__latestDbStoredId = manifestId
 
+                  // 数据/结构分离：完整数据已存入 data-store（IndexedDB + 后端文件），
+                  // 这里只把「结构」传给后端/LLM —— 每个子结果集的 id、名称、行数、列、schema。
+                  // 不内联完整 rows，避免占用 LLM 上下文空间；UIAgent 通过 stored_id 拉取完整数据渲染。
                   responseDataToBackend = {
                     status: result.status,
                     data: {
@@ -1383,10 +1386,12 @@ function App() {
                         manifest_id: manifestId,
                         dataset_count: datasetMetas.length
                       },
-                      datasets: datasetMetas.map(x => ({
-                        name: x.name,
-                        total_rows: x.total_rows,
-                        cols: x.cols
+                      datasets: datasetMetas.map(m => ({
+                        id: m.id,
+                        name: m.name,
+                        total_rows: m.total_rows,
+                        cols: m.cols,
+                        schema_injected: m.schema_injected || ''
                       }))
                     }
                   }
@@ -1588,7 +1593,8 @@ function App() {
   const fetchDbConfigs = async () => {
     try {
       const res = await api.get('/db-configs')
-      const configs = res.data?.configs || []
+      // 后端返回 ApiResult 信封 { code, message, data: { configs } }
+      const configs = res.data?.data?.configs || res.data?.configs || []
       setDbConfigs(configs)
     } catch (e) {
       console.error('Failed to fetch DB configs:', e)
@@ -1600,8 +1606,10 @@ function App() {
       await api.delete(`/db-configs/${id}`)
       fetchDbConfigs()
       message.success('DB config deleted successfully')
+      return true
     } catch (e) {
       message.error('Failed to delete DB config: ' + (e.response?.data || e.message))
+      return false
     }
   }
 
@@ -3449,7 +3457,7 @@ const handleDeleteSession = (id) => {
           ) : activeTab === 'crm_follow_ups' ? (
             <CrmFollowUpManagement user={user} companies={companies} />
           ) : activeTab === 'databases' ? (
-              <DatabaseManagement dbConfigs={dbConfigs} fetchDbConfigs={fetchDbConfigs} onAddDbConfig={addDbConfig} onUpdateDbConfig={updateDbConfig} user={user} />
+              <DatabaseManagement dbConfigs={dbConfigs} fetchDbConfigs={fetchDbConfigs} onAddDbConfig={addDbConfig} onUpdateDbConfig={updateDbConfig} onDeleteDbConfig={deleteDbConfig} user={user} />
           ) : activeTab === 'monitor' && isSuperAdmin ? (
             <Content style={{ background: '#0a0a0a', overflow: 'auto' }}>
               <MonitorPanel />

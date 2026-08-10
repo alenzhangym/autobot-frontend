@@ -47,8 +47,7 @@ export const cleanScriptSrc = (html) => {
 
   // Convert relative paths to CDN URLs for common libraries
   const pathToCdn = {
-    '/echarts.min.js': 'https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js',
-    '/echarts.min.js.map': 'https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js.map',
+    // echarts.min.js 由前端 dist 本地提供，避免国内访问 jsdelivr CDN 失败导致图表黑屏
     '/echarts.simple.min.js': 'https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.simple.min.js',
   };
 

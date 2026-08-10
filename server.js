@@ -134,7 +134,8 @@ app.post('/api/local/db', async (req, res) => {
                     user: config.user || '',
                     password: config.password || '',
                     database: config.database || '',
-                    multipleStatements: true
+                    multipleStatements: true,
+                    connectTimeout: 5000
                 };
                 connection = await mysql.createConnection(sanitized);
                 let resultData;
@@ -157,7 +158,7 @@ app.post('/api/local/db', async (req, res) => {
             }
         } else if (type === 'postgres') {
             const pg = await import('pg');
-            const client = new pg.Client(config);
+            const client = new pg.Client({ ...config, connectionTimeoutMillis: 5000 });
             try {
                 await client.connect();
                 let resultData;
@@ -187,7 +188,8 @@ app.post('/api/local/db', async (req, res) => {
                 database: config.database,
                 server: config.host || config.server,
                 port: parseInt(config.port) || 1433,
-                options: { encrypt: true, trustServerCertificate: true }
+                options: { encrypt: true, trustServerCertificate: true },
+                connectTimeout: 5000
             };
             try {
                 await sql.connect(mssqlConfig);
