@@ -16,7 +16,7 @@ const STATUS_MAP = {
 
 const PART_TYPES = ['电容', '电感', '磁珠', '电阻', 'PCB板材', 'IC', '二极管', '三极管', '晶振', '连接器', '继电器', '其他']
 
-const emptyItem = () => ({ key: Date.now(), partType: null, partId: null, partLabel: '', orderedQty: null, estimatedUnitPrice: null })
+const emptyItem = () => ({ key: Date.now(), partType: null, partId: null, partLabel: '', orderedQty: null, estimatedUnitPrice: null, taxInclusiveUnitPrice: null })
 
 export default function PurchaseOrderManagement({ user, companies = [] }) {
   const isSuperAdmin = isSuperAdminFn(user)
@@ -159,7 +159,8 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
       })
       const its = (detail.items || []).map(it => ({
         key: Date.now() + Math.random(), partType: null, partId: it.part_id, partLabel: '',
-        orderedQty: it.ordered_qty, estimatedUnitPrice: it.estimated_unit_price
+        orderedQty: it.ordered_qty, estimatedUnitPrice: it.estimated_unit_price,
+        taxInclusiveUnitPrice: it.tax_inclusive_unit_price
       }))
       setItems(its.length > 0 ? its : [emptyItem()])
       setShowModal(true)
@@ -207,7 +208,8 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
         paymentStatus: values.paymentStatus, notes: values.notes,
         companyId: effectiveCompanyId || user?.companyId || 0,
         createdBy: user?.id, items: rowsWithPart.filter(it => it.orderedQty > 0).map(it => ({
-          partId: it.partId, orderedQty: it.orderedQty, estimatedUnitPrice: it.estimatedUnitPrice || 0
+          partId: it.partId, orderedQty: it.orderedQty, estimatedUnitPrice: it.estimatedUnitPrice || 0,
+          taxInclusiveUnitPrice: it.taxInclusiveUnitPrice || 0
         }))
       }
       if (editing) {
@@ -322,6 +324,7 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
           { title: '订量', dataIndex: 'ordered_qty', width: 80 },
           { title: '已收', dataIndex: 'received_qty', width: 80 },
           { title: '估价', dataIndex: 'estimated_unit_price', width: 100, render: v => v ? Number(v).toFixed(4) : '-' },
+          { title: '含税单价', dataIndex: 'tax_inclusive_unit_price', width: 100, render: v => v ? Number(v).toFixed(4) : '-' },
         ]} />
     )
   }
@@ -428,6 +431,8 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
                     onChange={v => updateItem(it.key, 'orderedQty', v)} style={{ width: 80 }} />
                   <InputNumber placeholder="预估单价" min={0} step={0.01} value={it.estimatedUnitPrice}
                     onChange={v => updateItem(it.key, 'estimatedUnitPrice', v)} style={{ width: 100 }} />
+                  <InputNumber placeholder="含税单价" min={0} step={0.01} value={it.taxInclusiveUnitPrice}
+                    onChange={v => updateItem(it.key, 'taxInclusiveUnitPrice', v)} style={{ width: 100 }} />
                   {items.length > 1 && <Button icon={<MinusCircleOutlined />} danger size="small" onClick={() => removeItem(it.key)} />}
                 </Space>
               ))}
@@ -452,7 +457,7 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
           <Alert
             type="info" showIcon style={{ marginBottom: 12 }}
             message="支持 Excel (.xlsx/.xls)、CSV 文件，或直接粘贴表格内容，按列名自动识别"
-            description="约定格式（顺序不限）：供应商名称、采购单号、订单日期、数量、物料号/料号/型号/品名、单价。系统自动按采购单号分组创建采购单，物料不存在时自动创建，供应商名称自动带出。"
+            description="约定格式（顺序不限）：供应商名称、采购单号、订单日期、数量、物料号/料号/型号/品名、单价。可选列：含税单价。系统自动按采购单号分组创建采购单，物料不存在时自动创建，供应商名称自动带出。"
           />
           <Upload.Dragger
             accept=".xlsx,.xls,.csv"
@@ -470,7 +475,7 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
             rows={6}
             value={importText}
             onChange={e => { setImportText(e.target.value); setImportFileList([]) }}
-            placeholder={'供应商名称\t采购单号\t订单日期\t数量\t物料号\t单价\n供应商A\tPO-001\t2026-08-01\t100\tC-001\t1.25'}
+            placeholder={'供应商名称\t采购单号\t订单日期\t数量\t物料号\t单价\t含税单价\n供应商A\tPO-001\t2026-08-01\t100\tC-001\t1.25\t1.35'}
             style={{ background: '#111', borderColor: '#333', color: '#e3e3e3' }}
           />
 

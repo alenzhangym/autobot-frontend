@@ -15,7 +15,7 @@ const STATUS_MAP = {
 
 const STATUS_OPTIONS = Object.entries(STATUS_MAP).map(([k, v]) => ({ value: k, label: v.label }))
 
-const emptyItem = () => ({ key: Date.now(), customerPartNo: '', model: '', orderedQty: 0, shippedQty: 0, qty: null, unitPrice: null, dirty: true })
+const emptyItem = () => ({ key: Date.now(), customerPartNo: '', model: '', orderedQty: 0, shippedQty: 0, qty: null, unitPrice: null, taxInclusiveUnitPrice: null, dirty: true })
 
 export default function OutboundOrderManagement({ user, companies = [] }) {
   const isSuperAdmin = isSuperAdminFn(user)
@@ -243,6 +243,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
         shippedQty: it.shipped_qty ?? it.shippedQty ?? 0,
         qty: 0,
         unitPrice: it.unit_price ?? it.unitPrice ?? 0,
+        taxInclusiveUnitPrice: it.tax_inclusive_unit_price ?? it.taxInclusiveUnitPrice ?? null,
         currentStock: it.currentStock != null ? Number(it.currentStock) : null,
         substitutes: it.substitutes || [],
         substituteCount: it.substituteCount != null ? Number(it.substituteCount) : (it.substitutes ? it.substitutes.length : 0),
@@ -430,6 +431,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
         shippedQty: it.shippedQty || 0,
         qty: it.qty || 0,
         unitPrice: it.unitPrice || 0,
+        taxInclusiveUnitPrice: it.taxInclusiveUnitPrice || null,
         currentStock: it.currentStock != null ? it.currentStock : null,
         originalModel: it.originalModel || undefined,
         substituted: !!it.substituted,
@@ -464,6 +466,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
         inventoryId: it.inventoryId || null,
         qty: it.qty || 0,
         unitPrice: it.unitPrice || 0,
+        taxInclusiveUnitPrice: it.taxInclusiveUnitPrice || 0,
         subtotal: (it.qty || 0) * (it.unitPrice || 0),
         substituted: !!it.substituted,
         originalModel: it.originalModel || null,
@@ -514,6 +517,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
         inventoryId: it.inventoryId || null,
         qty: it.qty || 0,
         unitPrice: it.unitPrice || 0,
+        taxInclusiveUnitPrice: it.taxInclusiveUnitPrice || 0,
         subtotal: (it.qty || 0) * (it.unitPrice || 0),
         substituted: !!it.substituted,
         originalModel: it.originalModel || null,
@@ -871,6 +875,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
                 <th style={{ padding: 4, width: 35 }}>已出</th>
                 <th style={{ padding: 4, width: 55 }}>本次出库</th>
                 <th style={{ padding: 4, width: 55 }}>单价</th>
+                <th style={{ padding: 4, width: 55 }}>含税单价</th>
                 <th style={{ padding: 4, width: 50 }}>小计</th>
               </tr></thead>
               <tbody>{filteredItems.map((it) => {
@@ -897,6 +902,8 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
                     onChange={v => updateItem(it.key, 'qty', v)} /></td>
                   <td style={{ padding: 2 }}><InputNumber size="small" style={{ width: '100%' }} placeholder="0.00" min={0} step={0.01} value={it.unitPrice}
                     onChange={v => updateItem(it.key, 'unitPrice', v)} /></td>
+                  <td style={{ padding: 2 }}><InputNumber size="small" style={{ width: '100%' }} placeholder="0.00" min={0} step={0.01} value={it.taxInclusiveUnitPrice}
+                    onChange={v => updateItem(it.key, 'taxInclusiveUnitPrice', v)} /></td>
                   <td style={{ padding: 2, textAlign: 'right', color: '#888', fontSize: 11 }}>{it.qty && it.unitPrice ? '¥' + (it.qty * it.unitPrice).toFixed(2) : ''}</td>
                 </tr>
                 )
@@ -952,6 +959,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
                     <th style={{ padding: 4, width: 40 }}>已出</th>
                     <th style={{ padding: 4, width: 60 }}>本次出库</th>
                     <th style={{ padding: 4, width: 60 }}>单价</th>
+                    <th style={{ padding: 4, width: 60 }}>含税单价</th>
                     <th style={{ padding: 4, width: 55 }}>小计</th>
                   </tr></thead>
                   <tbody>{editItems.map((it, idx) => (
@@ -976,6 +984,9 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
                       <td style={{ padding: 2 }}><InputNumber size="small" style={{ width: '100%' }} placeholder="0.00" min={0} step={0.01} value={it.unitPrice}
                         disabled={editingReconciled}
                         onChange={v => setEditItems(prev => prev.map(x => x.key === it.key ? { ...x, unitPrice: v, dirty: true } : x))} /></td>
+                      <td style={{ padding: 2 }}><InputNumber size="small" style={{ width: '100%' }} placeholder="0.00" min={0} step={0.01} value={it.taxInclusiveUnitPrice}
+                        disabled={editingReconciled}
+                        onChange={v => setEditItems(prev => prev.map(x => x.key === it.key ? { ...x, taxInclusiveUnitPrice: v, dirty: true } : x))} /></td>
                       <td style={{ padding: 2, textAlign: 'right', color: '#888', fontSize: 11 }}>{it.qty && it.unitPrice ? '¥' + (it.qty * it.unitPrice).toFixed(2) : ''}</td>
                     </tr>
                   ))}</tbody>
@@ -1128,7 +1139,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
           <Alert
             type="info" showIcon style={{ marginBottom: 12 }}
             message="支持 Excel (.xlsx/.xls)、CSV 或直接粘贴文本导入"
-            description="表格需包含以下列：销售单号、物料号、数量、单价、日期，可选列：替代料号、客户料号。系统按列名自动识别（列顺序不限）。一个销售单可分批多次出库：按（销售单号, 日期）分组生成多张出库单。有替代料号时扣减替代料号库存并记录替代料号。销售单号必须已存在（请先用销售单导入创建销售单）。"
+            description="表格需包含以下列：销售单号、物料号、数量、单价、日期，可选列：替代料号、客户料号、含税单价。系统按列名自动识别（列顺序不限）。一个销售单可分批多次出库：按（销售单号, 日期）分组生成多张出库单。有替代料号时扣减替代料号库存并记录替代料号。销售单号必须已存在（请先用销售单导入创建销售单）。"
           />
           <Checkbox
             checked={importUpdateStock}
@@ -1139,7 +1150,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
           </Checkbox>
           <Input.TextArea
             rows={5}
-            placeholder={"在此粘贴表格内容（列头 + 数据行），例如：\n销售单号\t物料号\t数量\t单价\t日期\nSO20260801-01\tHPC6045BMV-221M\t500\t0.85\t2026/08/05\nSO20260801-01\tHPC6045BMV-221M\t300\t0.85\t2026/08/10"}
+            placeholder={"在此粘贴表格内容（列头 + 数据行），例如：\n销售单号\t物料号\t数量\t单价\t含税单价\t日期\nSO20260801-01\tHPC6045BMV-221M\t500\t0.85\t0.93\t2026/08/05\nSO20260801-01\tHPC6045BMV-221M\t300\t0.85\t0.93\t2026/08/10"}
             value={importText}
             onChange={e => setImportText(e.target.value)}
             style={{ marginBottom: 12 }}
