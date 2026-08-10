@@ -28,6 +28,7 @@ export default function SalesOrderManagement({ user, companies = [] }) {
   const [loading, setLoading] = useState(false)
   const [keyword, setKeyword] = useState('')
   const [statusFilter, setStatusFilter] = useState(null)
+  const [customerFilter, setCustomerFilter] = useState(null)
 
   const [showModal, setShowModal] = useState(false)
   const [editing, setEditing] = useState(null)
@@ -55,6 +56,7 @@ export default function SalesOrderManagement({ user, companies = [] }) {
       if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
       if (keyword) params.keyword = keyword
       if (statusFilter) params.status = statusFilter
+      if (customerFilter) params.customerId = customerFilter
       const res = await api.get('/erp/sales-orders', { params })
       // Handle ApiResult wrapper: { code, message, data }
       const apiData = res.data?.data || res.data || {}
@@ -63,7 +65,7 @@ export default function SalesOrderManagement({ user, companies = [] }) {
     } catch (e) {
       message.error('加载销售单失败: ' + (e.response?.data?.error || e.message))
     } finally { setLoading(false) }
-  }, [page, pageSize, keyword, statusFilter, effectiveCompanyId, isSuperAdmin])
+  }, [page, pageSize, keyword, statusFilter, customerFilter, effectiveCompanyId, isSuperAdmin])
 
   useEffect(() => { fetchOrders() }, [fetchOrders])
 
@@ -77,6 +79,7 @@ export default function SalesOrderManagement({ user, companies = [] }) {
       setCustomers(Array.isArray(customersData) ? customersData.map(c => ({ value: c.customerId, label: c.name })) : (customersData.customers || []).map(c => ({ value: c.customerId, label: c.name })))
     } catch (e) { /* ignore */ }
   }, [effectiveCompanyId, isSuperAdmin])
+  useEffect(() => { fetchCustomers() }, [fetchCustomers])
 
   const fetchCustomerPartMappings = useCallback(async (customerId) => {
     if (!customerId) { setCustomerPartMappings([]); return }
@@ -328,6 +331,7 @@ export default function SalesOrderManagement({ user, companies = [] }) {
     try {
       const payload = {}
       if (statusFilter) payload.status = statusFilter
+      if (customerFilter) payload.customerId = customerFilter
       if (keyword) payload.keyword = keyword
       const res = await api.post(`/erp/sales-orders/clear-all?companyId=${effectiveCompanyId || 0}`, payload)
       const result = res.data?.data || res.data || {}
@@ -457,6 +461,10 @@ export default function SalesOrderManagement({ user, companies = [] }) {
             <Select placeholder="状态筛选" allowClear style={{ width: 130 }} value={statusFilter}
               onChange={v => { setStatusFilter(v); setPage(1) }}
               options={Object.entries(STATUS_MAP).map(([k, v]) => ({ value: k, label: v.label }))} />
+            <Select placeholder="客户筛选" allowClear showSearch optionFilterProp="label"
+              style={{ width: 180 }} value={customerFilter}
+              onChange={v => { setCustomerFilter(v); setPage(1) }}
+              options={customers} />
             <Button icon={<ReloadOutlined />} onClick={() => { setPage(1); fetchOrders() }}>刷新</Button>
           </Space>
           <Space>
@@ -477,6 +485,7 @@ export default function SalesOrderManagement({ user, companies = [] }) {
               description={() => {
                 const parts = []
                 if (statusFilter) parts.push(`状态=${STATUS_MAP[statusFilter]?.label || statusFilter}`)
+                if (customerFilter) parts.push(`客户=${customers.find(c => c.value === customerFilter)?.label || customerFilter}`)
                 if (keyword) parts.push(`关键词≈${keyword}`)
                 const cond = parts.length > 0 ? `（筛选: ${parts.join(', ')}）` : '（无筛选, 清空全部）'
                 return `将删除所有匹配的销售单并级联删除关联的出库单${cond}, 删除后无法恢复.`
