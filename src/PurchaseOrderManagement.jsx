@@ -406,6 +406,7 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
     { title: '下单日期', dataIndex: 'order_date', width: 110, render: v => v || '-' },
     { title: '预计到货', dataIndex: 'expected_delivery_date', width: 110, render: v => v || '-' },
     { title: '金额', dataIndex: 'total_amount', width: 100, align: 'right', render: v => v != null ? v.toLocaleString() : '-' },
+    { title: '已付金额', dataIndex: 'paid_amount', width: 100, align: 'right', render: v => v != null ? v.toLocaleString() : '-' },
     { title: '状态', dataIndex: 'status', width: 90, render: s => <Tag color={STATUS_MAP[s]?.color}>{STATUS_MAP[s]?.label || s}</Tag> },
     { title: '付款', dataIndex: 'payment_status', width: 80, render: s => s === 'PAID' ? <Tag color="green">已付</Tag> : s === 'PARTIAL' ? <Tag color="orange">部分</Tag> : <Tag>未付</Tag> },
     { title: '创建时间', dataIndex: 'created_at', width: 160, render: v => v ? dayjs(v).format('MM-DD HH:mm') : '-' },
@@ -469,7 +470,7 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
             >
               <Button danger icon={<DeleteOutlined />} loading={clearingAll}>一键清空</Button>
             </Popconfirm>
-            <Button icon={<DownloadOutlined />} onClick={() => { exportForm.resetFields(); setExportOpen(true) }}>导出</Button>
+            <Button icon={<DownloadOutlined />} onClick={() => { exportForm.resetFields(); fetchSuppliers(); setExportOpen(true) }}>导出</Button>
             <Button icon={<UploadOutlined />} onClick={openImport}>一键导入</Button>
             <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>录入采购单</Button>
           </Space>
@@ -613,8 +614,8 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
         >
           <Form form={exportForm} layout="vertical">
             <Form.Item name="supplierName" label="供应商">
-              <AutoComplete placeholder="按供应商筛选（可选）" allowClear style={{ width: '100%' }}
-                options={suppliers} />
+              <Select placeholder="按供应商筛选（可选）" allowClear showSearch optionFilterProp="label"
+                style={{ width: '100%' }} options={suppliers} />
             </Form.Item>
             <Form.Item name="dateRange" label="订单日期范围">
               <DatePicker.RangePicker style={{ width: '100%' }} />

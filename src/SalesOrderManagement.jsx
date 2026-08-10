@@ -466,6 +466,7 @@ export default function SalesOrderManagement({ user, companies = [] }) {
     { title: '订单日期', dataIndex: 'order_date', width: 110, render: v => v || '-' },
     { title: '预计出货', dataIndex: 'expected_ship_date', width: 110, render: v => v || '-' },
     { title: '金额', dataIndex: 'total_amount', width: 100, align: 'right', render: v => v != null ? v.toLocaleString() : '-' },
+    { title: '已付金额', dataIndex: 'paid_amount', width: 100, align: 'right', render: v => v != null ? v.toLocaleString() : '-' },
     { title: '状态', dataIndex: 'status', width: 90, render: s => <Tag color={STATUS_MAP[s]?.color}>{STATUS_MAP[s]?.label || s}</Tag> },
     { title: '创建时间', dataIndex: 'created_at', width: 160, render: v => v ? dayjs(v).format('MM-DD HH:mm') : '-' },
     { title: '创建人', dataIndex: 'createdBy_name', key: 'createdBy', width: 90, render: v => v || '-' },
