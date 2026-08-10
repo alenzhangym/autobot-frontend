@@ -71,7 +71,7 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
     } finally { setLoading(false) }
   }, [page, pageSize, keyword, statusFilter, supplierFilter, effectiveCompanyId, isSuperAdmin])
 
-  useEffect(() => { fetchOrders() }, [fetchOrders])
+  useEffect(() => { fetchOrders(); fetchSuppliers() }, [fetchOrders, fetchSuppliers])
 
   const fetchParts = useCallback(async () => {
     try {
@@ -481,8 +481,9 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
           <Space>
             <Input.Search placeholder="搜索采购单号/供应商" allowClear value={keyword}
               onChange={e => setKeyword(e.target.value)} onSearch={() => { setPage(1); fetchOrders() }} style={{ width: 260 }} />
-            <Input placeholder="供应商" allowClear value={supplierFilter}
-              onChange={e => setSupplierFilter(e.target.value)} onPressEnter={() => { setPage(1); fetchOrders() }} style={{ width: 130 }} />
+            <Select placeholder="供应商筛选" allowClear showSearch optionFilterProp="label" style={{ width: 160 }} value={supplierFilter}
+              onChange={v => { setSupplierFilter(v); setPage(1) }}
+              options={suppliers} />
             <Select placeholder="状态筛选" allowClear style={{ width: 130 }} value={statusFilter}
               onChange={v => { setStatusFilter(v); setPage(1) }}
               options={Object.entries(STATUS_MAP).map(([k, v]) => ({ value: k, label: v.label }))} />
