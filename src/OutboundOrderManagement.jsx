@@ -78,7 +78,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
         const params = {}
         if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
         const [cRes, pRes] = await Promise.all([
-          api.get('/erp/customers', { params }),
+          api.get('/erp/customers/all', { params }),
           api.get('/erp/parts', { params: { ...params, size: 999 } }),
         ])
         // Handle ApiResult wrapper: { code, message, data }
