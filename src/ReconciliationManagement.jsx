@@ -32,6 +32,7 @@ export default function ReconciliationManagement({ user, companies = [] }) {
   const [suppliers, setSuppliers] = useState([])
   const [partyFilter, setPartyFilter] = useState(null)
   const [clearingAll, setClearingAll] = useState(false)
+  const [reconciling, setReconciling] = useState(false)
 
   const fetchRecords = useCallback(async () => {
     setLoading(true)
@@ -249,8 +250,67 @@ export default function ReconciliationManagement({ user, companies = [] }) {
     }
   }
 
+  const partyLabel = activeTab === 'OUTBOUND' ? '客户' : '供应商'
+  const partyName = activeTab === 'OUTBOUND'
+    ? (customers.find(c => Number(c.customerId) === Number(partyFilter))?.name || partyFilter || '-')
+    : (partyFilter || '-')
+
+  // 批量对账: 按当前筛选的客户/供应商, 自动完成该批所有待对账对账单, 完成后提醒导出
+  const handleBatchReconcile = async () => {
+    if (!partyFilter) {
+      message.warning(`请先在筛选栏选择要批量对账的${partyLabel}`)
+      return
+    }
+    setReconciling(true)
+    try {
+      const payload = { recType: activeTab }
+      if (activeTab === 'OUTBOUND') payload.customerId = partyFilter
+      else payload.supplierName = partyFilter
+      const res = await api.post(`/erp/reconciliations/batch-complete?companyId=${effectiveCompanyId || 0}`, payload)
+      const result = res.data?.data || res.data || {}
+      const matched = result.matched || 0
+      const completed = result.completed || 0
+      const skipped = result.skipped || 0
+      const errors = result.errors || []
+      if (matched === 0) {
+        message.info(`当前${partyLabel}没有待对账的对账单`)
+      } else if (skipped === 0) {
+        message.success(`已完成 ${completed} 个对账单`)
+      } else {
+        message.warning(`已完成 ${completed} 个, 跳过 ${skipped} 个`)
+      }
+      if (errors.length > 0) {
+        Modal.info({
+          title: '批量对账详情', width: 560,
+          content: (
+            <div style={{ maxHeight: 300, overflow: 'auto' }}>
+              {errors.map((e, i) => <div key={i} style={{ marginBottom: 4 }}>{e}</div>)}
+            </div>
+          )
+        })
+      }
+      setPage(1)
+      fetchRecords()
+      fetchPendingCount()
+      if (completed > 0) {
+        Modal.confirm({
+          title: '批量对账完成',
+          content: `已为当前${partyLabel}完成 ${completed} 个对账单, 对账单明细已全部列出, 是否立即导出?`,
+          okText: '去导出', cancelText: '稍后',
+          onOk: () => openExportModal(),
+        })
+      }
+    } catch (e) {
+      message.error('批量对账失败: ' + (e.response?.data?.error || e.message))
+    } finally {
+      setReconciling(false)
+    }
+  }
+
   const openExportModal = () => {
     exportForm.resetFields()
+    // 默认导出今天, 便于批量对账完成后直接导出
+    exportForm.setFieldsValue({ dateRange: [dayjs(), dayjs()] })
     setExportResult(null)
     setExportOpen(true)
   }
@@ -624,6 +684,18 @@ export default function ReconciliationManagement({ user, companies = [] }) {
           <Button icon={<ReloadOutlined />} onClick={() => { setPage(1); fetchRecords(); fetchPendingCount() }}>刷新</Button>
           <Button icon={<DownloadOutlined />} onClick={openExportModal}>导出</Button>
           <Popconfirm
+            title={`批量对账${activeTab === 'OUTBOUND' ? '出库' : '入库'}对账单`}
+            description={() => {
+              if (!partyFilter) return `请先在筛选栏选择${partyLabel}再执行批量对账`
+              return `将自动为${partyLabel}「${partyName}」生成所有物料明细并直接完成对账, 完成后可导出对账单.`
+            }}
+            onConfirm={handleBatchReconcile}
+            okText="批量对账" cancelText="取消"
+            okButtonProps={{ loading: reconciling }}
+          >
+            <Button type="primary" icon={<CheckOutlined />} loading={reconciling} disabled={!partyFilter}>批量对账</Button>
+          </Popconfirm>
+          <Popconfirm
             title={`一键清空${activeTab === 'OUTBOUND' ? '出库' : '入库'}对账单`}
             description={() => {
               const parts = []
@@ -766,6 +838,7 @@ function ExportResultView({ data }) {
           <div key={rec.reconciliationId} style={{ marginBottom: 18, background: '#0d0d0d', border: '1px solid #222', borderRadius: 6, padding: 12 }}>
             <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 10, color: '#ccc', fontSize: 13 }}>
               <Text code style={{ color: '#69b1ff' }}>{rec.recNumber}</Text>
+              {rec.statementNo && <Tag color="gold">对账单号: {rec.statementNo}</Tag>}
               <Tag color={rec.status === 'COMPLETED' ? 'green' : 'orange'}>{rec.status}</Tag>
               {rec.customerName && <span>客户: {rec.customerName}</span>}
               {rec.supplierName && <span>供应商: {rec.supplierName}</span>}
