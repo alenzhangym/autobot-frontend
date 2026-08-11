@@ -481,7 +481,7 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
       <Content style={{ padding: 24, height: '100%', overflow: 'auto' }}>
         <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
           <Space>
-            <Input.Search placeholder="搜索采购单号/供应商" allowClear value={keyword}
+            <Input.Search placeholder="搜索采购单号/供应商/料号" allowClear value={keyword}
               onChange={e => setKeyword(e.target.value)} onSearch={() => { setPage(1); fetchOrders() }} style={{ width: 260 }} />
             <Select placeholder="供应商筛选" allowClear showSearch optionFilterProp="label" style={{ width: 160 }} value={supplierFilter}
               onChange={v => { setSupplierFilter(v); setPage(1) }}

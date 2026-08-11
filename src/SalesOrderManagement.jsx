@@ -536,7 +536,7 @@ export default function SalesOrderManagement({ user, companies = [] }) {
       <Content style={{ padding: 24, height: '100%', overflow: 'auto' }}>
         <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
           <Space>
-            <Input.Search placeholder="搜索销售单号/客户PO" allowClear value={keyword}
+            <Input.Search placeholder="搜索销售单号/客户PO/料号" allowClear value={keyword}
               onChange={e => setKeyword(e.target.value)} onSearch={() => { setPage(1); fetchOrders() }} style={{ width: 260 }} />
             <Select placeholder="状态筛选" allowClear style={{ width: 130 }} value={statusFilter}
               onChange={v => { setStatusFilter(v); setPage(1) }}
