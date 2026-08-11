@@ -144,7 +144,8 @@ export default function SalesOrderManagement({ user, companies = [] }) {
       const res = await api.get(`/erp/sales-orders/${record.sales_id}`, { params })
       const detail = res.data?.data || res.data
       form.setFieldsValue({
-        customerPo: detail.customer_po, customerId: detail.customer_id,
+        customerId: detail.customer_id,
+        soNumber: detail.so_number,
         orderDate: detail.order_date ? dayjs(detail.order_date) : null,
         expectedShipDate: detail.expected_ship_date ? dayjs(detail.expected_ship_date) : null,
         paymentStatus: detail.payment_status, notes: detail.notes
@@ -268,7 +269,8 @@ export default function SalesOrderManagement({ user, companies = [] }) {
       const validItems = dirty.filter(it => it.partId && it.orderedQty > 0)
       if (validItems.length === 0) { message.error('请至少修改一条物料明细'); return }
       const payload = {
-        customerPo: values.customerPo, customerId: values.customerId,
+        customerId: values.customerId,
+        soNumber: values.soNumber,
         orderDate: values.orderDate ? values.orderDate.format('YYYY-MM-DD') : null,
         expectedShipDate: values.expectedShipDate ? values.expectedShipDate.format('YYYY-MM-DD') : null,
         paymentStatus: values.paymentStatus, notes: values.notes,
@@ -499,7 +501,6 @@ export default function SalesOrderManagement({ user, companies = [] }) {
 
   const columns = [
     { title: '销售单号', dataIndex: 'so_number', width: 180 },
-    { title: '客户PO号', dataIndex: 'customer_po', width: 150, render: v => v ? <Text code>{v}</Text> : '-' },
     { title: '客户', dataIndex: 'customer_name', width: 120 },
     { title: '订单日期', dataIndex: 'order_date', width: 110, render: v => v || '-' },
     { title: '预计出货', dataIndex: 'expected_ship_date', width: 110, render: v => v || '-' },
@@ -536,7 +537,7 @@ export default function SalesOrderManagement({ user, companies = [] }) {
       <Content style={{ padding: 24, height: '100%', overflow: 'auto' }}>
         <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
           <Space>
-            <Input.Search placeholder="搜索销售单号/客户PO/料号" allowClear value={keyword}
+            <Input.Search placeholder="搜索销售单号/料号" allowClear value={keyword}
               onChange={e => setKeyword(e.target.value)} onSearch={() => { setPage(1); fetchOrders() }} style={{ width: 260 }} />
             <Select placeholder="状态筛选" allowClear style={{ width: 130 }} value={statusFilter}
               onChange={v => { setStatusFilter(v); setPage(1) }}
@@ -598,9 +599,10 @@ export default function SalesOrderManagement({ user, companies = [] }) {
           onCancel={() => { setShowModal(false); setEditing(null); form.resetFields(); setItems([emptyItem()]); setSelectedCustomerId(null); setCustomerPartMappings([]) }}>
           <Form form={form} layout="vertical">
             <Space wrap>
-              <Form.Item name="customerPo" label="客户订单号 (PO)" rules={[{ required: true, message: '客户订单号为必填项' }]}><Input placeholder="客户给的PO号，必填" style={{ width: 200 }} /></Form.Item>
               <Form.Item name="customerId" label="客户" rules={[{ required: true, message: '请选择' }]}>
                 <Select placeholder="先选择客户" style={{ width: 200 }} showSearch optionFilterProp="label" options={customers} onChange={handleCustomerChange} /></Form.Item>
+              <Form.Item name="soNumber" label="销售单号" rules={[{ required: false }]}>
+                <Input placeholder="客户单号，不填则系统自动生成" style={{ width: 200 }} /></Form.Item>
               <Form.Item name="orderDate" label="订单日期" rules={[{ required: true, message: '请选择订单日期' }]}><DatePicker style={{ width: 160 }} /></Form.Item>
               <Form.Item name="expectedShipDate" label="预计出货" rules={[{ required: true, message: '请选择预计出货日期' }]}><DatePicker style={{ width: 160 }} /></Form.Item>
               <Form.Item name="paymentStatus" label="付款状态" initialValue="UNPAID">
