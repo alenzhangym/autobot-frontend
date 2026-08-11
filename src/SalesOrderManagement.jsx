@@ -175,7 +175,7 @@ export default function SalesOrderManagement({ user, companies = [] }) {
         key: Date.now() + Math.random(),
         originalItemId: it.item_id || it.itemId || null,
         partType: null, customerPartNo: it.customer_part_no || '',
-        partId: it.part_id, partLabel: '',
+        partId: it.part_id, partLabel: it.model || '',
         orderedQty: it.ordered_qty, unitPrice: it.unit_price, taxInclusiveUnitPrice: it.tax_inclusive_unit_price, totalPrice: it.total_price,
         dirty: false,
       }))
