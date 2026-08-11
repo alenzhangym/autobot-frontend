@@ -29,6 +29,8 @@ export default function SalesOrderManagement({ user, companies = [] }) {
   const [keyword, setKeyword] = useState('')
   const [statusFilter, setStatusFilter] = useState(null)
   const [customerFilter, setCustomerFilter] = useState(null)
+  const [modelFilter, setModelFilter] = useState(null)
+  const [modelOptions, setModelOptions] = useState([])
 
   const [showModal, setShowModal] = useState(false)
   const [editing, setEditing] = useState(null)
@@ -60,6 +62,7 @@ export default function SalesOrderManagement({ user, companies = [] }) {
       if (keyword) params.keyword = keyword
       if (statusFilter) params.status = statusFilter
       if (customerFilter) params.customerId = customerFilter
+      if (modelFilter) params.model = modelFilter
       const res = await api.get('/erp/sales-orders', { params })
       // Handle ApiResult wrapper: { code, message, data }
       const apiData = res.data?.data || res.data || {}
@@ -68,9 +71,23 @@ export default function SalesOrderManagement({ user, companies = [] }) {
     } catch (e) {
       message.error('加载销售单失败: ' + (e.response?.data?.error || e.message))
     } finally { setLoading(false) }
-  }, [page, pageSize, keyword, statusFilter, customerFilter, effectiveCompanyId, isSuperAdmin])
+  }, [page, pageSize, keyword, statusFilter, customerFilter, modelFilter, effectiveCompanyId, isSuperAdmin])
 
   useEffect(() => { fetchOrders() }, [fetchOrders])
+
+  const fetchModelOptions = useCallback(async (text) => {
+    try {
+      const params = { keyword: text || '', size: 100 }
+      if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
+      const res = await api.get('/erp/parts', { params })
+      const partsPayload = res.data?.data || res.data || {}
+      const list = (partsPayload.parts || []).map(p => {
+        const model = p.userPartModel || ''
+        return model ? { value: model, label: model } : null
+      }).filter(Boolean)
+      setModelOptions(list)
+    } catch (e) { setModelOptions([]) }
+  }, [effectiveCompanyId, isSuperAdmin])
 
   const fetchCustomers = useCallback(async () => {
     try {
@@ -546,6 +563,11 @@ export default function SalesOrderManagement({ user, companies = [] }) {
               style={{ width: 180 }} value={customerFilter}
               onChange={v => { setCustomerFilter(v); setPage(1) }}
               options={customers} />
+            <Select placeholder="物料筛选" allowClear showSearch filterOption={false} style={{ width: 200 }} value={modelFilter}
+              onSearch={fetchModelOptions}
+              onFocus={() => fetchModelOptions('')}
+              onChange={v => { setModelFilter(v); setPage(1) }}
+              options={modelOptions} />
             <Button icon={<ReloadOutlined />} onClick={() => { setPage(1); fetchOrders() }}>刷新</Button>
           </Space>
           <Space>

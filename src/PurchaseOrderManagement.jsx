@@ -30,6 +30,8 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
   const [keyword, setKeyword] = useState('')
   const [statusFilter, setStatusFilter] = useState(null)
   const [supplierFilter, setSupplierFilter] = useState('')
+  const [modelFilter, setModelFilter] = useState(null)
+  const [modelOptions, setModelOptions] = useState([])
 
   const [showModal, setShowModal] = useState(false)
   const [editing, setEditing] = useState(null)
@@ -61,6 +63,7 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
       if (keyword) params.keyword = keyword
       if (statusFilter) params.status = statusFilter
       if (supplierFilter) params.supplierName = supplierFilter
+      if (modelFilter) params.model = modelFilter
       const res = await api.get('/erp/purchase-orders', { params })
       // res.data is ApiResult wrapper: { code, message, data }
       const apiData = res.data?.data || res.data || {}
@@ -69,9 +72,23 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
     } catch (e) {
       message.error('加载采购单失败: ' + (e.response?.data?.error || e.message))
     } finally { setLoading(false) }
-  }, [page, pageSize, keyword, statusFilter, supplierFilter, effectiveCompanyId, isSuperAdmin])
+  }, [page, pageSize, keyword, statusFilter, supplierFilter, modelFilter, effectiveCompanyId, isSuperAdmin])
 
   useEffect(() => { fetchOrders() }, [fetchOrders])
+
+  const fetchModelOptions = useCallback(async (text) => {
+    try {
+      const params = { keyword: text || '', size: 100 }
+      if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
+      const res = await api.get('/erp/parts', { params })
+      const partsPayload = res.data?.data || res.data || {}
+      const list = (partsPayload.parts || []).map(p => {
+        const model = p.userPartModel || ''
+        return model ? { value: model, label: model } : null
+      }).filter(Boolean)
+      setModelOptions(list)
+    } catch (e) { setModelOptions([]) }
+  }, [effectiveCompanyId, isSuperAdmin])
 
   const fetchParts = useCallback(async () => {
     try {
@@ -486,6 +503,11 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
             <Select placeholder="供应商筛选" allowClear showSearch optionFilterProp="label" style={{ width: 160 }} value={supplierFilter}
               onChange={v => { setSupplierFilter(v); setPage(1) }}
               options={suppliers} />
+            <Select placeholder="物料筛选" allowClear showSearch filterOption={false} style={{ width: 200 }} value={modelFilter}
+              onSearch={fetchModelOptions}
+              onFocus={() => fetchModelOptions('')}
+              onChange={v => { setModelFilter(v); setPage(1) }}
+              options={modelOptions} />
             <Select placeholder="状态筛选" allowClear style={{ width: 130 }} value={statusFilter}
               onChange={v => { setStatusFilter(v); setPage(1) }}
               options={Object.entries(STATUS_MAP).map(([k, v]) => ({ value: k, label: v.label }))} />
