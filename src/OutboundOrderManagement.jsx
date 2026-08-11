@@ -624,7 +624,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
       render: (v) => v || '-',
     },
     {
-      title: '操作', key: 'actions', width: 180, fixed: 'right',
+      title: '操作', key: 'actions', width: 240, fixed: 'right',
       render: (_, record) => {
         const s = record.status
         const wasShipped = s === 'CONFIRMED' || s === 'SHIPPED' || s === 'COMPLETED'
@@ -632,6 +632,13 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
         return (
           <Space size="small">
             {editable && <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(record)}>修改</Button>}
+            <Popconfirm
+              title="确认重新计算金额？"
+              description="将按明细行的单价/含税单价 × 数量重新计算并覆盖该出库单金额。"
+              okText="重算" cancelText="取消"
+              onConfirm={() => handleRecalcAmount(record.orderId)}>
+              <Button size="small" icon={<ReloadOutlined />}>重算金额</Button>
+            </Popconfirm>
             <Popconfirm
               title={`确认删除出库单 ${record.orderNumber}?`}
               description={wasShipped
@@ -736,6 +743,46 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
     }
   }
 
+  const handleRecalcAll = async () => {
+    setClearingAll(true)
+    try {
+      const res = await api.post(`/erp/outbound-orders/recalc-all-amount?companyId=${effectiveCompanyId || 0}`)
+      const r = res.data?.data || res.data || {}
+      const matched = r.matched || 0
+      const updated = r.updated || 0
+      const errors = r.errors || []
+      if (updated > 0) message.success(`已重算 ${updated}/${matched} 张出库单金额`)
+      else message.info('没有需要重算的出库单')
+      if (errors.length > 0) {
+        Modal.info({
+          title: '批量重算详情', width: 560,
+          content: (
+            <div style={{ maxHeight: 300, overflow: 'auto' }}>
+              {errors.map((e, i) => <div key={i} style={{ marginBottom: 4 }}>{e}</div>)}
+            </div>
+          )
+        })
+      }
+      fetchOrders()
+    } catch (e) {
+      message.error('批量重算失败: ' + (e.response?.data?.error || e.message))
+    } finally {
+      setClearingAll(false)
+    }
+  }
+
+  const handleRecalcAmount = async (id) => {
+    try {
+      const res = await api.post(`/erp/outbound-orders/${id}/recalc-amount?companyId=${effectiveCompanyId || 0}`)
+      const r = res.data?.data || res.data || {}
+      const total = r.total_amount != null ? Number(r.total_amount).toLocaleString() : '-'
+      message.success(`已重新计算金额: ${total}`)
+      fetchOrders()
+    } catch (e) {
+      message.error('重算金额失败: ' + (e.response?.data?.error || e.message))
+    }
+  }
+
   const handleExportFile = async (format) => {
     try {
       const values = await exportForm.validateFields()
@@ -794,6 +841,15 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
                 <Button danger icon={<DeleteOutlined />} loading={clearingAll}>一键清空</Button>
               </Popconfirm>
               <Button icon={<DownloadOutlined />} onClick={() => { exportForm.resetFields(); setExportOpen(true) }}>导出</Button>
+              <Popconfirm
+                title="确认批量重算全部出库单金额？"
+                description="将按明细行的单价/含税单价 × 数量重新计算并覆盖所有出库单金额，用于修复历史单据金额为0的问题。"
+                okText="重算" cancelText="取消"
+                onConfirm={handleRecalcAll}
+                okButtonProps={{ loading: clearingAll }}
+              >
+                <Button icon={<ReloadOutlined />} loading={clearingAll}>批量重算金额</Button>
+              </Popconfirm>
               <Button type="primary" icon={<PlusOutlined />} onClick={() => { setShowCreateModal(true); setItems([emptyItem()]); setSelectedCustId(null); setSalesOrders([]); setSelectedSoId(null) }}>新建出库单</Button>
               <Button icon={<ReloadOutlined />} onClick={fetchOrders}>刷新</Button>
             </Space>
