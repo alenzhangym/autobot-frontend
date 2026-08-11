@@ -96,7 +96,7 @@ export default function ReconciliationManagement({ user, companies = [] }) {
     const params = {}
     if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
     Promise.all([
-      api.get('/erp/customers', { params }).then(r => {
+      api.get('/erp/customers/all', { params }).then(r => {
         const customersData = r.data?.data || r.data || []
         setCustomers(Array.isArray(customersData) ? customersData : (customersData.customers || []))
       }).catch(() => {}),
@@ -293,18 +293,47 @@ export default function ReconciliationManagement({ user, companies = [] }) {
       fetchRecords()
       fetchPendingCount()
       if (completed > 0) {
-        Modal.confirm({
-          title: '批量对账完成',
-          content: `已为当前${partyLabel}完成 ${completed} 个对账单, 对账单明细已全部列出, 是否立即导出?`,
-          okText: '去导出', cancelText: '稍后',
-          onOk: () => openExportModal(),
-        })
+        // 直接按 客户/供应商名 + 当前日期时间 生成批次对账单号并导出 Excel, 无需再选日期
+        const statementNo = dayjs().format('YYYYMMDDHHmmss') + '-' + partyName
+        try {
+          await buildAndDownloadExcel(statementNo)
+          message.success(`批量对账完成 ${completed} 个, 已导出对账单 Excel (对账单号: ${statementNo})`)
+        } catch (e) {
+          message.error(`批量对账完成 ${completed} 个, 但导出对账单失败: ` + (e.response?.data?.error || e.message))
+        }
       }
     } catch (e) {
       message.error('批量对账失败: ' + (e.response?.data?.error || e.message))
     } finally {
       setReconciling(false)
     }
+  }
+
+  // 按当前筛选的客户/供应商直接导出对账单 Excel. 传入批次对账单号则整批统一使用该号.
+  const buildAndDownloadExcel = async (statementNo) => {
+    const today = dayjs().format('YYYY-MM-DD')
+    const params = {
+      recType: activeTab,
+      dateFrom: today,
+      dateTo: today,
+      format: 'xlsx',
+    }
+    if (statementNo) params.statementNo = statementNo
+    if (effectiveCompanyId) params.companyId = effectiveCompanyId
+    if (activeTab === 'OUTBOUND') params.customerName = partyName
+    else params.supplierName = partyName
+    const res = await api.get('/erp/reconciliations/export/file', { params, responseType: 'blob' })
+    const disposition = res.headers?.['content-disposition'] || ''
+    const match = disposition.match(/filename\*=UTF-8''([^;]+)/)
+    const filename = match ? decodeURIComponent(match[1]) : `对账单-${activeTab === 'OUTBOUND' ? '出库' : '入库'}.xlsx`
+    const url = window.URL.createObjectURL(new Blob([res.data]))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    window.URL.revokeObjectURL(url)
   }
 
   const openExportModal = () => {
