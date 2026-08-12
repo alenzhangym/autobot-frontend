@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Button, Menu, Avatar, Tooltip, Dropdown, Space, Tag } from 'antd';
-import { PlusOutlined, FileTextOutlined, DatabaseOutlined, LogoutOutlined, SettingOutlined, TeamOutlined, DeleteOutlined, PlayCircleOutlined, DownOutlined, ShopOutlined, FileSearchOutlined, CodeOutlined, MessageOutlined, SendOutlined, DashboardOutlined, InboxOutlined, ToolOutlined, UsergroupAddOutlined, CrownOutlined, LinkOutlined, UploadOutlined, SnippetsOutlined, ShoppingCartOutlined, AuditOutlined, SearchOutlined, ContainerOutlined, RocketOutlined, ApiOutlined, ReadOutlined, EditOutlined, ExperimentOutlined, BarChartOutlined } from '@ant-design/icons';
+import { PlusOutlined, FileTextOutlined, DatabaseOutlined, LogoutOutlined, SettingOutlined, TeamOutlined, DeleteOutlined, PlayCircleOutlined, DownOutlined, ShopOutlined, FileSearchOutlined, CodeOutlined, MessageOutlined, SendOutlined, DashboardOutlined, InboxOutlined, ToolOutlined, UsergroupAddOutlined, CrownOutlined, LinkOutlined, UploadOutlined, SnippetsOutlined, ShoppingCartOutlined, AuditOutlined, SearchOutlined, ContainerOutlined, RocketOutlined, ApiOutlined, ReadOutlined, EditOutlined, ExperimentOutlined, BarChartOutlined, RestOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useUserStore } from '../store/useUserStore';
 import api, { getLocalAgentBaseUrl } from '../auth';
@@ -256,6 +256,9 @@ export default function SessionSidebar({
                 { key: 'customer_part_mappings', icon: <LinkOutlined />, label: '客户料号映射' },
                 { key: 'import_product_relation', icon: <UploadOutlined />, label: '导入产品关系' },
                 { key: 'audit_logs', icon: <FileSearchOutlined />, label: '审计日志 (Admin)' },
+                ...((isSuperAdminFn(user) || isCompanyAdminFn(user)) ? [
+                  { key: 'recycle_bin', icon: <RestOutlined />, label: '回收站' },
+                ] : []),
                 { key: 'erp', icon: <ShopOutlined />, label: t('erp.dataManagement') },
                 { key: 'erp_metadata', icon: <ApiOutlined />, label: '元数据配置 (Admin)' },
               ]
