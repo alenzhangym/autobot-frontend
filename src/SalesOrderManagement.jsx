@@ -693,11 +693,11 @@ export default function SalesOrderManagement({ user, companies = [] }) {
           <Alert
             type="info" showIcon style={{ marginBottom: 12 }}
             message="支持 Excel (.xlsx/.xls)、CSV 或直接粘贴文本导入"
-            description="表格需包含以下列：客户名称、销售单号、下单日期、物料号、数量、单价。可选列：含税单价。系统按列名自动识别（列顺序不限）。一个销售单号对应多行物料记录时合并为一张销售单；客户不存在时自动创建。"
+            description="表格需包含以下列：客户名称、销售单号、下单日期、物料号、数量、单价。可选列：客户料号、含税单价。系统按列名自动识别（列顺序不限）。一个销售单号对应多行物料记录时合并为一张销售单；客户不存在时自动创建。"
           />
           <Input.TextArea
             rows={5}
-            placeholder={"在此粘贴表格内容（列头 + 数据行），例如：\n客户名称\t销售单号\t下单日期\t物料号\t数量\t单价\t含税单价\n深圳市华芯电子有限公司\tSO20260801-01\t2026/08/01\tHPC6045BMV-221M\t1000\t0.85\t0.93"}
+            placeholder={"在此粘贴表格内容（列头 + 数据行），例如：\n客户名称\t销售单号\t下单日期\t客户料号\t物料号\t数量\t单价\t含税单价\n深圳市华芯电子有限公司\tSO20260801-01\t2026/08/01\tHPC6021\tHPC6045BMV-221M\t1000\t0.85\t0.93"}
             value={importText}
             onChange={e => setImportText(e.target.value)}
             style={{ marginBottom: 12 }}
