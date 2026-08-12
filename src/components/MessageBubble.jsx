@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Light as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { Avatar, Button, Tooltip, Space, Tag, Collapse } from 'antd';
+import { Avatar, Button, Tooltip, Space, Tag, Collapse, Table } from 'antd';
 import { RobotOutlined, UserOutlined, CopyOutlined, CheckOutlined, CloseOutlined, ReloadOutlined, ExpandAltOutlined, LoadingOutlined, ClockCircleOutlined, ApartmentOutlined, LinkOutlined, BranchesOutlined, NodeIndexOutlined, ShareAltOutlined, DeleteOutlined, AppstoreOutlined, ExclamationCircleOutlined, BulbOutlined } from '@ant-design/icons';
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { extractDataStoreIds, isValidDataStoreResponse, fetchMissingDataFromServer, injectDataStoreData, decodeHtmlEntities, cleanScriptSrc, wrapUiHtml, isHtmlContent, MarkdownContent, extractTrailingStateJson, stripAgentMarkers, extractAnalysisState, tryParseAnalysisResult, decodeStateStringList } from '../utils/helpers.jsx';
@@ -24,6 +24,76 @@ const PRIORITY_TAG_COLOR = {
   P2: 'orange',
   P3: 'blue',
 };
+
+/** 单元格值友好化: null/undefined/空串 → "-", 对象 → JSON 串. */
+function formatCell(v) {
+  if (v === null || v === undefined || v === '') return '-'
+  if (typeof v === 'object') {
+    try { return JSON.stringify(v) } catch (_e) { return String(v) }
+  }
+  return String(v)
+}
+
+/** 明细子表: 渲染某一行展开后的 items 数组. */
+function ItemsTable({ items }) {
+  if (!Array.isArray(items) || items.length === 0) {
+    return <div style={{ color: '#9aa0a6', fontSize: 12, padding: '8px 4px' }}>无明细</div>
+  }
+  const cols = Object.keys(items[0]).map((k) => ({
+    title: k, dataIndex: k, key: k, ellipsis: true,
+    render: (v) => <span style={{ fontSize: 12 }}>{formatCell(v)}</span>,
+  }))
+  return (
+    <div style={{ padding: '4px 8px' }}>
+      <div style={{ color: '#9aa0a6', fontSize: 12, marginBottom: 6 }}>📋 物料明细 ({items.length} 条)</div>
+      <Table
+        size="small"
+        rowKey={(_, i) => i}
+        columns={cols}
+        dataSource={items}
+        pagination={false}
+        scroll={{ x: 'max-content' }}
+      />
+    </div>
+  )
+}
+
+/**
+ * 2026-08: ERP 查询结果的可展开表格组件.
+ * 后端通过 metadata.tableData 透传 { count, rows: [ { main, items } ] },
+ * 主表每行可展开查看该行对应的 items 明细, 替代直显原始 JSON 子结构.
+ */
+function StructuredDataTable({ data }) {
+  const { count, rows } = data || {}
+  if (!Array.isArray(rows) || rows.length === 0) return null
+  const firstMain = rows[0]?.main || {}
+  const columns = Object.keys(firstMain).map((k) => ({
+    title: k, dataIndex: k, key: k, ellipsis: true,
+    render: (v) => <span style={{ fontSize: 12 }}>{formatCell(v)}</span>,
+  }))
+  const dataSource = rows.map((r, i) => ({ key: i, ...(r.main || {}), _items: r.items || [] }))
+  return (
+    <div style={{ marginTop: 4 }}>
+      <div style={{ color: '#9aa0a6', fontSize: 12, marginBottom: 8 }}>
+        📊 查询结果 (共 {count ?? dataSource.length} 条) — 点击行展开查看物料明细
+      </div>
+      {columns.length > 0 ? (
+        <Table
+          size="small"
+          rowKey="key"
+          columns={columns}
+          dataSource={dataSource}
+          pagination={dataSource.length > 10 ? { pageSize: 10, size: 'small' } : false}
+          scroll={{ x: 'max-content' }}
+          expandable={{
+            expandedRowRender: (record) => <ItemsTable items={record._items} />,
+            rowExpandable: (record) => Array.isArray(record._items) && record._items.length > 0,
+          }}
+        />
+      ) : null}
+    </div>
+  )
+}
 
 /**
  * Normalise a message's timestamp into a short display string.
@@ -499,7 +569,11 @@ function MessageBubble({ msg, onCopy, onRegenerate, onExpand, onDelete, sessionI
             </div>
           ) : null}
           {!isUser && analysisState && <CodeAnalysisProgress state={analysisState} />}
-          {strippedContent && renderContent(strippedContent, analysisResult)}
+          {msg.tableData && !isUser ? (
+            <StructuredDataTable data={msg.tableData} />
+          ) : (
+            !!strippedContent && renderContent(strippedContent, analysisResult)
+          )}
           {msg.content && typeof msg.content === 'object' && !msg.content.plan && (
             msg.content.type === 'provenance_context'
               ? <ProvenanceContextView units={msg.content.units} />

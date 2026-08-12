@@ -2277,7 +2277,8 @@ function App() {
         const explanation = res.data?.metadata?.explanation
         const paramSources = res.data?.metadata?.paramSources
         const crossDomainEntities = res.data?.metadata?.crossDomainEntities
-        setMessages(prev => [...prev, normalizeMessage({ role: 'assistant', content: res.data.response, explanation, paramSources, crossDomainEntities })]);
+        const tableData = res.data?.metadata?.tableData
+        setMessages(prev => [...prev, normalizeMessage({ role: 'assistant', content: res.data.response, explanation, paramSources, crossDomainEntities, tableData })]);
         fetchSessions();
       } else {
         // 防御性: 与 /chat 同样, message 缺失时回退到 response
@@ -2534,7 +2535,9 @@ function App() {
         const crossDomainEntities = res.data?.metadata?.crossDomainEntities
         // P0-4: 提取已抽取参数, 供前端结构化展示/恢复使用
         const extractedParams = res.data?.metadata?.extractedParams
-        setMessages(prev => [...prev, normalizeMessage({ id: nextMsgId(), role: 'assistant', content: res.data.response, explanation, paramSources, crossDomainEntities, extractedParams })])
+        // 2026-08: ERP 查询结果含 items 明细列时, 后端透传结构化表格数据供可展开表格渲染
+        const tableData = res.data?.metadata?.tableData
+        setMessages(prev => [...prev, normalizeMessage({ id: nextMsgId(), role: 'assistant', content: res.data.response, explanation, paramSources, crossDomainEntities, extractedParams, tableData })])
         fetchSessions()
         // 阶段5: ERP 订单表单 — 收到 reply_context.formSpec 时弹窗
         tryOpenOrderFormModal(res.data)
