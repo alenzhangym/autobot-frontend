@@ -65,6 +65,8 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
   const [importResult, setImportResult] = useState(null)
   const [importUpdateStock, setImportUpdateStock] = useState(true)
   const [clearingAll, setClearingAll] = useState(false)
+  // 删除/批量删除时是否返还库存(把已出库数量加回库存). 用于确认弹窗中的勾选框.
+  const returnStockRef = useRef(false)
 
   // ── Substitute (替代物料) selector modal state ──
   const [subModal, setSubModal] = useState({ visible: false, target: null, model: '', subs: [], manual: [], sameType: [], partType: '', loading: false, query: '', freeQuery: '', freeResults: [], freeLoading: false })
@@ -405,14 +407,46 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
     }
   }
 
-  const handleDeleteDraft = async (orderId) => {
+  const handleDeleteDraft = async (orderId, restock) => {
     try {
-      await api.delete(`/erp/outbound-orders/${orderId}`)
-      message.success('已删除')
+      await api.delete(`/erp/outbound-orders/${orderId}`, { params: { restock: !!restock } })
+      message.success(restock ? '已删除并返还库存' : '已删除')
       fetchOrders()
     } catch (e) {
       message.error('删除失败: ' + (e.response?.data?.error || e.message))
+      throw e
     }
+  }
+
+  // 删除确认弹窗: 提醒 + 勾选"是否返还库存"
+  const openDeleteConfirm = (record, wasShipped) => {
+    returnStockRef.current = false
+    Modal.confirm({
+      title: `确认删除出库单 ${record.orderNumber}?`,
+      width: 500,
+      okText: '确认删除',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      content: (
+        <div>
+          <Alert
+            type="warning" showIcon
+            message={wasShipped ? '此单已扣减库存' : '删除后无法恢复'}
+            description={wasShipped
+              ? `勾选"返还库存"后，将把本单 ${record.orderNumber} 已出库的物料数量加回库存并更新库存数量。`
+              : '该出库单未扣减库存，删除仅移除单据记录。'}
+            style={{ marginBottom: 16 }}
+          />
+          <Checkbox
+            defaultChecked={false}
+            onChange={e => { returnStockRef.current = e.target.checked }}
+          >
+            返还库存（将已出库数量加回库存并更新库存数量）
+          </Checkbox>
+        </div>
+      ),
+      onOk: () => handleDeleteDraft(record.orderId, returnStockRef.current),
+    })
   }
 
   const openEdit = async (record) => {
@@ -639,17 +673,8 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
               onConfirm={() => handleRecalcAmount(record.orderId)}>
               <Button size="small" icon={<ReloadOutlined />}>重算金额</Button>
             </Popconfirm>
-            <Popconfirm
-              title={`确认删除出库单 ${record.orderNumber}?`}
-              description={wasShipped
-                ? '此单已扣减库存，删除将自动回补对应库存、撤销关联销售单发货数量。'
-                : '删除后无法恢复。'}
-              okText="确认删除"
-              okButtonProps={{ danger: true }}
-              cancelText="取消"
-              onConfirm={() => handleDeleteDraft(record.orderId)}>
-              <Button size="small" danger icon={<DeleteOutlined />}>删除</Button>
-            </Popconfirm>
+            <Button size="small" danger icon={<DeleteOutlined />}
+              onClick={() => openDeleteConfirm(record, wasShipped)}>删除</Button>
           </Space>
         )
       },
@@ -710,10 +735,10 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
     )
   }
 
-  const handleClearAll = async () => {
+  const handleClearAll = async (restock) => {
     setClearingAll(true)
     try {
-      const payload = {}
+      const payload = { restock: !!restock }
       if (filters.keyword) payload.keyword = filters.keyword
       const res = await api.post('/erp/outbound-orders/clear-all', payload)
       const result = res.data?.data || res.data || {}
@@ -722,7 +747,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
       const skipped = result.skipped || 0
       const errors = result.errors || []
       if (matched === 0) { message.info('没有匹配的出库单可清空') }
-      else if (deleted > 0 && skipped === 0) message.success(`已清空 ${deleted} 个出库单`)
+      else if (deleted > 0 && skipped === 0) message.success(restock ? `已清空 ${deleted} 个出库单并返还库存` : `已清空 ${deleted} 个出库单`)
       else if (deleted > 0 && skipped > 0) message.warning(`已删除 ${deleted} 个, 跳过 ${skipped} 个`)
       else if (deleted === 0 && skipped > 0) message.error(`未能删除任何出库单, 跳过 ${skipped} 个`)
       if (errors.length > 0) {
@@ -737,10 +762,43 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
       }
       fetchOrders()
     } catch (e) {
-      message.error('一键清空失败: ' + (e.response?.data?.error || e.message))
+      message.error('清空失败: ' + (e.response?.data?.error || e.message))
+      throw e
     } finally {
       setClearingAll(false)
     }
+  }
+
+  // 批量清空确认弹窗: 提醒 + 勾选"是否返还库存"
+  const openClearAllConfirm = () => {
+    returnStockRef.current = false
+    const parts = []
+    if (filters.keyword) parts.push(`客户料号≈${filters.keyword}`)
+    const cond = parts.length > 0 ? `（筛选: ${parts.join(', ')}）` : '（无筛选, 清空全部）'
+    Modal.confirm({
+      title: '一键清空出库单',
+      width: 500,
+      okText: '确认清空',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      content: (
+        <div>
+          <Alert
+            type="warning" showIcon
+            message="该操作将删除所有筛选出的出库单"
+            description={`将删除所有匹配的出库单${cond}, 删除后无法恢复. 勾选"返还库存"后, 将把已出库的物料数量加回库存并更新库存数量.`}
+            style={{ marginBottom: 16 }}
+          />
+          <Checkbox
+            defaultChecked={false}
+            onChange={e => { returnStockRef.current = e.target.checked }}
+          >
+            返还库存（将已出库数量加回库存并更新库存数量）
+          </Checkbox>
+        </div>
+      ),
+      onOk: () => handleClearAll(returnStockRef.current),
+    })
   }
 
   const handleRecalcAll = async () => {
@@ -826,20 +884,8 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
           <Col>
             <Space>
               <Button icon={<UploadOutlined />} onClick={openImport}>导入</Button>
-              <Popconfirm
-                title="一键清空出库单"
-                description={() => {
-                  const parts = []
-                  if (filters.keyword) parts.push(`客户料号≈${filters.keyword}`)
-                  const cond = parts.length > 0 ? `（筛选: ${parts.join(', ')}）` : '（无筛选, 清空全部）'
-                  return `将删除所有匹配的出库单并回退库存/销售单数量${cond}, 删除后无法恢复.`
-                }}
-                onConfirm={handleClearAll}
-                okText="清空" cancelText="取消"
-                okButtonProps={{ danger: true, loading: clearingAll }}
-              >
-                <Button danger icon={<DeleteOutlined />} loading={clearingAll}>一键清空</Button>
-              </Popconfirm>
+              <Button danger icon={<DeleteOutlined />} loading={clearingAll}
+                onClick={openClearAllConfirm}>一键清空</Button>
               <Button icon={<DownloadOutlined />} onClick={() => { exportForm.resetFields(); setExportOpen(true) }}>导出</Button>
               <Popconfirm
                 title="确认批量重算全部出库单金额？"

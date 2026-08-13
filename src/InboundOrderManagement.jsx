@@ -64,6 +64,8 @@ export default function InboundOrderManagement({ user, companies = [] }) {
   const [importResult, setImportResult] = useState(null)
   const [importUpdateStock, setImportUpdateStock] = useState(true)
   const [clearingAll, setClearingAll] = useState(false)
+  // 删除/批量删除时是否返还库存(把已入库数量扣减撤销). 用于确认弹窗中的勾选框.
+  const returnStockRef = useRef(false)
 
   useEffect(() => {
     (async () => {
@@ -109,7 +111,47 @@ export default function InboundOrderManagement({ user, companies = [] }) {
     catch (e) { message.error(e.response?.data?.error || '操作失败') }
   }
 
-  const handleDelete = async (id) => { try { await api.delete(`/erp/inbound-orders/${id}`); message.success('已删除'); fetchOrders() } catch (e) { message.error(e.response?.data?.error || '删除失败') } }
+  const handleDelete = async (id, restock) => {
+    try {
+      await api.delete(`/erp/inbound-orders/${id}`, { params: { restock: !!restock } })
+      message.success(restock ? '已删除并扣减库存' : '已删除')
+      fetchOrders()
+    } catch (e) {
+      message.error(e.response?.data?.error || '删除失败')
+      throw e
+    }
+  }
+
+  // 删除确认弹窗: 提醒 + 勾选"是否返还库存"
+  const openDeleteConfirm = (r, wasReceived) => {
+    returnStockRef.current = false
+    Modal.confirm({
+      title: `确认删除入库单 ${r.orderNumber}?`,
+      width: 500,
+      okText: '确认删除',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      content: (
+        <div>
+          <Alert
+            type="warning" showIcon
+            message={wasReceived ? '该入库单已到货入库' : '删除后无法恢复'}
+            description={wasReceived
+              ? `勾选"返还库存"后，将把本单 ${r.orderNumber} 已入库的物料数量从库存扣减（撤销入库）并更新库存数量。`
+              : '该入库单未到货，删除仅移除单据记录。'}
+            style={{ marginBottom: 16 }}
+          />
+          <Checkbox
+            defaultChecked={false}
+            onChange={e => { returnStockRef.current = e.target.checked }}
+          >
+            返还库存（将已入库数量从库存扣减并更新库存数量）
+          </Checkbox>
+        </div>
+      ),
+      onOk: () => handleDelete(r.inboundId, returnStockRef.current),
+    })
+  }
 
   const openEdit = async (order) => {
     try {
@@ -390,17 +432,8 @@ export default function InboundOrderManagement({ user, companies = [] }) {
             onConfirm={() => handleRecalcAmount(r.inboundId)}>
             <Button size="small" icon={<ReloadOutlined />}>重算金额</Button>
           </Popconfirm>
-          <Popconfirm
-            title={`确认删除入库单 ${r.orderNumber}?`}
-            description={(s === 'RECEIVED' || s === 'COMPLETED')
-              ? '入库单已到货，删除将自动扣减对应库存、撤销关联采购单收货数量。'
-              : '删除后无法恢复。'}
-            okText="确认删除"
-            okButtonProps={{ danger: true }}
-            cancelText="取消"
-            onConfirm={() => handleDelete(r.inboundId)}>
-            <Button size="small" danger icon={<DeleteOutlined />}>删除</Button>
-          </Popconfirm>
+          <Button size="small" danger icon={<DeleteOutlined />}
+            onClick={() => openDeleteConfirm(r, s === 'RECEIVED' || s === 'COMPLETED')}>删除</Button>
         </Space>)
       }},
   ]
@@ -436,10 +469,10 @@ export default function InboundOrderManagement({ user, companies = [] }) {
     </div>)
   }
 
-  const handleClearAll = async () => {
+  const handleClearAll = async (restock) => {
     setClearingAll(true)
     try {
-      const payload = {}
+      const payload = { restock: !!restock }
       if (filters.supplierName) payload.supplierName = filters.supplierName
       const res = await api.post('/erp/inbound-orders/clear-all', payload)
       const result = res.data?.data || res.data || {}
@@ -448,7 +481,7 @@ export default function InboundOrderManagement({ user, companies = [] }) {
       const skipped = result.skipped || 0
       const errors = result.errors || []
       if (matched === 0) { message.info('没有匹配的入库单可清空') }
-      else if (deleted > 0 && skipped === 0) message.success(`已清空 ${deleted} 个入库单`)
+      else if (deleted > 0 && skipped === 0) message.success(restock ? `已清空 ${deleted} 个入库单并扣减库存` : `已清空 ${deleted} 个入库单`)
       else if (deleted > 0 && skipped > 0) message.warning(`已删除 ${deleted} 个, 跳过 ${skipped} 个`)
       else if (deleted === 0 && skipped > 0) message.error(`未能删除任何入库单, 跳过 ${skipped} 个`)
       if (errors.length > 0) {
@@ -464,9 +497,40 @@ export default function InboundOrderManagement({ user, companies = [] }) {
       fetchOrders()
     } catch (e) {
       message.error('一键清空失败: ' + (e.response?.data?.error || e.message))
+      throw e
     } finally {
       setClearingAll(false)
     }
+  }
+
+  // 批量清空确认弹窗: 提醒 + 勾选"是否返还库存"
+  const openClearAllConfirm = () => {
+    returnStockRef.current = false
+    const cond = filters.supplierName ? `（筛选: 供应商≈${filters.supplierName}）` : '（无筛选, 清空全部）'
+    Modal.confirm({
+      title: '一键清空入库单',
+      width: 500,
+      okText: '确认清空',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      content: (
+        <div>
+          <Alert
+            type="warning" showIcon
+            message="该操作将删除所有筛选出的入库单"
+            description={`将删除所有匹配的入库单${cond}, 删除后无法恢复. 勾选"返还库存"后, 将把已入库的物料数量从库存扣减（撤销入库）并更新库存数量.`}
+            style={{ marginBottom: 16 }}
+          />
+          <Checkbox
+            defaultChecked={false}
+            onChange={e => { returnStockRef.current = e.target.checked }}
+          >
+            返还库存（将已入库数量从库存扣减并更新库存数量）
+          </Checkbox>
+        </div>
+      ),
+      onOk: () => handleClearAll(returnStockRef.current),
+    })
   }
 
   const handleRecalcAll = async () => {
@@ -546,20 +610,8 @@ export default function InboundOrderManagement({ user, companies = [] }) {
       <Col><h2 style={{ color: '#e3e3e3', margin: 0 }}>采购入库单管理</h2></Col>
       <Col><Space>
         <Button icon={<UploadOutlined />} onClick={openImport}>历史导入</Button>
-        <Popconfirm
-          title="一键清空入库单"
-          description={() => {
-            const parts = []
-            if (filters.supplierName) parts.push(`供应商=${filters.supplierName}`)
-            const cond = parts.length > 0 ? `（筛选: ${parts.join(', ')}）` : '（无筛选, 清空全部）'
-            return `将删除所有匹配的入库单并回退库存/采购单数量${cond}, 删除后无法恢复.`
-          }}
-          onConfirm={handleClearAll}
-          okText="清空" cancelText="取消"
-          okButtonProps={{ danger: true, loading: clearingAll }}
-        >
-          <Button danger icon={<DeleteOutlined />} loading={clearingAll}>一键清空</Button>
-        </Popconfirm>
+        <Button danger icon={<DeleteOutlined />} loading={clearingAll}
+          onClick={openClearAllConfirm}>一键清空</Button>
         <Button icon={<DownloadOutlined />} onClick={() => { exportForm.resetFields(); setExportOpen(true) }}>导出</Button>
         <Popconfirm
           title="确认批量重算全部入库单金额？"
