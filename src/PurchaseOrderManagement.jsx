@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react'
-import { Layout, Table, Button, Modal, Form, Input, Select, Tag, Space, message, Popconfirm, InputNumber, Card, DatePicker, AutoComplete, Typography, Upload, Alert, Statistic, Row, Col } from 'antd'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
+import { Layout, Table, Button, Modal, Form, Input, Select, Tag, Space, message, Popconfirm, InputNumber, Card, DatePicker, AutoComplete, Typography, Upload, Alert, Statistic, Row, Col, Checkbox } from 'antd'
 import { PlusOutlined, ReloadOutlined, SearchOutlined, DeleteOutlined, EditOutlined, MinusCircleOutlined, UploadOutlined, InboxOutlined, DownloadOutlined } from '@ant-design/icons'
 import api from './auth'
 import dayjs from 'dayjs'
@@ -284,20 +284,44 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
     }
   }
 
-  const handleDelete = async (id) => {
-    try { await api.delete(`/erp/purchase-orders/${id}?companyId=${effectiveCompanyId || 0}`); message.success('已删除'); fetchOrders() }
-    catch (e) { message.error('删除失败: ' + (e.response?.data?.error || e.message)) }
+  const returnStockRef = useRef(false)
+
+  const handleDelete = async (id, restock) => {
+    try {
+      await api.delete(`/erp/purchase-orders/${id}?companyId=${effectiveCompanyId || 0}`, { params: { restock: !!restock } })
+      message.success(restock ? '已删除并返还库存' : '已删除')
+      fetchOrders()
+    } catch (e) { message.error('删除失败: ' + (e.response?.data?.error || e.message)) }
   }
-  const handleBatchDelete = async () => {
+  const openDeleteConfirm = (r) => {
+    returnStockRef.current = false
+    Modal.confirm({
+      title: `确认删除采购单 ${r.po_number}?`,
+      width: 500,
+      okText: '确认删除',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      content: (
+        <div>
+          <Alert type="warning" showIcon message="删除后无法恢复，关联入库单也会一并删除" description="勾选'返还库存'后，将把关联入库单已入库的物料数量从库存扣减（撤销入库）并更新库存数量。" style={{ marginBottom: 16 }} />
+          <Checkbox defaultChecked={false} onChange={e => { returnStockRef.current = e.target.checked }}>
+            返还库存（将关联入库单已入库数量从库存扣减并更新库存数量）
+          </Checkbox>
+        </div>
+      ),
+      onOk: () => handleDelete(r.purchase_id, returnStockRef.current),
+    })
+  }
+  const handleBatchDelete = async (restock) => {
     if (selectedRowKeys.length === 0) { message.warning('请先勾选要删除的采购单'); return }
     setBatchDeleting(true)
     try {
-      const res = await api.post(`/erp/purchase-orders/batch-delete?companyId=${effectiveCompanyId || 0}`, { purchaseIds: selectedRowKeys })
+      const res = await api.post(`/erp/purchase-orders/batch-delete?companyId=${effectiveCompanyId || 0}`, { purchaseIds: selectedRowKeys, ...(restock ? { restock: true } : {}) })
       const result = res.data?.data || res.data || {}
       const deleted = result.deleted || 0
       const skipped = result.skipped || 0
       const errors = result.errors || []
-      if (deleted > 0 && skipped === 0) message.success(`已批量删除 ${deleted} 个采购单`)
+      if (deleted > 0 && skipped === 0) message.success(restock ? `已批量删除 ${deleted} 个采购单并返还库存` : `已批量删除 ${deleted} 个采购单`)
       else if (deleted > 0 && skipped > 0) message.warning(`已删除 ${deleted} 个, 跳过 ${skipped} 个`)
       else if (deleted === 0 && skipped > 0) message.error(`未能删除任何采购单, 跳过 ${skipped} 个`)
       if (errors.length > 0) {
@@ -318,17 +342,38 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
       setBatchDeleting(false)
     }
   }
+  const openBatchDeleteConfirm = () => {
+    if (selectedRowKeys.length === 0) { message.warning('请先勾选要删除的采购单'); return }
+    returnStockRef.current = false
+    Modal.confirm({
+      title: `确认批量删除选中的 ${selectedRowKeys.length} 个采购单？将级联删除关联的入库单`,
+      width: 500,
+      okText: '确认删除',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      content: (
+        <div>
+          <Alert type="warning" showIcon message="批量删除采购单" description="勾选'返还库存'后，将把关联入库单已入库的物料数量从库存扣减（撤销入库）并更新库存数量。" style={{ marginBottom: 16 }} />
+          <Checkbox defaultChecked={false} onChange={e => { returnStockRef.current = e.target.checked }}>
+            返还库存（将关联入库单已入库数量从库存扣减并更新库存数量）
+          </Checkbox>
+        </div>
+      ),
+      onOk: () => handleBatchDelete(returnStockRef.current),
+    })
+  }
   const handleStatusChange = async (id, status) => {
     try { await api.put(`/erp/purchase-orders/${id}/status?companyId=${effectiveCompanyId || 0}`, { status }); message.success('状态已更新'); fetchOrders() }
     catch (e) { message.error('操作失败: ' + (e.response?.data?.error || e.message)) }
   }
-  const handleClearAll = async () => {
+  const handleClearAll = async (restock) => {
     setClearingAll(true)
     try {
       const payload = {}
       if (statusFilter) payload.status = statusFilter
       if (supplierFilter) payload.supplierName = supplierFilter
       if (keyword) payload.keyword = keyword
+      if (restock) payload.restock = true
       const res = await api.post(`/erp/purchase-orders/clear-all?companyId=${effectiveCompanyId || 0}`, payload)
       const result = res.data?.data || res.data || {}
       const matched = result.matched || 0
@@ -356,6 +401,30 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
     } finally {
       setClearingAll(false)
     }
+  }
+  const openClearAllConfirm = () => {
+    returnStockRef.current = false
+    const parts = []
+    if (statusFilter) parts.push(`状态=${STATUS_MAP[statusFilter]?.label || statusFilter}`)
+    if (supplierFilter) parts.push(`供应商≈${supplierFilter}`)
+    if (keyword) parts.push(`关键词≈${keyword}`)
+    const cond = parts.length > 0 ? `（筛选: ${parts.join(', ')}）` : '（无筛选, 清空全部）'
+    Modal.confirm({
+      title: '一键清空采购单',
+      width: 500,
+      okText: '确认清空',
+      okButtonProps: { danger: true, loading: clearingAll },
+      cancelText: '取消',
+      content: (
+        <div>
+          <Alert type="warning" showIcon message={`将删除所有匹配的采购单并级联删除关联的入库单${cond}`} description="勾选'返还库存'后，将把关联入库单已入库的物料数量从库存扣减（撤销入库）并更新库存数量。" style={{ marginBottom: 16 }} />
+          <Checkbox defaultChecked={false} onChange={e => { returnStockRef.current = e.target.checked }}>
+            返还库存（将关联入库单已入库数量从库存扣减并更新库存数量）
+          </Checkbox>
+        </div>
+      ),
+      onOk: () => handleClearAll(returnStockRef.current),
+    })
   }
 
   const handleRecalcAll = async () => {
@@ -480,15 +549,7 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
           <Button size="small" icon={<ReloadOutlined />}>重算金额</Button>
         </Popconfirm>
         <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)}>编辑</Button>
-        <Popconfirm
-          title={`确认删除采购单 ${r.po_number}?`}
-          description="删除后无法恢复，相关明细也会一并删除。"
-          okText="确认删除"
-          okButtonProps={{ danger: true }}
-          cancelText="取消"
-          onConfirm={() => handleDelete(r.purchase_id)}>
-          <Button size="small" danger icon={<DeleteOutlined />}>删除</Button>
-        </Popconfirm>
+        <Button size="small" danger icon={<DeleteOutlined />} onClick={() => openDeleteConfirm(r)}>删除</Button>
       </Space>
     )}
   ]
@@ -515,33 +576,11 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
           </Space>
           <Space>
             {selectedRowKeys.length > 0 && (
-              <Popconfirm
-                title={`确认批量删除选中的 ${selectedRowKeys.length} 个采购单？将级联删除关联的入库单`}
-                onConfirm={handleBatchDelete}
-                okText="删除" cancelText="取消"
-                okButtonProps={{ danger: true, loading: batchDeleting }}
-              >
-                <Button danger icon={<DeleteOutlined />} loading={batchDeleting}>
+              <Button danger icon={<DeleteOutlined />} loading={batchDeleting} onClick={openBatchDeleteConfirm}>
                   批量删除 ({selectedRowKeys.length})
-                </Button>
-              </Popconfirm>
+              </Button>
             )}
-            <Popconfirm
-              title="一键清空采购单"
-              description={() => {
-                const parts = []
-                if (statusFilter) parts.push(`状态=${STATUS_MAP[statusFilter]?.label || statusFilter}`)
-                if (supplierFilter) parts.push(`供应商≈${supplierFilter}`)
-                if (keyword) parts.push(`关键词≈${keyword}`)
-                const cond = parts.length > 0 ? `（筛选: ${parts.join(', ')}）` : '（无筛选, 清空全部）'
-                return `将删除所有匹配的采购单并级联删除关联的入库单${cond}, 删除后无法恢复.`
-              }}
-              onConfirm={handleClearAll}
-              okText="清空" cancelText="取消"
-              okButtonProps={{ danger: true, loading: clearingAll }}
-            >
-              <Button danger icon={<DeleteOutlined />} loading={clearingAll}>一键清空</Button>
-            </Popconfirm>
+            <Button danger icon={<DeleteOutlined />} loading={clearingAll} onClick={openClearAllConfirm}>一键清空</Button>
             <Popconfirm
               title="确认批量重算全部采购单金额？"
               description="将按明细行的含税单价/估价单价 × 数量重新计算并覆盖所有采购单金额，用于修复历史单据金额为0的问题。"
