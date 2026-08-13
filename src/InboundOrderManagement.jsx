@@ -424,7 +424,7 @@ export default function InboundOrderManagement({ user, companies = [] }) {
       render: (_, r) => {
         const s = r.status
         return (<Space size="small">
-          {s === 'DRAFT' && <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)}>编辑</Button>}
+          {(s === 'DRAFT' || s === 'RECEIVED') && <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)}>编辑</Button>}
           <Popconfirm
             title="确认重新计算金额？"
             description="将按明细行的单价/含税单价 × 数量重新计算并覆盖该入库单金额。"
@@ -762,7 +762,7 @@ export default function InboundOrderManagement({ user, companies = [] }) {
     </Modal>
 
     {/* ── Edit Modal ── */}
-    <Modal title="编辑入库单草稿" open={showEditModal} onOk={handleEditSave} onCancel={() => { setShowEditModal(false); setEditItems([]); setEditingOrder(null) }}
+    <Modal title="编辑入库单" open={showEditModal} onOk={handleEditSave} onCancel={() => { setShowEditModal(false); setEditItems([]); setEditingOrder(null) }}
       okText="保存" width={1000} destroyOnHidden>
       <Form form={editForm} layout="vertical">
         <Row gutter={16}>
