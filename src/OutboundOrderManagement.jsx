@@ -26,7 +26,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
   const [loading, setLoading] = useState(false)
-  const [filters, setFilters] = useState({ customerName: '', keyword: '', dateFrom: '', dateTo: '' })
+  const [filters, setFilters] = useState({ customerId: null, keyword: '', model: '', dateFrom: '', dateTo: '' })
   const [exportOpen, setExportOpen] = useState(false)
   const [exportForm] = Form.useForm()
   const [exporting, setExporting] = useState(false)
@@ -379,8 +379,9 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
     try {
       const params = {
         page, size: pageSize,
-        customerName: filters.customerName || undefined,
+        customerId: filters.customerId || undefined,
         keyword: filters.keyword || undefined,
+        model: filters.model || undefined,
         dateFrom: filters.dateFrom || undefined,
         dateTo: filters.dateTo || undefined,
       }
@@ -703,7 +704,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
                   <th style={{ padding: 8, textAlign: 'left' }}>序号</th>
                   <th style={{ padding: 8, textAlign: 'left' }}>客户料号</th>
                   <th style={{ padding: 8, textAlign: 'left' }}>物料编码</th>
-                  <th style={{ padding: 8, textAlign: 'right' }}>原库存</th>
+                  <th style={{ padding: 8, textAlign: 'right' }}>剩余库存</th>
                   <th style={{ padding: 8, textAlign: 'right' }}>数量</th>
                   <th style={{ padding: 8, textAlign: 'right' }}>单价</th>
                   <th style={{ padding: 8, textAlign: 'right' }}>小计</th>
@@ -740,6 +741,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
     try {
       const payload = { restock: !!restock }
       if (filters.keyword) payload.keyword = filters.keyword
+      if (filters.model) payload.model = filters.model
       const res = await api.post('/erp/outbound-orders/clear-all', payload)
       const result = res.data?.data || res.data || {}
       const matched = result.matched || 0
@@ -774,6 +776,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
     returnStockRef.current = false
     const parts = []
     if (filters.keyword) parts.push(`客户料号≈${filters.keyword}`)
+    if (filters.model) parts.push(`物料号≈${filters.model}`)
     const cond = parts.length > 0 ? `（筛选: ${parts.join(', ')}）` : '（无筛选, 清空全部）'
     Modal.confirm({
       title: '一键清空出库单',
@@ -906,10 +909,11 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
         <Card size="small" style={{ marginBottom: 16, background: '#141414', border: '1px solid #222' }}>
           <Row gutter={12} align="middle">
             <Col>
-              <Input
-                placeholder="客户名称" allowClear style={{ width: 140 }}
-                value={filters.customerName}
-                onChange={(e) => setFilters(f => ({ ...f, customerName: e.target.value }))}
+              <Select
+                placeholder="选择客户" allowClear showSearch optionFilterProp="label"
+                style={{ width: 160 }} value={filters.customerId}
+                onChange={(v) => setFilters(f => ({ ...f, customerId: v || null }))}
+                options={(customers || []).map(c => ({ value: c.customerId, label: c.name }))}
               />
             </Col>
             <Col>
@@ -917,6 +921,13 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
                 placeholder="客户料号" allowClear style={{ width: 140 }}
                 value={filters.keyword}
                 onChange={(e) => setFilters(f => ({ ...f, keyword: e.target.value }))}
+              />
+            </Col>
+            <Col>
+              <Input
+                placeholder="物料号" allowClear style={{ width: 160 }}
+                value={filters.model}
+                onChange={(e) => setFilters(f => ({ ...f, model: e.target.value }))}
               />
             </Col>
             <Col>
@@ -1040,7 +1051,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
                 <th style={{ padding: 4, width: 90 }}>客户料号</th>
                 <th style={{ padding: 4, width: 100 }}>型号</th>
                 <th style={{ padding: 4, width: 50 }}>替代</th>
-                <th style={{ padding: 4, width: 40 }}>原库存</th>
+                <th style={{ padding: 4, width: 40 }}>剩余库存</th>
                     <th style={{ padding: 4, width: 45 }}>替代库存</th>
                 <th style={{ padding: 4, width: 35 }}>订量</th>
                 <th style={{ padding: 4, width: 35 }}>已出</th>
@@ -1119,7 +1130,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
                     <th style={{ padding: 4, width: 100 }}>客户料号</th>
                     <th style={{ padding: 4, width: 110 }}>型号</th>
                     <th style={{ padding: 4, width: 60 }}>替代</th>
-                    <th style={{ padding: 4, width: 45 }}>原库存</th>
+                    <th style={{ padding: 4, width: 45 }}>剩余库存</th>
                 <th style={{ padding: 4, width: 50 }}>替代库存</th>
                     <th style={{ padding: 4, width: 40 }}>订量</th>
                     <th style={{ padding: 4, width: 40 }}>已出</th>
@@ -1234,7 +1245,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
                 <thead><tr style={{ borderBottom: '1px solid #333' }}>
                   <th style={{ padding: 6, textAlign: 'left' }}>型号</th>
                   <th style={{ padding: 6, textAlign: 'left' }}>厂家</th>
-                  <th style={{ padding: 6, textAlign: 'right' }}>原库存</th>
+                  <th style={{ padding: 6, textAlign: 'right' }}>剩余库存</th>
                   <th style={{ padding: 6, textAlign: 'right' }}>替库存</th>
                   <th style={{ padding: 6, textAlign: 'right' }}>单价</th>
                   <th style={{ padding: 6, textAlign: 'left' }}>来源</th>
