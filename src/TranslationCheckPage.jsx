@@ -122,8 +122,8 @@ export default function TranslationCheckPage({ user }) {
                   value={row.chinese}
                   onChange={e => updateRow(row.id, 'chinese', e.target.value)}
                   placeholder="中文原文（人工已修正，默认无误）"
-                  autoSize={{ minRows: 1, maxRows: 6 }}
-                  style={{ background: 'var(--ab-bg-2)', border: '1px solid var(--ab-line)', color: 'var(--ab-text)', borderRadius: 6, marginBottom: 8 }}
+                  autoSize={{ minRows: 3 }}
+                  style={{ width: '100%', background: 'var(--ab-bg-2)', border: '1px solid var(--ab-line)', color: 'var(--ab-text)', borderRadius: 6, marginBottom: 8, lineHeight: 1.6, resize: 'vertical' }}
                   onFocus={e => { e.currentTarget.style.borderColor = 'var(--ab-copper)'; e.currentTarget.style.boxShadow = '0 0 0 3px var(--ab-copper-glow)' }}
                   onBlur={e => { e.currentTarget.style.borderColor = 'var(--ab-line)'; e.currentTarget.style.boxShadow = 'none' }}
                 />
@@ -131,8 +131,8 @@ export default function TranslationCheckPage({ user }) {
                   value={row.english}
                   onChange={e => updateRow(row.id, 'english', e.target.value)}
                   placeholder="英文机翻（需核对修正）"
-                  autoSize={{ minRows: 1, maxRows: 6 }}
-                  style={{ background: 'var(--ab-bg-2)', border: '1px solid var(--ab-line)', color: 'var(--ab-text)', borderRadius: 6 }}
+                  autoSize={{ minRows: 3 }}
+                  style={{ width: '100%', background: 'var(--ab-bg-2)', border: '1px solid var(--ab-line)', color: 'var(--ab-text)', borderRadius: 6, lineHeight: 1.6, resize: 'vertical' }}
                   onFocus={e => { e.currentTarget.style.borderColor = 'var(--ab-copper)'; e.currentTarget.style.boxShadow = '0 0 0 3px var(--ab-copper-glow)' }}
                   onBlur={e => { e.currentTarget.style.borderColor = 'var(--ab-line)'; e.currentTarget.style.boxShadow = 'none' }}
                 />
