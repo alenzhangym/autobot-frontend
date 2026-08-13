@@ -896,7 +896,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
               >
                 <Button icon={<ReloadOutlined />} loading={clearingAll}>批量重算金额</Button>
               </Popconfirm>
-              <Button type="primary" icon={<PlusOutlined />} onClick={() => { setShowCreateModal(true); setItems([emptyItem()]); setSelectedCustId(null); setSalesOrders([]); setSelectedSoId(null) }}>新建出库单</Button>
+              <Button type="primary" icon={<PlusOutlined />} onClick={() => { createForm.resetFields(); setShowCreateModal(true); setItems([emptyItem()]); setSelectedCustId(null); setSalesOrders([]); setSelectedSoId(null) }}>新建出库单</Button>
               <Button icon={<ReloadOutlined />} onClick={fetchOrders}>刷新</Button>
             </Space>
           </Col>
@@ -987,7 +987,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
           title="新建出库单"
           open={showCreateModal}
           onOk={handleCreate}
-          onCancel={() => { setShowCreateModal(false); setItems([emptyItem()]); setSelectedCustId(null); setSalesOrders([]); setItemFilter('') }}
+          onCancel={() => { createForm.resetFields(); setShowCreateModal(false); setItems([emptyItem()]); setSelectedCustId(null); setSalesOrders([]); setItemFilter('') }}
           okText="创建"
           width={900}
           destroyOnHidden
