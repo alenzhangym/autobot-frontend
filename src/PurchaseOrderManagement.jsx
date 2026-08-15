@@ -3,6 +3,7 @@ import { Layout, Table, Button, Modal, Form, Input, Select, Tag, Space, message,
 import { PlusOutlined, ReloadOutlined, SearchOutlined, DeleteOutlined, EditOutlined, MinusCircleOutlined, UploadOutlined, InboxOutlined, DownloadOutlined } from '@ant-design/icons'
 import api from './auth'
 import dayjs from 'dayjs'
+import MissingPartsModal from './components/MissingPartsModal'
 import { isSuperAdmin as isSuperAdminFn } from './utils/permissions.js';
 
 const { Content } = Layout
@@ -54,6 +55,8 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState(null)
   const [importText, setImportText] = useState('')
+  const [missingParts, setMissingParts] = useState([])
+  const [showMissingParts, setShowMissingParts] = useState(false)
 
   const fetchOrders = useCallback(async () => {
     setLoading(true)
@@ -177,7 +180,9 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
       message.success('导入完成')
       fetchOrders()
     } catch (e) {
-      message.error('导入失败: ' + (e.response?.data?.error || e.message))
+      const mp = e.response?.data?.missingParts
+      if (Array.isArray(mp) && mp.length) { setMissingParts(mp); setShowMissingParts(true) }
+      else message.error('导入失败: ' + (e.response?.data?.error || e.message))
     } finally {
       setImporting(false)
     }
@@ -193,7 +198,9 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
       message.success('导入完成')
       fetchOrders()
     } catch (e) {
-      message.error('导入失败: ' + (e.response?.data?.error || e.message))
+      const mp = e.response?.data?.missingParts
+      if (Array.isArray(mp) && mp.length) { setMissingParts(mp); setShowMissingParts(true) }
+      else message.error('导入失败: ' + (e.response?.data?.error || e.message))
     } finally {
       setImporting(false)
     }
@@ -751,6 +758,8 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
             </Form.Item>
           </Form>
         </Modal>
+
+        <MissingPartsModal open={showMissingParts} missingParts={missingParts} onClose={() => setShowMissingParts(false)} />
       </Content>
     </Layout>
   )

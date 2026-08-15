@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Layout, Table, Button, Modal, Form, Input, InputNumber, Select, AutoComplete, Tag, Space, message, DatePicker, Upload, Descriptions, Popconfirm, Row, Col, Card, Alert, Statistic, Checkbox } from 'antd'
 import { PlusOutlined, SendOutlined, ReloadOutlined, EyeOutlined, CheckOutlined, CloseOutlined, TruckOutlined, SearchOutlined, DeleteOutlined, EditOutlined, UploadOutlined, InboxOutlined, DownloadOutlined } from '@ant-design/icons'
 import api from './auth'
+import MissingPartsModal from './components/MissingPartsModal'
 import { isSuperAdmin as isSuperAdminFn } from './utils/permissions.js'
 
 const { Content } = Layout
@@ -64,6 +65,8 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState(null)
   const [importUpdateStock, setImportUpdateStock] = useState(true)
+  const [missingParts, setMissingParts] = useState([])
+  const [showMissingParts, setShowMissingParts] = useState(false)
   const [clearingAll, setClearingAll] = useState(false)
   // 删除/批量删除时是否返还库存(把已出库数量加回库存). 用于确认弹窗中的勾选框.
   const returnStockRef = useRef(false)
@@ -618,7 +621,9 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
       message.success('导入完成')
       fetchOrders()
     } catch (e) {
-      message.error('导入失败: ' + (e.response?.data?.error || e.message))
+      const mp = e.response?.data?.missingParts
+      if (Array.isArray(mp) && mp.length) { setMissingParts(mp); setShowMissingParts(true) }
+      else message.error('导入失败: ' + (e.response?.data?.error || e.message))
     } finally {
       setImporting(false)
     }

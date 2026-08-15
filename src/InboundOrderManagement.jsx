@@ -3,6 +3,7 @@ import { Layout, Table, Button, Modal, Form, Input, Select, AutoComplete, Tag, S
 import { PlusOutlined, InboxOutlined, ReloadOutlined, CheckOutlined, CloseOutlined, SearchOutlined, DeleteOutlined, EditOutlined, UploadOutlined, DownloadOutlined } from '@ant-design/icons'
 import api from './auth'
 import dayjs from 'dayjs'
+import MissingPartsModal from './components/MissingPartsModal'
 import { isSuperAdmin as isSuperAdminFn } from './utils/permissions.js';
 
 const { Content } = Layout
@@ -63,6 +64,8 @@ export default function InboundOrderManagement({ user, companies = [] }) {
   const [importing, setImporting] = useState(false)
   const [importResult, setImportResult] = useState(null)
   const [importUpdateStock, setImportUpdateStock] = useState(true)
+  const [missingParts, setMissingParts] = useState([])
+  const [showMissingParts, setShowMissingParts] = useState(false)
   const [clearingAll, setClearingAll] = useState(false)
   // 删除/批量删除时是否返还库存(把已入库数量扣减撤销). 用于确认弹窗中的勾选框.
   const returnStockRef = useRef(false)
@@ -396,7 +399,9 @@ export default function InboundOrderManagement({ user, companies = [] }) {
       message.success('导入完成')
       fetchOrders()
     } catch (e) {
-      message.error('导入失败: ' + (e.response?.data?.error || e.message))
+      const mp = e.response?.data?.missingParts
+      if (Array.isArray(mp) && mp.length) { setMissingParts(mp); setShowMissingParts(true) }
+      else message.error('导入失败: ' + (e.response?.data?.error || e.message))
     } finally {
       setImporting(false)
     }
@@ -919,5 +924,7 @@ export default function InboundOrderManagement({ user, companies = [] }) {
         </Form.Item>
       </Form>
     </Modal>
+
+    <MissingPartsModal open={showMissingParts} missingParts={missingParts} onClose={() => setShowMissingParts(false)} />
   </Content></Layout>)
 }
