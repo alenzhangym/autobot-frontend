@@ -1046,6 +1046,61 @@ app.post('/api/local/workspace/read', async (req, res) => {
     }
 });
 
+// ── Git diff (真实 git diff, 相对 HEAD) ───────────────────────────────
+// 供前端"查看代码/git diff"使用: 在目标文件所在仓库根执行
+//   git diff <base> -- <path>   (path 省略 = 整个仓库)
+// 返回统一 diff 文本 + 仓库根 + 退出码。execFile argv-only (无 shell),
+// 与 workspace/run 相同的安全边界。非 git 仓库返回 diff="" + repoRoot=null。
+app.post('/api/local/workspace/git_diff', (req, res) => {
+    const { path: target, base = 'HEAD', scope = 'file' } = req.body || {};
+    if (!target) return res.status(400).json({ error: 'path is required' });
+    try {
+        const targetPath = path.resolve(String(target));
+        if (!fs.existsSync(targetPath)) {
+            return res.status(404).json({ error: 'path not found: ' + targetPath });
+        }
+
+        // 向上找 .git, 定位仓库根
+        let repoRoot = null;
+        let cursor = fs.statSync(targetPath).isDirectory() ? targetPath : path.dirname(targetPath);
+        for (;;) {
+            if (fs.existsSync(path.join(cursor, '.git'))) { repoRoot = cursor; break; }
+            const parent = path.dirname(cursor);
+            if (parent === cursor) break;
+            cursor = parent;
+        }
+        if (!repoRoot) {
+            return res.json({ diff: '', repoRoot: null, exit_code: 0, message: 'not a git repo' });
+        }
+
+        const baseArg = String(base || 'HEAD');
+        // scope=file → 只 diff 该路径; scope=repo → diff 整个仓库
+        const gitArgs = ['diff', baseArg];
+        if (scope === 'file') {
+            // 目标若是目录, 退化为该目录内改动
+            const rel = path.relative(repoRoot, targetPath);
+            gitArgs.push('--', rel.replace(/\\/g, '/'));
+        }
+
+        console.log(`[Local Agent] git_diff: git ${gitArgs.join(' ')} (repo=${repoRoot})`);
+        execFile('git', gitArgs, {
+            cwd: repoRoot,
+            timeout: 30_000,
+            maxBuffer: 8 * 1024 * 1024,
+            windowsHide: true,
+        }, (error, stdout, stderr) => {
+            const exitCode = error && typeof error.code === 'number' ? error.code : (error ? 1 : 0);
+            if (error && !stdout) {
+                // 非 git 仓库 / git 不可用 → 返回空 diff 而非 500, 前端友好降级
+                return res.json({ diff: '', repoRoot, exit_code: exitCode, stderr: String(stderr || '') });
+            }
+            res.json({ diff: String(stdout || ''), repoRoot, exit_code: exitCode });
+        });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 app.post('/api/local/workspace/scan', (req, res) => {
     const { path: rootPath, maxDepth = 4, extensions } = req.body;
     if (!rootPath) return res.status(400).json({ error: 'path is required' });

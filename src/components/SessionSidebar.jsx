@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Button, Menu, Avatar, Tooltip, Dropdown, Space, Tag } from 'antd';
-import { PlusOutlined, FileTextOutlined, DatabaseOutlined, LogoutOutlined, SettingOutlined, TeamOutlined, DeleteOutlined, PlayCircleOutlined, DownOutlined, ShopOutlined, FileSearchOutlined, CodeOutlined, MessageOutlined, SendOutlined, DashboardOutlined, InboxOutlined, ToolOutlined, UsergroupAddOutlined, CrownOutlined, LinkOutlined, UploadOutlined, SnippetsOutlined, ShoppingCartOutlined, AuditOutlined, SearchOutlined, ContainerOutlined, RocketOutlined, ApiOutlined, ReadOutlined, EditOutlined, ExperimentOutlined, BarChartOutlined, RestOutlined } from '@ant-design/icons';
+import { PlusOutlined, FileTextOutlined, DatabaseOutlined, LogoutOutlined, SettingOutlined, TeamOutlined, DeleteOutlined, PlayCircleOutlined, DownOutlined, ShopOutlined, FileSearchOutlined, CodeOutlined, MessageOutlined, SendOutlined, DashboardOutlined, InboxOutlined, ToolOutlined, UsergroupAddOutlined, CrownOutlined, LinkOutlined, UploadOutlined, SnippetsOutlined, ShoppingCartOutlined, AuditOutlined, SearchOutlined, ContainerOutlined, RocketOutlined, ApiOutlined, ReadOutlined, EditOutlined, ExperimentOutlined, BarChartOutlined, RestOutlined, StockOutlined } from '@ant-design/icons';
 import { useTranslation } from 'react-i18next';
 import { useUserStore } from '../store/useUserStore';
 import api, { getLocalAgentBaseUrl } from '../auth';
@@ -52,6 +52,8 @@ export default function SessionSidebar({
   const hasNovelChannel = CHANNELS.some(ch => ch.key === 'novel');
   // 2026-08-08: translation_check channel 网关 — 公司勾选后该公司用户可见"翻译核对"入口
   const hasTranslationCheckChannel = CHANNELS.some(ch => ch.key === 'translation_check');
+  // 2026-08-15: stock_monitor channel 网关 — 公司勾选后该公司用户可见"股票监控"入口
+  const hasStockMonitorChannel = CHANNELS.some(ch => ch.key === 'stock_monitor');
 
   // Probe monitor availability once on mount; cheap, no polling
   const [monitorAvailable, setMonitorAvailable] = useState(false)
@@ -222,6 +224,10 @@ export default function SessionSidebar({
           // 公司管理员在"公司管理"页勾选 novel channel 后, 该公司所有用户可见此入口
           ...(hasNovelChannel ? [
             { key: 'novel', icon: <EditOutlined />, label: '小说创作' },
+          ] : []),
+          // 2026-08-15: 股票监控入口 — 受 hasStockMonitorChannel 网关控制（公司管理页勾选）
+          ...(hasStockMonitorChannel ? [
+            { key: 'stock_monitor', icon: <StockOutlined />, label: '股票监控' },
           ] : []),
           // 2026-08-08: 翻译核对入口 — 受 hasTranslationCheckChannel 网关控制
           // 公司管理员在"公司管理"页勾选 translation_check channel 后, 该公司所有用户可见此入口

@@ -69,11 +69,13 @@ import GraphStatusPanel from './components/GraphStatusPanel'
 import LspSettingsPanel from './components/LspSettingsPanel'
 import McpSettingsPanel from './components/McpSettingsPanel'
 import CodeGraphExplorer from './components/CodeGraphExplorer'
+import CodePreviewDrawer from './components/CodePreviewDrawer'
 import IntentCorrectionFloater from './components/IntentCorrectionFloater'
 import ReVerifyProgressToast from './components/ReVerifyProgressToast'
 import AcademicResearchPage from './AcademicResearchPage'
 import AcademicStatsPage from './AcademicStatsPage'
 import NovelPage from './NovelPage'
+import StockMonitorPage from './StockMonitorPage'
 import TranslationCheckPage from './TranslationCheckPage'
 import LlmManagement from './LlmManagement'
 import { useUserStore } from './store/useUserStore'
@@ -862,6 +864,8 @@ function App() {
   const [clarifyLoading, setClarifyLoading] = useState(false)
   const [isResumingCodeSession, setIsResumingCodeSession] = useState(false)
   const [graphDrawerOpen, setGraphDrawerOpen] = useState(false) // P7-6: 会话内图知识库 Drawer
+  // 代码预览 Drawer（点击"定位代码" / "Git Diff" 打开）: { open, filePath, line, tab }
+  const [codePreview, setCodePreview] = useState({ open: false, filePath: '', line: 0, tab: 'file', titlePrefix: '' })
   const [isParsingHistory, setIsParsingHistory] = useState(false)
   const [wsBrowsePath, setWsBrowsePath] = useState(getInitialBrowsePath())
   const [wsBrowseEntries, setWsBrowseEntries] = useState([])
@@ -2087,6 +2091,13 @@ function App() {
     // Don't create new session, just update workspace for current session
     syncWorkspaceTreeSilently(newDir, 'workspace-change')
   }
+
+  // 打开代码预览 Drawer（定位代码 / 查看 Git Diff）。
+  // filePath 为 issue.filePath（相对路径），由 Drawer 结合 workspaceDir 解析。
+  const openCodePreview = useCallback((filePath, line, tab = 'file', titlePrefix = '') => {
+    if (!filePath) return
+    setCodePreview({ open: true, filePath, line: line || 0, tab, titlePrefix })
+  }, [])
 
   const loadWsBrowse = async (path) => {
     setWsBrowsePath(path || (isWindows() ? '磁盘根目录' : '/'))
@@ -3476,6 +3487,10 @@ const handleDeleteSession = (id) => {
             <Content style={{ background: '#0a0a0a', overflow: 'auto' }}>
               <NovelPage user={user} />
             </Content>
+          ) : activeTab === 'stock_monitor' ? (
+            <Content style={{ background: '#0a0a0a', overflow: 'auto' }}>
+              <StockMonitorPage user={user} />
+            </Content>
           ) : activeTab === 'translation_check' ? (
             <Content style={{ background: 'var(--ab-bg)', overflow: 'hidden' }}>
               <TranslationCheckPage user={user} />
@@ -4042,14 +4057,16 @@ const handleDeleteSession = (id) => {
                     sessionId={sessionId}
                     workspaceDir={workspaceDir}
                     onJumpToFile={(filePath, line) => {
-                      // The chat UI does not own the WorkspacePanel; just
-                      // show the path in a transient notification so the
-                      // user knows what to open. A future iteration can
-                      // mount WorkspacePanel here and call jumpToFile().
+                      // 提示位置 + 打开代码文件（右侧滑出 Drawer 展示并定位到行）
                       message.info(
                         line ? `${filePath}:${line}` : (filePath || 'No file path'),
                         2
                       )
+                      openCodePreview(filePath, line, 'file')
+                    }}
+                    onViewGitDiff={(filePath) => {
+                      // 修复后查看真实 git diff（右侧滑出 Drawer 的 Git Diff 页）
+                      openCodePreview(filePath, 0, 'diff', '修复后的改动')
                     }}
                     onInjectAssistantMessage={(content) => {
                       // Inject a synthetic assistant message containing
@@ -4276,6 +4293,16 @@ const handleDeleteSession = (id) => {
           <CodeGraphExplorer workspaceId={sessionId} />
         </Space>
       </Drawer>
+      {/* 代码预览 Drawer：点击"定位代码"打开文件并定位行；已修复 issue 可查看真实 git diff */}
+      <CodePreviewDrawer
+        open={codePreview.open}
+        onClose={() => setCodePreview(prev => ({ ...prev, open: false }))}
+        filePath={codePreview.filePath}
+        line={codePreview.line}
+        workspaceDir={workspaceDir}
+        initialTab={codePreview.tab}
+        titlePrefix={codePreview.titlePrefix}
+      />
       <DocumentPreviewModal />
     </ConfigProvider>
   )

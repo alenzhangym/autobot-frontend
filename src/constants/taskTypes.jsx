@@ -27,6 +27,7 @@ import {
   SearchOutlined,
   ReadOutlined,
   EditOutlined,
+  StockOutlined,
 } from '@ant-design/icons';
 
 // 任务类型 key（与后端 TaskType 枚举值完全一致）
@@ -138,6 +139,22 @@ export const CHANNELS = [
     subType: null,
     isPageOnly: true,
     capabilities: ['逐句配对', '特殊标签约束', '关键/非关键错误标注'],
+    agentNames: [],
+  },
+  // 2026-08-15: 股票监控 channel — 按公司授权开通
+  // isPageOnly=true: 仅作为菜单 tab, 不出现在"新建会话"下拉
+  // isBaseDefault 未设置: 公司需在管理页显式勾选"stock_monitor"channel 才能授权用户访问
+  // 授权后用户在侧栏看到"股票监控"入口, 进入 StockMonitorPage（东方财富行情/提醒/LLM分析）
+  {
+    key: 'stock_monitor',
+    label: '股票监控',
+    desc: '东方财富行情监控与买卖提醒',
+    icon: '📈',
+    antIcon: <StockOutlined />,
+    taskType: null,
+    subType: null,
+    isPageOnly: true,
+    capabilities: ['行情监控', '买卖/做T/止损提醒', 'K线图', 'LLM 详细分析'],
     agentNames: [],
   },
 ];

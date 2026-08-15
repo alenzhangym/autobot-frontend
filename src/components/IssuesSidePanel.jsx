@@ -4,7 +4,7 @@ import {
   CheckCircleOutlined, CloseCircleOutlined, MinusCircleOutlined,
   FileTextOutlined, ReloadOutlined, FolderOpenOutlined, ToolOutlined,
   LoadingOutlined, StopOutlined, QuestionCircleOutlined,
-  BranchesOutlined, DisconnectOutlined, DeleteOutlined, MoreOutlined
+  BranchesOutlined, DisconnectOutlined, DeleteOutlined, MoreOutlined, DiffOutlined
 } from '@ant-design/icons'
 import api, { getBackendHost } from '../auth'
 import FixSummaryCard from './FixSummaryCard'
@@ -26,7 +26,7 @@ const STATUS_TAG = {
   ignored:     { color: 'warning', icon: <CloseCircleOutlined />, label: '已忽略' }
 }
 
-export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile, onInjectAssistantMessage, onFixIssueMessageUpdated }) {
+export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile, onViewGitDiff, onInjectAssistantMessage, onFixIssueMessageUpdated }) {
   const [filter, setFilter] = useState('open')   // 'open' | 'in_progress' | 'all' | 'fixed' | 'ignored'
   // S7: 列表 + 自适应轮询 走 useIssueList
   const { issues, setIssues, loading, refresh } = useIssueList({ sessionId })
@@ -603,6 +603,7 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
                 busy={busyId === issue.issueId}
                 deleting={deletingId === issue.issueId}
                 onJump={() => onJumpToFile && onJumpToFile(issue.filePath, issue.lineNumber)}
+                onViewGitDiff={() => onViewGitDiff && onViewGitDiff(issue.filePath)}
                 onStartFix={() => startFix(issue)}
                 onMarkFixed={() => updateStatus(issue, 'fixed')}
                 onMarkIgnored={() => updateStatus(issue, 'ignored')}
@@ -892,7 +893,7 @@ function emptyDescription(filter, counts) {
   return '该筛选下没有问题'
 }
 
-function IssueItem({ issue, busy, deleting, onJump, onStartFix, onMarkFixed, onMarkIgnored, onReopen, onDelete, onViewSummary, onViewStateMachine }) {
+function IssueItem({ issue, busy, deleting, onJump, onViewGitDiff, onStartFix, onMarkFixed, onMarkIgnored, onReopen, onDelete, onViewSummary, onViewStateMachine }) {
   const status = issue.status || 'open'
   const tag = STATUS_TAG[status] || STATUS_TAG.open
   const isResolved = status === 'fixed' || status === 'ignored'
@@ -986,7 +987,7 @@ function IssueItem({ issue, busy, deleting, onJump, onStartFix, onMarkFixed, onM
           </>
         )}
 
-        {/* fixed / ignored → 重新打开 + 可选的查看修复结果 / 状态机 */}
+        {/* fixed / ignored → 重新打开 + 可选的查看修复结果 / Git Diff / 状态机 */}
         {isResolved && (
           <>
             <Button size="small" loading={busy} onClick={busy ? undefined : onReopen}>
@@ -996,6 +997,13 @@ function IssueItem({ issue, busy, deleting, onJump, onStartFix, onMarkFixed, onM
               <Button size="small" type="link" onClick={onViewSummary}>
                 查看修复结果
               </Button>
+            )}
+            {canJump && onViewGitDiff && (
+              <Tooltip title="查看该文件相对 HEAD 的真实 git diff（修复后的改动）">
+                <Button size="small" icon={<DiffOutlined />} onClick={onViewGitDiff}>
+                  Git Diff
+                </Button>
+              </Tooltip>
             )}
             {onViewStateMachine && (
               <Tooltip title="查看状态机轨迹（含 REPLAN 回退）">
