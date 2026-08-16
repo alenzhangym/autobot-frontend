@@ -1,12 +1,12 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import {
   Card, Tag, Typography, Space, Button, Tooltip, Table, Empty, Spin,
-  Segmented, Modal, InputNumber, Input, Form, Popconfirm, Divider, message, Row, Col
+  Segmented, Modal, InputNumber, Input, Form, Popconfirm, Divider, message, Row, Col, Select
 } from 'antd'
 import {
   ReloadOutlined, CheckCircleFilled, CloseCircleFilled, CopyOutlined,
   LineChartOutlined, BellOutlined, FileSearchOutlined, RocketOutlined,
-  SettingOutlined, PlusOutlined, DeleteOutlined
+  SettingOutlined, PlusOutlined, DeleteOutlined, RobotOutlined, WalletOutlined
 } from '@ant-design/icons'
 import ReactMarkdown from 'react-markdown'
 import api from './auth'
@@ -47,9 +47,15 @@ export default function StockMonitorPage() {
   // 用户监控配置管理
   const [watchlist, setWatchlist] = useState([])
   const [cfgOpen, setCfgOpen] = useState(false)
-  const [cfgView, setCfgView] = useState('list')  // 'list' | 'form'
+  const [cfgView, setCfgView] = useState('list')  // 'list' | 'form' | 'profile'
   const [cfgSaving, setCfgSaving] = useState(false)
   const [cfgForm] = Form.useForm()
+  // 2026-08-16: LLM 自动配置 + 总体资金配置画像
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiResult, setAiResult] = useState(null)   // AI 生成的配置（展示用）
+  const [profile, setProfile] = useState({ total_capital: 0, max_position_pct: 20, risk_level: 'balanced', strategy: '' })
+  const [profileOpen, setProfileOpen] = useState(false)
+  const [profileForm] = Form.useForm()
 
   const countdownRef = useRef(10)
 
@@ -58,6 +64,13 @@ export default function StockMonitorPage() {
       const r = await api.get('/stock-monitor/watchlist')
       setWatchlist(Array.isArray(r.data) ? r.data : [])
     } catch (e) { setWatchlist([]) }
+  }, [])
+
+  const loadProfile = useCallback(async () => {
+    try {
+      const r = await api.get('/stock-monitor/profile')
+      setProfile(r.data || {})
+    } catch (e) { /* ignore */ }
   }, [])
 
   const loadAll = useCallback(async () => {
@@ -88,8 +101,9 @@ export default function StockMonitorPage() {
   useEffect(() => {
     loadAll()
     loadWatchlist()
+    loadProfile()
     api.get('/stock-monitor/portfolio').then(r => setPortfolio(r.data?.positions || {})).catch(() => {})
-  }, [loadAll, loadWatchlist])
+  }, [loadAll, loadWatchlist, loadProfile])
 
   // 10s 自动刷新倒计时
   useEffect(() => {
@@ -124,17 +138,12 @@ export default function StockMonitorPage() {
   }
 
   const openConfig = (item) => {
-    const buyRanges = item ? parseJsonSafe(item.buyRanges, []) : []
-    const sellRanges = item ? parseJsonSafe(item.sellRanges, []) : []
-    const tRange = item ? parseJsonSafe(item.tRange, null) : null
+    setAiResult(null)
+    // 2026-08-16: 仅需用户输入 代码/持仓数量/持仓成本；名称经行情 API 自动获取，
+    // 其余策略字段（action/买卖/做T/止损/加仓计划）由 LLM 自动生成。
     cfgForm.setFieldsValue({
-      id: item?.id, code: item?.code, name: item?.name, action: item?.action || 'watch',
+      id: item?.id, code: item?.code,
       holdings_shares: item?.holdingsShares, holdings_cost: item?.holdingsCost,
-      add_fund: item?.addFund, add_batches: item?.addBatches,
-      stop_loss: item?.stopLoss,
-      buy_ranges: Array.isArray(buyRanges) ? buyRanges : [],
-      sell_ranges: Array.isArray(sellRanges) ? sellRanges : [],
-      t_buy_low: tRange?.buy_low, t_sell_high: tRange?.sell_high, t_pct: tRange?.pct,
     })
     setCfgView('form')
     setCfgOpen(true)
@@ -142,10 +151,34 @@ export default function StockMonitorPage() {
 
   const openConfigList = () => {
     cfgForm.resetFields()
+    setAiResult(null)
     setCfgView('list')
     setCfgOpen(true)
   }
 
+  // LLM 自动配置：分析 资金画像+个股行情+大盘+消息+财报 后生成并保存策略
+  const autoGenerate = async () => {
+    let values
+    try { values = await cfgForm.validateFields() } catch (e) { return }
+    if (!values.code) { message.warning('请先填写股票代码'); return }
+    setAiLoading(true)
+    try {
+      const r = await api.post('/stock-monitor/watchlist/auto', {
+        code: values.code,
+        holdings_shares: values.holdings_shares || 0,
+        holdings_cost: values.holdings_cost || 0,
+      })
+      if (!r.data?.ok) { message.error(r.data?.msg || '自动配置失败'); return }
+      setAiResult(r.data)
+      message.success(`AI 已为 ${r.data.name}（${r.data.code}）生成并保存配置`)
+      await Promise.all([loadWatchlist(), loadAll()])
+    } catch (e) {
+      message.error('自动配置失败: ' + (e.response?.data?.message || e.message))
+    }
+    setAiLoading(false)
+  }
+
+  // 仅保存基础信息（代码 + 持仓），不覆盖 LLM 生成的策略字段
   const saveConfig = async () => {
     let values
     try { values = await cfgForm.validateFields() } catch (e) { return }
@@ -153,22 +186,12 @@ export default function StockMonitorPage() {
     try {
       const payload = {
         code: values.code,
-        name: values.name || values.code,
-        action: values.action || 'watch',
         holdings_shares: values.holdings_shares || 0,
         holdings_cost: values.holdings_cost || 0,
-        add_fund: values.add_fund || 0,
-        add_batches: values.add_batches || 1,
-        stop_loss: values.stop_loss ?? null,
-        buy_ranges: JSON.stringify(Array.isArray(values.buy_ranges) ? values.buy_ranges.filter(r => r && r.low) : []),
-        sell_ranges: JSON.stringify(Array.isArray(values.sell_ranges) ? values.sell_ranges.filter(r => r && r.low) : []),
-        t_range: (values.t_buy_low || values.t_sell_high)
-          ? JSON.stringify({ buy_low: values.t_buy_low, sell_high: values.t_sell_high, pct: values.t_pct || 0.3 })
-          : null,
       }
       const r = await api.post('/stock-monitor/watchlist', payload)
       if (!r.data?.ok) { message.error(r.data?.msg || '保存失败'); return }
-      message.success('监控配置已保存')
+      message.success('基础配置已保存')
       setCfgOpen(false)
       await Promise.all([loadWatchlist(), loadAll()])
       api.get('/stock-monitor/portfolio').then(rr => setPortfolio(rr.data?.positions || {})).catch(() => {})
@@ -176,6 +199,34 @@ export default function StockMonitorPage() {
       message.error('保存失败: ' + (e.response?.data?.message || e.message))
     }
     setCfgSaving(false)
+  }
+
+  // ── 总体资金配置画像（LLM 自动配置的资金约束）───────────────────
+  const openProfile = () => {
+    profileForm.setFieldsValue({
+      total_capital: profile.total_capital || 0,
+      max_position_pct: profile.max_position_pct || 20,
+      risk_level: profile.risk_level || 'balanced',
+      strategy: profile.strategy || '',
+    })
+    setProfileOpen(true)
+  }
+
+  const saveProfileCfg = async () => {
+    let v
+    try { v = await profileForm.validateFields() } catch (e) { return }
+    try {
+      const r = await api.post('/stock-monitor/profile', {
+        total_capital: v.total_capital || 0,
+        max_position_pct: v.max_position_pct || 20,
+        risk_level: v.risk_level || 'balanced',
+        strategy: v.strategy || '',
+      })
+      if (r.data?.ok) { message.success('总体资金配置已保存'); setProfileOpen(false); loadProfile() }
+      else message.error(r.data?.msg || '保存失败')
+    } catch (e) {
+      message.error('保存失败: ' + (e.response?.data?.message || e.message))
+    }
   }
 
   const deleteConfig = async (id) => {
@@ -559,18 +610,19 @@ export default function StockMonitorPage() {
       <Modal
         open={cfgOpen}
         onCancel={() => setCfgOpen(false)}
-        width={cfgView === 'form' ? 760 : 640}
-        title={cfgView === 'form' ? '监控股票配置' : '我的监控股票'}
+        width={cfgView === 'form' ? 720 : 720}
+        title={cfgView === 'form' ? '新增/编辑监控股票' : '我的监控股票'}
         footer={cfgView === 'form' ? [
           <Button key="back" onClick={() => setCfgView('list')}>返回列表</Button>,
-          <Button key="save" type="primary" loading={cfgSaving} onClick={saveConfig}>保存</Button>,
+          <Button key="save" loading={cfgSaving} onClick={saveConfig}>仅保存持仓</Button>,
         ] : null}
         styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}
       >
         {cfgView === 'list' ? (
           <>
-            <Space style={{ marginBottom: 12 }}>
+            <Space style={{ marginBottom: 12 }} wrap>
               <Button type="primary" size="small" icon={<PlusOutlined />} onClick={() => openConfig(null)}>新增监控股票</Button>
+              <Button size="small" icon={<WalletOutlined />} onClick={openProfile}>总体资金配置</Button>
               <Text type="secondary" style={{ fontSize: 12 }}>
                 已配置 {watchlist.length} 只；未配置时展示 .env 默认列表
               </Text>
@@ -582,17 +634,26 @@ export default function StockMonitorPage() {
                 size="small" rowKey="id" pagination={false} dataSource={watchlist}
                 columns={[
                   { title: '名称', dataIndex: 'name', render: (v, r) => <Text strong>{v}</Text> },
-                  { title: '代码', dataIndex: 'code', render: v => <Text code style={{ fontSize: 12 }}>{v}</Text> },
-                  { title: '方向', dataIndex: 'action', width: 60, render: v => {
+                  { title: '代码', dataIndex: 'code', width: 90, render: v => <Text code style={{ fontSize: 12 }}>{v}</Text> },
+                  { title: '方向', dataIndex: 'action', width: 64, render: v => {
                     const c = { buy: '#f5b301', sell: '#7aa2f7', watch: '#8b95a7' }[v] || '#8b95a7'
                     return <span style={{ color: c }}>{({ buy: '买入', sell: '卖出', watch: '观望' }[v] || v)}</span>
                   } },
-                  { title: '持有', key: 'holdings', width: 110, render: (_, r) => (
-                    <span style={{ fontFamily: 'monospace', fontSize: 12 }}>
-                      {r.holdingsShares > 0 ? `${r.holdingsShares}股 @${Number(r.holdingsCost).toFixed(3)}` : '--'}
-                    </span>
+                  { title: 'AI 策略（自动生成）', key: 'strategy', render: (_, r) => (
+                    <div style={{ fontSize: 12, lineHeight: 1.6 }}>
+                      <div style={{ color: '#8b95a7' }}>
+                        止损 <b style={{ color: '#e8ecf3', fontFamily: 'monospace' }}>{r.stopLoss ? Number(r.stopLoss).toFixed(2) : '--'}</b>
+                        {' '}· 加仓 <b style={{ color: '#e8ecf3', fontFamily: 'monospace' }}>{r.addFund > 0 ? `${Math.round(r.addFund)}元×${r.addBatches}批` : '--'}</b>
+                      </div>
+                      {fmtRangeList(parseJsonSafe(r.buyRanges, []), '买') && (
+                        <div style={{ color: '#f5b301' }}>{fmtRangeList(parseJsonSafe(r.buyRanges, []), '买')}</div>
+                      )}
+                      {fmtRangeList(parseJsonSafe(r.sellRanges, []), '卖') && (
+                        <div style={{ color: '#0ecb81' }}>{fmtRangeList(parseJsonSafe(r.sellRanges, []), '卖')}</div>
+                      )}
+                    </div>
                   ) },
-                  { title: '操作', key: 'ops', width: 120, render: (_, r) => (
+                  { title: '操作', key: 'ops', width: 110, render: (_, r) => (
                     <Space size={4}>
                       <Button size="small" type="link" onClick={() => openConfig(r)}>编辑</Button>
                       <Popconfirm title={`删除 ${r.name}（${r.code}）？`} onConfirm={() => deleteConfig(r.id)}>
@@ -605,109 +666,104 @@ export default function StockMonitorPage() {
             )}
           </>
         ) : (
-          <Form form={cfgForm} layout="vertical" size="small">
-            <Row gutter={12}>
-              <Col span={6}>
-                <Form.Item name="code" label="股票代码" rules={[{ required: true, message: '必填' }]}>
-                  <Input placeholder="如 600900" />
-                </Form.Item>
-              </Col>
-              <Col span={8}>
-                <Form.Item name="name" label="股票名称">
-                  <Input placeholder="如 长江电力（留空则用代码）" />
-                </Form.Item>
-              </Col>
-              <Col span={10}>
-                <Form.Item name="action" label="操作方向">
-                  <Input placeholder="buy/sell/watch" />
-                </Form.Item>
-              </Col>
-            </Row>
-            <Row gutter={12}>
-              <Col span={8}>
-                <Form.Item name="holdings_shares" label="持有数量（股）">
-                  <InputNumber min={0} step={100} style={{ width: '100%' }} />
-                </Form.Item>
-              </Col>
-              <Col span={8}>
-                <Form.Item name="holdings_cost" label="持仓成本价">
-                  <InputNumber min={0} step={0.001} style={{ width: '100%' }} />
-                </Form.Item>
-              </Col>
-              <Col span={8}>
-                <Form.Item name="stop_loss" label="止损价">
-                  <InputNumber min={0} step={0.01} style={{ width: '100%' }} />
-                </Form.Item>
-              </Col>
-            </Row>
-            <Row gutter={12}>
-              <Col span={12}>
-                <Form.Item name="add_fund" label="计划新增资金（元）">
-                  <InputNumber min={0} step={1000} style={{ width: '100%' }} />
-                </Form.Item>
-              </Col>
-              <Col span={12}>
-                <Form.Item name="add_batches" label="加仓分批次数">
-                  <InputNumber min={1} step={1} style={{ width: '100%' }} />
-                </Form.Item>
-              </Col>
-            </Row>
+          <>
+            <Form form={cfgForm} layout="vertical" size="small">
+              <Row gutter={12}>
+                <Col span={8}>
+                  <Form.Item name="code" label="股票代码" rules={[{ required: true, message: '必填' }]}>
+                    <Input placeholder="如 600900" />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item name="holdings_shares" label="持有数量（股）">
+                    <InputNumber min={0} step={100} style={{ width: '100%' }} />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item name="holdings_cost" label="持仓成本价">
+                    <InputNumber min={0} step={0.001} style={{ width: '100%' }} />
+                  </Form.Item>
+                </Col>
+              </Row>
+            </Form>
+            <Divider plain style={{ margin: '4px 0 12px', fontSize: 12 }}>
+              仅需填写 代码 / 持仓数量 / 持仓成本；股票名称经行情 API 自动获取，买卖/做T/止损/加仓计划由 LLM 依据「总体资金配置 + 个股行情 + 大盘行情 + 消息 + 财报」自动生成
+            </Divider>
+            <Button
+              type="primary" block icon={<RobotOutlined />} loading={aiLoading}
+              onClick={autoGenerate} style={{ marginBottom: 12 }}
+            >
+              {aiResult ? '重新生成 AI 策略' : 'AI 自动生成策略'}
+            </Button>
 
-            <Divider plain style={{ margin: '8px 0', fontSize: 12 }}>买入区间（可多行）</Divider>
-            <Form.List name="buy_ranges">
-              {(fields, { add, remove }) => (
-                <>
-                  {fields.map(({ key, name, ...rest }) => (
-                    <Space key={key} align="baseline" style={{ display: 'flex', marginBottom: 4 }} {...rest}>
-                      <Form.Item name={[name, 'low']} noStyle><InputNumber placeholder="low" step={0.01} style={{ width: 110 }} /></Form.Item>
-                      <Form.Item name={[name, 'high']} noStyle><InputNumber placeholder="high" step={0.01} style={{ width: 110 }} /></Form.Item>
-                      <Form.Item name={[name, 'level']} noStyle><Input placeholder="备注（如 首配加仓）" style={{ width: 160 }} /></Form.Item>
-                      <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={() => remove(name)} />
-                    </Space>
-                  ))}
-                  <Button size="small" type="dashed" icon={<PlusOutlined />} onClick={() => add({})}>加一行买入区间</Button>
-                </>
-              )}
-            </Form.List>
-
-            <Divider plain style={{ margin: '12px 0 8px', fontSize: 12 }}>卖出区间（可多行）</Divider>
-            <Form.List name="sell_ranges">
-              {(fields, { add, remove }) => (
-                <>
-                  {fields.map(({ key, name, ...rest }) => (
-                    <Space key={key} align="baseline" style={{ display: 'flex', marginBottom: 4 }} {...rest}>
-                      <Form.Item name={[name, 'low']} noStyle><InputNumber placeholder="low" step={0.01} style={{ width: 100 }} /></Form.Item>
-                      <Form.Item name={[name, 'high']} noStyle><InputNumber placeholder="high" step={0.01} style={{ width: 100 }} /></Form.Item>
-                      <Form.Item name={[name, 'pct']} noStyle><InputNumber placeholder="卖出比例" step={0.01} style={{ width: 100 }} /></Form.Item>
-                      <Form.Item name={[name, 'level']} noStyle><Input placeholder="备注" style={{ width: 120 }} /></Form.Item>
-                      <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={() => remove(name)} />
-                    </Space>
-                  ))}
-                  <Button size="small" type="dashed" icon={<PlusOutlined />} onClick={() => add({})}>加一行卖出区间</Button>
-                </>
-              )}
-            </Form.List>
-
-            <Divider plain style={{ margin: '12px 0 8px', fontSize: 12 }}>做T区间（箱体高抛低吸）</Divider>
-            <Row gutter={12}>
-              <Col span={8}>
-                <Form.Item name="t_buy_low" label="做T下沿（低吸）">
-                  <InputNumber min={0} step={0.01} style={{ width: '100%' }} />
-                </Form.Item>
-              </Col>
-              <Col span={8}>
-                <Form.Item name="t_sell_high" label="做T上沿（高抛）">
-                  <InputNumber min={0} step={0.01} style={{ width: '100%' }} />
-                </Form.Item>
-              </Col>
-              <Col span={8}>
-                <Form.Item name="t_pct" label="做T比例">
-                  <InputNumber min={0} max={1} step={0.01} style={{ width: '100%' }} />
-                </Form.Item>
-              </Col>
-            </Row>
-          </Form>
+            {aiResult && (
+              <div style={{ background: '#0f1622', border: '1px solid rgba(245,179,1,.35)', borderRadius: 8, padding: '12px 14px', fontSize: 12, lineHeight: 1.8 }}>
+                <div style={{ color: '#f5b301', fontWeight: 600, marginBottom: 6 }}>
+                  AI 生成配置 — {aiResult.name}（{aiResult.code}）
+                </div>
+                <div style={{ color: '#8b95a7' }}>
+                  方向：<b style={{ color: { buy: '#f5b301', sell: '#7aa2f7', watch: '#8b95a7' }[aiResult.action] }}>{({ buy: '买入', sell: '卖出', watch: '观望' }[aiResult.action])}</b>
+                  {' '}· 止损价：<b style={{ color: '#e8ecf3', fontFamily: 'monospace' }}>{aiResult.stop_loss ? Number(aiResult.stop_loss).toFixed(2) : '--'}</b>
+                  {' '}· 加仓：<b style={{ color: '#e8ecf3', fontFamily: 'monospace' }}>{Math.round(aiResult.add_fund || 0)}元 × {aiResult.add_batches || 1}批</b>
+                </div>
+                {aiResult.buy_ranges?.length > 0 && (
+                  <div style={{ color: '#f5b301' }}>买入区间：{fmtRangeList(aiResult.buy_ranges, '买')}</div>
+                )}
+                {aiResult.sell_ranges?.length > 0 && (
+                  <div style={{ color: '#0ecb81' }}>卖出区间：{fmtRangeList(aiResult.sell_ranges, '卖')}</div>
+                )}
+                {aiResult.t_range && (
+                  <div style={{ color: '#7aa2f7' }}>
+                    做T区间：低吸 {Number(aiResult.t_range.buy_low).toFixed(2)} / 高抛 {Number(aiResult.t_range.sell_high).toFixed(2)}（比例 {Math.round((aiResult.t_range.pct || 0) * 100)}%）
+                  </div>
+                )}
+                {aiResult.reason && <div style={{ color: '#8b95a7', marginTop: 4 }}>理由：{aiResult.reason}</div>}
+              </div>
+            )}
+          </>
         )}
+      </Modal>
+
+      {/* 总体资金配置画像（LLM 自动配置的资金约束） */}
+      <Modal
+        open={profileOpen}
+        onCancel={() => setProfileOpen(false)}
+        width={560}
+        title="总体资金配置"
+        footer={[
+          <Button key="cancel" onClick={() => setProfileOpen(false)}>取消</Button>,
+          <Button key="save" type="primary" onClick={saveProfileCfg}>保存</Button>,
+        ]}
+      >
+        <Text type="secondary" style={{ display: 'block', fontSize: 12, marginBottom: 12 }}>
+          此处配置的是你的总体资金与风险偏好；AI 生成个股买卖/止损/加仓策略时会读取本配置作为资金约束。
+        </Text>
+        <Form form={profileForm} layout="vertical" size="small">
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item name="total_capital" label="总可用资金（元）">
+                <InputNumber min={0} step={10000} style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="max_position_pct" label="单只最大仓位（%）">
+                <InputNumber min={1} max={100} step={5} style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item name="risk_level" label="风险偏好">
+            <Select
+              options={[
+                { value: 'conservative', label: '保守' },
+                { value: 'balanced', label: '稳健' },
+                { value: 'aggressive', label: '激进' },
+              ]}
+            />
+          </Form.Item>
+          <Form.Item name="strategy" label="策略偏好描述（可选）">
+            <Input.TextArea rows={3} placeholder="如：偏好低估值高股息，长线持有，回调分批建仓" />
+          </Form.Item>
+        </Form>
       </Modal>
     </div>
   )
@@ -718,6 +774,15 @@ function groupByDate(reports) {
   const groups = {}
   reports.forEach(r => { (groups[r.date] = groups[r.date] || []).push(r) })
   return Object.keys(groups).sort().reverse().map(date => ({ date, items: groups[date] }))
+}
+
+/** 区间列表摘要（如 "买: 10.0-10.5；买: 9.5-10.0"）。 */
+function fmtRangeList(ranges, prefix) {
+  if (!Array.isArray(ranges) || ranges.length === 0) return ''
+  const parts = ranges
+    .filter(r => r && (r.low !== undefined || r.high !== undefined))
+    .map(r => `${r.level ? r.level + ' ' : ''}${r.low ?? '-'}-${r.high ?? '-'}${r.pct != null ? `(${Math.round(r.pct * 100)}%)` : ''}`)
+  return parts.length ? `${prefix}: ${parts.join('；')}` : ''
 }
 
 /** API 成功率圆环。 */
