@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import {
   Card, Tag, Typography, Space, Button, Tooltip, Table, Empty, Spin,
-  Segmented, Modal, InputNumber, Input, Form, Popconfirm, Divider, message, Row, Col, Select
+  Segmented, Modal, InputNumber, Input, Form, Popconfirm, Divider, message, Row, Col, Select, Switch
 } from 'antd'
 import {
   ReloadOutlined, CheckCircleFilled, CloseCircleFilled, CopyOutlined,
@@ -53,7 +53,11 @@ export default function StockMonitorPage() {
   // 2026-08-16: LLM 自动配置 + 总体资金配置画像
   const [aiLoading, setAiLoading] = useState(false)
   const [aiResult, setAiResult] = useState(null)   // AI 生成的配置（展示用）
-  const [profile, setProfile] = useState({ total_capital: 0, max_position_pct: 20, risk_level: 'balanced', strategy: '' })
+  const [profile, setProfile] = useState({
+    total_capital: 0, max_position_pct: 20, risk_level: 'balanced', strategy: '',
+    llm_vs_rule_weight: 0.5, llm_sell_threshold: 0.6, slippage_rate: 0.01,
+    max_liquidity_pct: 0.05, correlation_threshold: 0.7, sector_enabled: true,
+  })
   const [profileOpen, setProfileOpen] = useState(false)
   const [profileForm] = Form.useForm()
 
@@ -208,6 +212,12 @@ export default function StockMonitorPage() {
       max_position_pct: profile.max_position_pct || 20,
       risk_level: profile.risk_level || 'balanced',
       strategy: profile.strategy || '',
+      llm_vs_rule_weight: profile.llm_vs_rule_weight ?? 0.5,
+      llm_sell_threshold: profile.llm_sell_threshold ?? 0.6,
+      slippage_rate: profile.slippage_rate ?? 0.01,
+      max_liquidity_pct: profile.max_liquidity_pct ?? 0.05,
+      correlation_threshold: profile.correlation_threshold ?? 0.7,
+      sector_enabled: profile.sector_enabled ?? true,
     })
     setProfileOpen(true)
   }
@@ -221,6 +231,12 @@ export default function StockMonitorPage() {
         max_position_pct: v.max_position_pct || 20,
         risk_level: v.risk_level || 'balanced',
         strategy: v.strategy || '',
+        llm_vs_rule_weight: v.llm_vs_rule_weight ?? null,
+        llm_sell_threshold: v.llm_sell_threshold ?? null,
+        slippage_rate: v.slippage_rate ?? null,
+        max_liquidity_pct: v.max_liquidity_pct ?? null,
+        correlation_threshold: v.correlation_threshold ?? null,
+        sector_enabled: v.sector_enabled ?? null,
       })
       if (r.data?.ok) { message.success('总体资金配置已保存'); setProfileOpen(false); loadProfile() }
       else message.error(r.data?.msg || '保存失败')
@@ -728,15 +744,15 @@ export default function StockMonitorPage() {
       <Modal
         open={profileOpen}
         onCancel={() => setProfileOpen(false)}
-        width={560}
-        title="总体资金配置"
+        width={680}
+        title="总体资金配置与监控参数"
         footer={[
           <Button key="cancel" onClick={() => setProfileOpen(false)}>取消</Button>,
           <Button key="save" type="primary" onClick={saveProfileCfg}>保存</Button>,
         ]}
       >
         <Text type="secondary" style={{ display: 'block', fontSize: 12, marginBottom: 12 }}>
-          此处配置的是你的总体资金与风险偏好；AI 生成个股买卖/止损/加仓策略时会读取本配置作为资金约束。
+          资金与风险偏好作为 AI 生成个股买卖/止损/加仓策略的资金约束；下方监控参数用于提醒与股数计算，留空则使用全局默认值。
         </Text>
         <Form form={profileForm} layout="vertical" size="small">
           <Row gutter={12}>
@@ -761,8 +777,46 @@ export default function StockMonitorPage() {
             />
           </Form.Item>
           <Form.Item name="strategy" label="策略偏好描述（可选）">
-            <Input.TextArea rows={3} placeholder="如：偏好低估值高股息，长线持有，回调分批建仓" />
+            <Input.TextArea rows={2} placeholder="如：偏好低估值高股息，长线持有，回调分批建仓" />
           </Form.Item>
+          <Divider style={{ margin: '8px 0' }} />
+          <Text type="secondary" style={{ display: 'block', fontSize: 12, margin: '4px 0 8px' }}>
+            监控计算参数（0~1 比例型；行业上下文开关留空则用全局默认）
+          </Text>
+          <Row gutter={12}>
+            <Col span={8}>
+              <Form.Item name="llm_vs_rule_weight" label="LLM 结论权重">
+                <InputNumber min={0} max={1} step={0.1} style={{ width: '100%' }} placeholder="0.5" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="llm_sell_threshold" label="LLM 卖出置信度阈值">
+                <InputNumber min={0} max={1} step={0.1} style={{ width: '100%' }} placeholder="0.6" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="slippage_rate" label="滑点率">
+                <InputNumber min={0} max={0.1} step={0.01} style={{ width: '100%' }} placeholder="0.01" />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={12}>
+            <Col span={8}>
+              <Form.Item name="max_liquidity_pct" label="单次成交占日均成交额上限">
+                <InputNumber min={0} max={1} step={0.01} style={{ width: '100%' }} placeholder="0.05" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="correlation_threshold" label="组合高相关性阈值">
+                <InputNumber min={0} max={1} step={0.05} style={{ width: '100%' }} placeholder="0.7" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="sector_enabled" label="行业/宏观上下文" valuePropName="checked">
+                <Switch checkedChildren="开" unCheckedChildren="关" />
+              </Form.Item>
+            </Col>
+          </Row>
         </Form>
       </Modal>
     </div>
