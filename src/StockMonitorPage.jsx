@@ -42,6 +42,7 @@ export default function StockMonitorPage() {
   const [countdown, setCountdown] = useState(10)
   const [loading, setLoading] = useState(true)
   const [reportModal, setReportModal] = useState(null)  // { title, content }
+  const [analyzingCode, setAnalyzingCode] = useState('')
   const [posEdit, setPosEdit] = useState(null)          // { shares, cost }
   const [posSaving, setPosSaving] = useState(false)
   // 用户监控配置管理
@@ -57,7 +58,6 @@ export default function StockMonitorPage() {
     total_capital: 0, max_position_pct: 20, risk_level: 'balanced', strategy: '',
     llm_vs_rule_weight: 0.5, llm_sell_threshold: 0.6, slippage_rate: 0.01,
     max_liquidity_pct: 0.05, correlation_threshold: 0.7, sector_enabled: true,
-    news_enabled: true, news_interval_minutes: 30, news_max_results: 5, news_llm_relevance: true,
   })
   const [profileOpen, setProfileOpen] = useState(false)
   const [profileForm] = Form.useForm()
@@ -219,10 +219,6 @@ export default function StockMonitorPage() {
       max_liquidity_pct: profile.max_liquidity_pct ?? 0.05,
       correlation_threshold: profile.correlation_threshold ?? 0.7,
       sector_enabled: profile.sector_enabled ?? true,
-      news_enabled: profile.news_enabled ?? true,
-      news_interval_minutes: profile.news_interval_minutes ?? 30,
-      news_max_results: profile.news_max_results ?? 5,
-      news_llm_relevance: profile.news_llm_relevance ?? true,
     })
     setProfileOpen(true)
   }
@@ -242,10 +238,6 @@ export default function StockMonitorPage() {
         max_liquidity_pct: v.max_liquidity_pct ?? null,
         correlation_threshold: v.correlation_threshold ?? null,
         sector_enabled: v.sector_enabled ?? null,
-        news_enabled: v.news_enabled ?? null,
-        news_interval_minutes: v.news_interval_minutes ?? null,
-        news_max_results: v.news_max_results ?? null,
-        news_llm_relevance: v.news_llm_relevance ?? null,
       })
       if (r.data?.ok) { message.success('总体资金配置已保存'); setProfileOpen(false); loadProfile() }
       else message.error(r.data?.msg || '保存失败')
@@ -301,6 +293,32 @@ export default function StockMonitorPage() {
       const rep = await api.get('/stock-monitor/report', { params: { file: path } })
       setReportModal({ title: '历史研报', content: rep.data?.content || '' })
     } catch (e) { /* ignore */ }
+  }
+
+  // 2026-08-17: 单股立即分析（历史K线+财报+相关行业新闻 → LLM）
+  const analyzeStock = async (code, name) => {
+    setAnalyzingCode(code)
+    try {
+      const r = await api.post('/stock-monitor/analyze', { code })
+      if (!r.data?.ok) { message.error(r.data?.msg || '分析失败'); return }
+      message.success(`「${name || code}」分析完成`)
+      // 刷新监控配置（LLM 已回写修正的仓位区间）
+      loadWatchlist()
+      // 刷新分析报告列表
+      try {
+        const an = await api.get('/stock-monitor/analysis')
+        setAnalysis(an.data?.reports || [])
+      } catch (e) { /* ignore */ }
+      // 展示新生成的报告
+      try {
+        const rep = await api.get('/stock-monitor/report', { params: { code } })
+        setReportModal({ title: `${name || code} 详细股价分析`, content: rep.data?.content || '（报告读取失败）' })
+      } catch (e) { message.warning('分析完成，报告读取失败'); }
+    } catch (e) {
+      message.error('分析失败: ' + (e.response?.data?.message || e.message))
+    } finally {
+      setAnalyzingCode('')
+    }
   }
 
   const copyText = (text) => {
@@ -365,6 +383,12 @@ export default function StockMonitorPage() {
       const label = { buy: '买入', sell: '卖出', watch: '观望' }[s.action] || s.action
       return <span style={{ color }}>{label}</span>
     } },
+    { title: '分析', key: 'analyze', align: 'center', width: 70, render: (_, s) => (
+      <Button size="small" loading={analyzingCode === s.code} icon={<RobotOutlined />}
+        onClick={(e) => { e.stopPropagation(); analyzeStock(s.code, s.name) }}>
+        分析
+      </Button>
+    ) },
   ]
 
   return (
@@ -826,30 +850,6 @@ export default function StockMonitorPage() {
               </Form.Item>
             </Col>
           </Row>
-          <Divider style={{ margin: '8px 0' }} />
-          <Text type="secondary" style={{ display: 'block', fontSize: 12, margin: '4px 0 8px' }}>
-            新闻搜索配置（后台按周期抓取行业/个股新闻；留空则用全局默认）
-          </Text>
-          <Row gutter={12}>
-            <Col span={8}>
-              <Form.Item name="news_enabled" label="启用新闻抓取" valuePropName="checked">
-                <Switch checkedChildren="开" unCheckedChildren="关" />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="news_interval_minutes" label="抓取周期（分钟）">
-                <InputNumber min={10} max={1440} step={10} style={{ width: '100%' }} placeholder="30" />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="news_llm_relevance" label="LLM 相关判定" valuePropName="checked">
-                <Switch checkedChildren="开" unCheckedChildren="关" />
-              </Form.Item>
-            </Col>
-          </Row>
-          <Form.Item name="news_max_results" label="每查询保留相关新闻条数">
-            <InputNumber min={1} max={20} step={1} style={{ width: '100%' }} placeholder="5" />
-          </Form.Item>
         </Form>
       </Modal>
     </div>
