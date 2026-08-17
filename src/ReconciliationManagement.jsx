@@ -39,8 +39,7 @@ export default function ReconciliationManagement({ user, companies = [] }) {
     try {
       const params = { recType: activeTab, limit: pageSize, offset: (page - 1) * pageSize }
       if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
-      if (statusFilter === 'DELETED') params.deleted = true
-      else if (statusFilter) params.status = statusFilter
+      if (statusFilter) params.status = statusFilter
       if (partyFilter) {
         if (activeTab === 'OUTBOUND') params.customerId = partyFilter
         else params.supplierName = partyFilter
@@ -70,7 +69,6 @@ export default function ReconciliationManagement({ user, companies = [] }) {
   // 列表刷新后，自动预加载所有对账单的明细（用于在卡片中直接展示物料行）
   useEffect(() => {
     if (!records || records.length === 0) return
-    if (statusFilter === 'DELETED') return // 已删除视图无需加载明细
     const missing = records.filter(r => !expandedDetails[r.reconciliation_id])
     if (missing.length === 0) return
     const params = {}
@@ -249,19 +247,6 @@ export default function ReconciliationManagement({ user, companies = [] }) {
       message.error('一键清空失败: ' + (e.response?.data?.error || e.message))
     } finally {
       setClearingAll(false)
-    }
-  }
-
-  // 恢复软删除的对账单
-  const handleRestore = async (recId) => {
-    try {
-      await api.post(`/erp/reconciliations/${recId}/restore?companyId=${effectiveCompanyId || 0}`)
-      message.success('已恢复对账单')
-      setPage(1)
-      fetchRecords()
-      fetchPendingCount()
-    } catch (e) {
-      message.error('恢复失败: ' + (e.response?.data?.error || e.message))
     }
   }
 
@@ -645,30 +630,20 @@ export default function ReconciliationManagement({ user, companies = [] }) {
             <div style={{ color: '#ccc', fontSize: 12 }}>{record.completed_at ? dayjs(record.completed_at).format('YYYY-MM-DD HH:mm') : '-'}</div>
           </div>
           <div style={{ marginLeft: 'auto' }}>
-            {statusFilter === 'DELETED' ? (
-              <Popconfirm title="确认恢复该对账单(含保留的对账明细)?" onConfirm={() => handleRestore(record.reconciliation_id)}>
-                <Button type="primary" size="small" icon={<ReloadOutlined />}>恢复</Button>
-              </Popconfirm>
-            ) : (
-              isCompleted
-                ? <Text type="secondary">已完成</Text>
-                : (
-                  <Popconfirm title="确认对账完成?" disabled={!fully}
-                    onConfirm={() => handleComplete(record.reconciliation_id)}>
-                    {fully
-                      ? <Button type="primary" size="small" icon={<CheckOutlined />}>对账完成</Button>
-                      : <Tooltip title="请先录入所有物料的对账明细"><Button size="small" icon={<CheckOutlined />} disabled>对账完成</Button></Tooltip>}
-                  </Popconfirm>
-                )
-            )}
+            {isCompleted
+              ? <Text type="secondary">已完成</Text>
+              : (
+                <Popconfirm title="确认对账完成?" disabled={!fully}
+                  onConfirm={() => handleComplete(record.reconciliation_id)}>
+                  {fully
+                    ? <Button type="primary" size="small" icon={<CheckOutlined />}>对账完成</Button>
+                    : <Tooltip title="请先录入所有物料的对账明细"><Button size="small" icon={<CheckOutlined />} disabled>对账完成</Button></Tooltip>}
+                </Popconfirm>
+              )}
           </div>
         </div>
         {/* Body: 关联订单 + 物料明细 */}
-        {statusFilter === 'DELETED' ? (
-          <div style={{ color: '#888', fontSize: 12, padding: 12, textAlign: 'center' }}>
-            该对账单已软删除, 对账明细已保留, 点击右上角「恢复」可还原。
-          </div>
-        ) : linkedOrders.length > 0 ? (
+        {linkedOrders.length > 0 ? (
           <div style={{ marginTop: 12 }}>
             {linkedOrders.map(o => renderOrderBlock(detail, o))}
           </div>
@@ -706,9 +681,6 @@ export default function ReconciliationManagement({ user, companies = [] }) {
             </Tag.CheckableTag>
             <Tag.CheckableTag checked={statusFilter === 'COMPLETED'} onChange={() => { setStatusFilter('COMPLETED'); setPage(1) }}>
               已完成
-            </Tag.CheckableTag>
-            <Tag.CheckableTag checked={statusFilter === 'DELETED'} onChange={() => { setStatusFilter('DELETED'); setPage(1) }}>
-              已删除
             </Tag.CheckableTag>
           </Space>
           {activeTab === 'OUTBOUND' ? (
