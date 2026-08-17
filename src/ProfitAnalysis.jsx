@@ -201,7 +201,7 @@ export default function ProfitAnalysis({ user, companies = [] }) {
                 </Col>
               </Row>
               <div style={{ marginTop: 12, color: '#888', fontSize: 12 }}>
-                预期销售 = 全部销售单订购量×单价；预期采购 = 全部采购单订购量×预计单价；真实出库收入 = 已出库单销售额；真实入库花费 = 已入库单采购额。
+                预期销售 = 全部销售单订购量×单价(含税优先)；预期采购 = 全部采购单订购量×预计单价(含税优先)；真实出库收入 = 已出库单销售额(含税优先)；真实入库花费 = 已入库单采购额(含税优先，单价为0的原始持有不计成本)。
               </div>
             </Card>
 
@@ -227,7 +227,7 @@ export default function ProfitAnalysis({ user, companies = [] }) {
                 </Col>
               </Row>
               <div style={{ marginTop: 12, color: '#888', fontSize: 12 }}>
-                预期毛利 = 预期销售 − 预期采购；实际毛利 = 真实出库收入 − 真实入库花费；已实现毛利 = 真实出库收入 − 出库数量×加权平均采购价。
+                预期毛利 = 预期销售 − 预期采购；实际毛利 = 真实出库收入 − 真实入库花费；已实现毛利 = 真实出库收入 − 出库数量×加权平均采购价(含税优先)。
               </div>
             </Card>
 
