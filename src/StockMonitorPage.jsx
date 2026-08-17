@@ -56,7 +56,7 @@ export default function StockMonitorPage() {
   const [aiResult, setAiResult] = useState(null)   // AI 生成的配置（展示用）
   const [profile, setProfile] = useState({
     total_capital: 0, max_position_pct: 20, risk_level: 'balanced', strategy: '',
-    llm_vs_rule_weight: 0.5, llm_sell_threshold: 0.6, slippage_rate: 0.01,
+    llm_vs_rule_weight: 0.5, llm_sell_threshold: 0.6, llm_buy_threshold: 0.65, slippage_rate: 0.01,
     max_liquidity_pct: 0.05, correlation_threshold: 0.7, sector_enabled: true,
   })
   const [profileOpen, setProfileOpen] = useState(false)
@@ -215,6 +215,7 @@ export default function StockMonitorPage() {
       strategy: profile.strategy || '',
       llm_vs_rule_weight: profile.llm_vs_rule_weight ?? 0.5,
       llm_sell_threshold: profile.llm_sell_threshold ?? 0.6,
+      llm_buy_threshold: profile.llm_buy_threshold ?? 0.65,
       slippage_rate: profile.slippage_rate ?? 0.01,
       max_liquidity_pct: profile.max_liquidity_pct ?? 0.05,
       correlation_threshold: profile.correlation_threshold ?? 0.7,
@@ -234,6 +235,7 @@ export default function StockMonitorPage() {
         strategy: v.strategy || '',
         llm_vs_rule_weight: v.llm_vs_rule_weight ?? null,
         llm_sell_threshold: v.llm_sell_threshold ?? null,
+        llm_buy_threshold: v.llm_buy_threshold ?? null,
         slippage_rate: v.slippage_rate ?? null,
         max_liquidity_pct: v.max_liquidity_pct ?? null,
         correlation_threshold: v.correlation_threshold ?? null,
@@ -825,6 +827,11 @@ export default function StockMonitorPage() {
             <Col span={8}>
               <Form.Item name="llm_sell_threshold" label="LLM 卖出置信度阈值">
                 <InputNumber min={0} max={1} step={0.1} style={{ width: '100%' }} placeholder="0.6" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="llm_buy_threshold" label="LLM 买入/加仓置信度阈值">
+                <InputNumber min={0} max={1} step={0.1} style={{ width: '100%' }} placeholder="0.65" />
               </Form.Item>
             </Col>
             <Col span={8}>
