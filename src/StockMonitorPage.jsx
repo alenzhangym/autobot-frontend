@@ -57,6 +57,7 @@ export default function StockMonitorPage() {
     total_capital: 0, max_position_pct: 20, risk_level: 'balanced', strategy: '',
     llm_vs_rule_weight: 0.5, llm_sell_threshold: 0.6, slippage_rate: 0.01,
     max_liquidity_pct: 0.05, correlation_threshold: 0.7, sector_enabled: true,
+    news_enabled: true, news_interval_minutes: 30, news_max_results: 5, news_llm_relevance: true,
   })
   const [profileOpen, setProfileOpen] = useState(false)
   const [profileForm] = Form.useForm()
@@ -218,6 +219,10 @@ export default function StockMonitorPage() {
       max_liquidity_pct: profile.max_liquidity_pct ?? 0.05,
       correlation_threshold: profile.correlation_threshold ?? 0.7,
       sector_enabled: profile.sector_enabled ?? true,
+      news_enabled: profile.news_enabled ?? true,
+      news_interval_minutes: profile.news_interval_minutes ?? 30,
+      news_max_results: profile.news_max_results ?? 5,
+      news_llm_relevance: profile.news_llm_relevance ?? true,
     })
     setProfileOpen(true)
   }
@@ -237,6 +242,10 @@ export default function StockMonitorPage() {
         max_liquidity_pct: v.max_liquidity_pct ?? null,
         correlation_threshold: v.correlation_threshold ?? null,
         sector_enabled: v.sector_enabled ?? null,
+        news_enabled: v.news_enabled ?? null,
+        news_interval_minutes: v.news_interval_minutes ?? null,
+        news_max_results: v.news_max_results ?? null,
+        news_llm_relevance: v.news_llm_relevance ?? null,
       })
       if (r.data?.ok) { message.success('总体资金配置已保存'); setProfileOpen(false); loadProfile() }
       else message.error(r.data?.msg || '保存失败')
@@ -817,6 +826,30 @@ export default function StockMonitorPage() {
               </Form.Item>
             </Col>
           </Row>
+          <Divider style={{ margin: '8px 0' }} />
+          <Text type="secondary" style={{ display: 'block', fontSize: 12, margin: '4px 0 8px' }}>
+            新闻搜索配置（后台按周期抓取行业/个股新闻；留空则用全局默认）
+          </Text>
+          <Row gutter={12}>
+            <Col span={8}>
+              <Form.Item name="news_enabled" label="启用新闻抓取" valuePropName="checked">
+                <Switch checkedChildren="开" unCheckedChildren="关" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="news_interval_minutes" label="抓取周期（分钟）">
+                <InputNumber min={10} max={1440} step={10} style={{ width: '100%' }} placeholder="30" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="news_llm_relevance" label="LLM 相关判定" valuePropName="checked">
+                <Switch checkedChildren="开" unCheckedChildren="关" />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item name="news_max_results" label="每查询保留相关新闻条数">
+            <InputNumber min={1} max={20} step={1} style={{ width: '100%' }} placeholder="5" />
+          </Form.Item>
         </Form>
       </Modal>
     </div>
