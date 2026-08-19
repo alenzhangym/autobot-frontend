@@ -266,21 +266,25 @@ export default function SalesOrderManagement({ user, companies = [] }) {
       const values = await form.validateFields()
       // 至少 1 条物料
       if (items.length === 0) { message.error('请至少添加一行物料明细'); return }
-      // 整张订单任意非空行（用户保留的）都必须字段齐
-      const filledRows = items.filter(it => it.partType || it.customerPartNo || it.orderedQty || it.unitPrice)
-      if (filledRows.length === 0) { message.error('请至少填写一行完整的物料明细（物料类型 / 客户料号 / 订量 / 单价 均必填）'); return }
-      const incompleteRows = filledRows.filter(it => !it.partType || !it.customerPartNo || !it.partId || !it.orderedQty || it.orderedQty <= 0 || it.unitPrice == null)
+      // 部分提交：只取用户实际改过的行；未改的 (dirty=false) 不进后端
+      const dirty = items.filter(it => it.dirty)
+      if (dirty.length === 0) { message.error('请至少修改一条物料明细'); return }
+      // 字段校验：已有行(有 originalItemId)只需 partId/订量/单价；新增行全字段必填
+      const incompleteRows = dirty.filter(it => {
+        if (it.originalItemId) {
+          return !it.partId || !it.orderedQty || it.orderedQty <= 0 || it.unitPrice == null
+        }
+        return !it.partType || !it.customerPartNo || !it.partId || !it.orderedQty || it.orderedQty <= 0 || it.unitPrice == null
+      })
       if (incompleteRows.length > 0) {
-        message.error(`有 ${incompleteRows.length} 条物料字段未填全：物料类型 / 客户料号 / 订量 / 单价 均为必填`)
+        message.error(`有 ${incompleteRows.length} 条物料字段未填全：订量/单价必填，新增行还需填写 物料类型/客户料号`)
         return
       }
-      const unresolved = items.filter(it => it.customerPartNo && !it.partId)
+      const unresolved = items.filter(it => it.dirty && it.customerPartNo && !it.partId)
       if (unresolved.length > 0) {
         message.error(`有 ${unresolved.length} 条物料的客户料号未匹配到内部物料，请从下拉中选择`)
         return
       }
-      // 部分提交：只取用户实际改过的行；未改的 (dirty=false) 不进后端
-      const dirty = items.filter(it => it.dirty)
       const invalidQty = dirty.filter(it => it.partId && (!it.orderedQty || it.orderedQty <= 0))
       if (invalidQty.length > 0) {
         message.error(`有 ${invalidQty.length} 条已修改物料数量为 0 或未填写，销售数量必须大于 0`)
