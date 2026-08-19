@@ -17,7 +17,7 @@ const STATUS_MAP = {
 
 const PART_TYPES = ['电容', '电感', '磁珠', '电阻', 'PCB板材', 'IC', '二极管', '三极管', '晶振', '连接器', '继电器', '其他']
 
-const emptyItem = () => ({ key: Date.now(), partType: '其他', partId: null, partLabel: '', orderedQty: null, estimatedUnitPrice: null, taxInclusiveUnitPrice: null })
+const emptyItem = () => ({ key: Date.now(), partType: '其他', partId: null, partLabel: '', orderedQty: null, estimatedUnitPrice: null, taxInclusiveUnitPrice: null, originalItemId: null, dirty: true })
 
 export default function PurchaseOrderManagement({ user, companies = [] }) {
   const isSuperAdmin = isSuperAdminFn(user)
@@ -44,6 +44,7 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
   const [exporting, setExporting] = useState(false)
   const [form] = Form.useForm()
   const [items, setItems] = useState([emptyItem()])
+  const [deletedItemIds, setDeletedItemIds] = useState([])
   const [parts, setParts] = useState([])
   const [suppliers, setSuppliers] = useState([])
   const [existingPo, setExistingPo] = useState(null)
@@ -125,7 +126,7 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
   useEffect(() => { fetchSuppliers() }, [fetchSuppliers])
 
   const openCreate = () => {
-    setEditing(null); form.resetFields(); setItems([emptyItem()])
+    setEditing(null); form.resetFields(); setItems([emptyItem()]); setDeletedItemIds([])
     setExistingPo(null); setExistingPoItems([])
     fetchParts(); fetchSuppliers(); setShowModal(true)
   }
@@ -207,7 +208,7 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
   }
 
   const openEdit = async (record) => {
-    setEditing(record); fetchParts(); fetchSuppliers()
+    setEditing(record); setDeletedItemIds([]); fetchParts(); fetchSuppliers()
     try {
       const params = {}
       if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
@@ -221,9 +222,12 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
       })
       setExistingPo(null); setExistingPoItems([])
       const its = (detail.items || []).map(it => ({
-        key: Date.now() + Math.random(), partType: it.part_type || '其他', partId: it.part_id, partLabel: it.user_part_model || '',
+        key: Date.now() + Math.random(),
+        originalItemId: it.item_id || it.itemId || null,
+        partType: it.part_type || '其他', partId: it.part_id, partLabel: it.user_part_model || '',
         orderedQty: it.ordered_qty, estimatedUnitPrice: it.estimated_unit_price,
-        taxInclusiveUnitPrice: it.tax_inclusive_unit_price
+        taxInclusiveUnitPrice: it.tax_inclusive_unit_price,
+        dirty: false
       }))
       setItems(its.length > 0 ? its : [emptyItem()])
       setShowModal(true)
@@ -231,12 +235,12 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
   }
 
   const handlePartTypeChange = (itemKey, partType) => {
-    setItems(items.map(it => it.key === itemKey ? { ...it, partType, partId: null, partLabel: '' } : it))
+    setItems(items.map(it => it.key === itemKey ? { ...it, partType, partId: null, partLabel: '', dirty: true } : it))
   }
 
   const handlePartSelect = (itemKey, partId) => {
     const p = parts.find(p => p.partId === partId)
-    setItems(items.map(it => it.key === itemKey ? { ...it, partId, partLabel: p?.label || '' } : it))
+    setItems(items.map(it => it.key === itemKey ? { ...it, partId, partLabel: p?.label || '', dirty: true } : it))
   }
 
   const getFilteredPartsForItem = (item) => {
@@ -249,21 +253,28 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
       const values = await form.validateFields()
       // 至少 1 条物料
       if (items.length === 0) { message.error('请至少添加一行物料明细'); return }
-      // 整张订单任意非空行（用户保留的）都必须字段齐
-      const filledRows = items.filter(it => it.partType || it.partId || it.orderedQty || it.estimatedUnitPrice)
-      if (filledRows.length === 0) { message.error('请至少填写一行完整的物料明细（物料类型 / 物料 / 订量 / 预估单价 均必填）'); return }
-      const incompleteRows = filledRows.filter(it => !it.partType || !it.partId || !it.orderedQty || it.orderedQty <= 0 || it.estimatedUnitPrice == null)
+      // 部分提交：只取用户实际改过的行；未改的 (dirty=false) 不进后端
+      const dirty = items.filter(it => it.dirty)
+      if (dirty.length === 0) { message.error('请至少修改一条物料明细'); return }
+      // 字段校验：已有行(有 originalItemId)只需 partId/订量/单价；新增行全字段必填
+      const incompleteRows = dirty.filter(it => {
+        if (it.originalItemId) {
+          return !it.partId || !it.orderedQty || it.orderedQty <= 0 || it.estimatedUnitPrice == null
+        }
+        return !it.partType || !it.partId || !it.orderedQty || it.orderedQty <= 0 || it.estimatedUnitPrice == null
+      })
       if (incompleteRows.length > 0) {
-        message.error(`有 ${incompleteRows.length} 条物料字段未填全：物料类型 / 物料 / 订量 / 预估单价 均为必填`)
+        message.error(`有 ${incompleteRows.length} 条物料字段未填全：订量/预估单价必填，新增行还需填写 物料类型/物料`)
         return
       }
       // 数量校验：所有 partId 行的数量必须 > 0
-      const rowsWithPart = items.filter(it => it.partId)
-      const invalidQty = rowsWithPart.filter(it => !it.orderedQty || it.orderedQty <= 0)
+      const invalidQty = dirty.filter(it => it.partId && (!it.orderedQty || it.orderedQty <= 0))
       if (invalidQty.length > 0) {
         message.error(`有 ${invalidQty.length} 条物料数量为 0 或未填写，采购数量必须大于 0`)
         return
       }
+      const validItems = dirty.filter(it => it.partId && it.orderedQty > 0)
+      if (validItems.length === 0) { message.error('请至少修改一条物料明细'); return }
       const payload = {
         poNumber: values.poNumber ? values.poNumber.trim() : undefined,
         supplierName: values.supplierName,
@@ -271,19 +282,22 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
         status: editing ? editing.status : 'ORDERED',
         paymentStatus: values.paymentStatus, notes: values.notes,
         companyId: effectiveCompanyId || user?.companyId || 0,
-        createdBy: user?.id, items: rowsWithPart.filter(it => it.orderedQty > 0).map(it => ({
+        createdBy: user?.id, items: validItems.map(it => ({
+          originalItemId: it.originalItemId || null,
           partId: it.partId, orderedQty: it.orderedQty, estimatedUnitPrice: it.estimatedUnitPrice || 0,
           taxInclusiveUnitPrice: it.taxInclusiveUnitPrice || 0
         }))
       }
       if (editing) {
+        payload.partial = true
+        if (deletedItemIds.length > 0) payload.deletedItemIds = deletedItemIds
         await api.put(`/erp/purchase-orders/${editing.purchase_id}`, payload)
         message.success('已更新')
       } else {
         await api.post('/erp/purchase-orders', payload)
         message.success(existingPo ? '已追加物料' : '已创建')
       }
-      setShowModal(false); setEditing(null); form.resetFields(); setItems([emptyItem()])
+      setShowModal(false); setEditing(null); form.resetFields(); setItems([emptyItem()]); setDeletedItemIds([])
       setExistingPo(null); setExistingPoItems([])
       setPage(1); fetchOrders()
     } catch (e) {
@@ -508,8 +522,14 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
 
   const addItem = () => setItems([...items, emptyItem()])
 
-  const removeItem = (key) => { if (items.length <= 1) return; setItems(items.filter(it => it.key !== key)) }
-  const updateItem = (key, field, val) => setItems(items.map(it => it.key === key ? { ...it, [field]: val } : it))
+  const removeItem = (key) => {
+    if (items.length <= 1) return
+    const removed = items.find(it => it.key === key)
+    setItems(items.filter(it => it.key !== key))
+    // 记录被删除的既有明细行(有 originalItemId)，随编辑保存时删除
+    if (removed?.originalItemId) setDeletedItemIds(ids => [...ids, removed.originalItemId])
+  }
+  const updateItem = (key, field, val) => setItems(items.map(it => it.key === key ? { ...it, [field]: val, dirty: true } : it))
 
   const [expandedItems, setExpandedItems] = useState({})
   const fetchExpandedItems = async (record) => {
@@ -607,7 +627,7 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
           expandable={{ expandedRowRender, onExpand: (expanded, record) => { if (expanded) fetchExpandedItems(record) } }}
           pagination={{ current: page, pageSize, total, showSizeChanger: true, onChange: (p, ps) => { setPage(p); setPageSize(ps) } }} scroll={{ x: 1100 }} />
         <Modal title={editing ? '编辑采购单' : '录入采购单'} open={showModal} onOk={handleSave} width={900} okText="保存" destroyOnHidden
-          onCancel={() => { setShowModal(false); setEditing(null); form.resetFields(); setItems([emptyItem()]) }}>
+          onCancel={() => { setShowModal(false); setEditing(null); form.resetFields(); setItems([emptyItem()]); setDeletedItemIds([]) }}>
           <Form form={form} layout="vertical">
             <Space wrap>
               <Form.Item name="poNumber" label="采购单号"

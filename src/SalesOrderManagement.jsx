@@ -43,6 +43,7 @@ export default function SalesOrderManagement({ user, companies = [] }) {
   const [exporting, setExporting] = useState(false)
   const [form] = Form.useForm()
   const [items, setItems] = useState([emptyItem()])
+  const [deletedItemIds, setDeletedItemIds] = useState([])
   const [customers, setCustomers] = useState([])
   const [customerPartMappings, setCustomerPartMappings] = useState([])
   const [parts, setParts] = useState([])
@@ -149,6 +150,7 @@ export default function SalesOrderManagement({ user, companies = [] }) {
     setEditing(null)
     form.resetFields()
     setItems([emptyItem()])
+    setDeletedItemIds([])
     setSelectedCustomerId(null)
     setCustomerPartMappings([])
     fetchCustomers()
@@ -157,6 +159,7 @@ export default function SalesOrderManagement({ user, companies = [] }) {
 
   const openEdit = async (record) => {
     setEditing(record)
+    setDeletedItemIds([])
     fetchCustomers()
     try {
       const params = {}
@@ -309,13 +312,14 @@ export default function SalesOrderManagement({ user, companies = [] }) {
       }
       if (editing) {
         payload.partial = true
+        if (deletedItemIds.length > 0) payload.deletedItemIds = deletedItemIds
         await api.put(`/erp/sales-orders/${editing.sales_id}`, payload)
         message.success('已更新')
       } else {
         await api.post('/erp/sales-orders', payload)
         message.success('已创建')
       }
-      setShowModal(false); setEditing(null); form.resetFields(); setItems([emptyItem()])
+      setShowModal(false); setEditing(null); form.resetFields(); setItems([emptyItem()]); setDeletedItemIds([])
       setSelectedCustomerId(null); setCustomerPartMappings([])
       setPage(1); fetchOrders()
     } catch (e) {
@@ -535,7 +539,13 @@ export default function SalesOrderManagement({ user, companies = [] }) {
     } finally { setExporting(false) }
   }
   const addItem = () => setItems([...items, emptyItem()])
-  const removeItem = (key) => { if (items.length <= 1) return; setItems(items.filter(it => it.key !== key)) }
+  const removeItem = (key) => {
+    if (items.length <= 1) return
+    const removed = items.find(it => it.key === key)
+    setItems(items.filter(it => it.key !== key))
+    // 记录被删除的既有明细行(有 originalItemId)，随编辑保存时删除
+    if (removed?.originalItemId) setDeletedItemIds(ids => [...ids, removed.originalItemId])
+  }
   const updateItem = (key, field, val) => setItems(items.map(it => it.key === key ? { ...it, [field]: val, dirty: true } : it))
 
   // ── Simplified Import ──
@@ -672,7 +682,7 @@ export default function SalesOrderManagement({ user, companies = [] }) {
           expandable={{ expandedRowRender, onExpand: (expanded, record) => { if (expanded) fetchExpandedItems(record) } }}
           pagination={{ current: page, pageSize, total, showSizeChanger: true, onChange: (p, ps) => { setPage(p); setPageSize(ps) } }} scroll={{ x: 1100 }} />
         <Modal title={editing ? '编辑销售单' : '录入销售单'} open={showModal} onOk={handleSave} width={950} okText="保存" destroyOnHidden
-          onCancel={() => { setShowModal(false); setEditing(null); form.resetFields(); setItems([emptyItem()]); setSelectedCustomerId(null); setCustomerPartMappings([]) }}>
+          onCancel={() => { setShowModal(false); setEditing(null); form.resetFields(); setItems([emptyItem()]); setDeletedItemIds([]); setSelectedCustomerId(null); setCustomerPartMappings([]) }}>
           <Form form={form} layout="vertical">
             <Space wrap>
               <Form.Item name="customerId" label="客户" rules={[{ required: true, message: '请选择' }]}>
