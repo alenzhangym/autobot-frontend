@@ -51,6 +51,14 @@ export default function StockMonitorPage() {
   const [pushingFin, setPushingFin] = useState(false)
   const [posEdit, setPosEdit] = useState(null)          // { shares, cost }
   const [posSaving, setPosSaving] = useState(false)
+  // 2026-08-20: 持仓盈利总结 + 买卖交易流水
+  const [profit, setProfit] = useState(null)            // { summary, positions }
+  const [tradeOpen, setTradeOpen] = useState(false)     // 买卖记录弹窗
+  const [tradeSide, setTradeSide] = useState('buy')
+  const [tradeShares, setTradeShares] = useState(undefined)
+  const [tradePrice, setTradePrice] = useState(undefined)
+  const [tradeSaving, setTradeSaving] = useState(false)
+  const [trades, setTrades] = useState([])              // 该股买卖流水
   // 用户监控配置管理
   const [watchlist, setWatchlist] = useState([])
   const [cfgOpen, setCfgOpen] = useState(false)
@@ -113,7 +121,7 @@ export default function StockMonitorPage() {
     loadAll()
     loadWatchlist()
     loadProfile()
-    api.get('/stock-monitor/portfolio').then(r => setPortfolio(r.data?.positions || {})).catch(() => {})
+    loadProfit()
   }, [loadAll, loadWatchlist, loadProfile])
 
   // 10s 自动刷新倒计时
@@ -280,6 +288,55 @@ export default function StockMonitorPage() {
       setKline([]); setReport('')
     }
     loadFinancial(code)
+    loadTrades(code)
+  }
+
+  // 2026-08-20: 持仓盈利总结
+  const loadProfit = () => {
+    api.get('/stock-monitor/portfolio/profit').then(r => {
+      setProfit(r.data || null)
+      setPortfolio(r.data?.positions || {})
+    }).catch(() => {})
+  }
+
+  // 2026-08-20: 加载该股买卖流水
+  const loadTrades = async (code) => {
+    if (!code) { setTrades([]); return }
+    try {
+      const r = await api.get('/stock-monitor/portfolio/trades', { params: { code } })
+      setTrades(r.data?.trades || [])
+    } catch (e) { setTrades([]) }
+  }
+
+  const openTradeModal = (code, name) => {
+    setTradeSide('buy')
+    setTradeShares(undefined)
+    setTradePrice(undefined)
+    setTradeOpen(true)
+    loadTrades(code)
+  }
+
+  const saveTrade = async () => {
+    if (!selectedCode) return
+    if (!tradeShares || tradeShares <= 0) { message.error('请输入大于 0 的股数'); return }
+    if (!tradePrice || tradePrice <= 0) { message.error('请输入大于 0 的成交价'); return }
+    setTradeSaving(true)
+    try {
+      const r = await api.post('/stock-monitor/portfolio/trade', {
+        code: selectedCode, side: tradeSide, shares: tradeShares, price: tradePrice,
+      })
+      if (r.data?.ok) {
+        message.success(`已记录${tradeSide === 'buy' ? '买入' : '卖出'}，当前持仓 ${r.data.held_shares} 股、均价 ${Number(r.data.avg_cost).toFixed(3)}`)
+        setPortfolio(r.data.positions || {})
+        loadProfit()
+        loadTrades(selectedCode)
+      } else {
+        message.error(r.data?.msg || '记录失败')
+      }
+    } catch (e) {
+      message.error('记录失败: ' + (e.response?.data?.message || e.message))
+    }
+    setTradeSaving(false)
   }
 
   // 2026-08-20: 加载结构化多期财报面板
@@ -511,6 +568,18 @@ export default function StockMonitorPage() {
               <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: 2, color: '#f5b301', padding: '12px 16px', borderBottom: '1px solid #1e2a3c', display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ width: 3, height: 14, background: '#f5b301', borderRadius: 2 }} /> 持仓监控
               </div>
+              {/* 2026-08-20: 持仓盈利总结 */}
+              {profit?.summary && (
+                <div style={{ display: 'flex', gap: 18, padding: '8px 16px', borderBottom: '1px solid #1e2a3c', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 12, color: '#8b95a7' }}>持仓数 <b style={{ color: '#e8ecf3', fontFamily: 'monospace' }}>{profit.summary.position_count}</b> 只</span>
+                  <span style={{ fontSize: 12, color: '#8b95a7' }}>市值 <b style={{ color: '#e8ecf3', fontFamily: 'monospace' }}>{Number(profit.summary.total_mkt).toFixed(0)}</b></span>
+                  <span style={{ fontSize: 12, color: '#8b95a7' }}>成本 <b style={{ color: '#e8ecf3', fontFamily: 'monospace' }}>{Number(profit.summary.total_cost).toFixed(0)}</b></span>
+                  <span style={{ fontSize: 12, color: '#8b95a7' }}>浮动盈亏 <b style={{ color: profit.summary.total_profit > 0 ? '#f6465d' : profit.summary.total_profit < 0 ? '#0ecb81' : '#8b95a7', fontFamily: 'monospace' }}>
+                    {profit.summary.total_profit >= 0 ? '+' : ''}{Number(profit.summary.total_profit).toFixed(0)}
+                    <span style={{ marginLeft: 4 }}>({profit.summary.total_profit_pct >= 0 ? '+' : ''}{Number(profit.summary.total_profit_pct).toFixed(2)}%)</span>
+                  </b></span>
+                </div>
+              )}
               <Table
                 size="small" rowKey="code" dataSource={quotes} columns={columns}
                 pagination={false}
@@ -574,6 +643,8 @@ export default function StockMonitorPage() {
                             </b></span>
                           </div>
                           <Button size="small" onClick={() => setPosEdit({ shares: pos?.shares > 0 ? pos.shares : undefined, cost: pos?.shares > 0 ? pos.cost : undefined })}>编辑持仓</Button>
+                          {/* 2026-08-20: 录入买卖流水，自动计算持仓与均价 */}
+                          <Button size="small" type="primary" ghost onClick={() => openTradeModal(selectedCode)}>记录买卖</Button>
                         </>
                       )}
                     </div>
@@ -767,6 +838,44 @@ export default function StockMonitorPage() {
         styles={{ body: { maxHeight: '70vh', overflowY: 'auto', fontSize: 14, lineHeight: 1.8 } }}
       >
         {finReport?.content ? <ReactMarkdown>{finReport.content}</ReactMarkdown> : <Empty />}
+      </Modal>
+
+      {/* 2026-08-20: 买卖记录弹窗 —— 录入单笔买卖，自动计算持仓与均价 */}
+      <Modal
+        open={tradeOpen} onCancel={() => setTradeOpen(false)} width={560}
+        title={`记录买卖 · ${selectedCode || ''} ${selQuote?.name || ''}`}
+        footer={[
+          <Button key="cancel" onClick={() => setTradeOpen(false)}>关闭</Button>,
+          <Button key="save" type="primary" loading={tradeSaving} onClick={saveTrade}>记录并重算持仓</Button>,
+        ]}
+      >
+        <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
+          <Button size="middle" style={{ flex: 1 }} type={tradeSide === 'buy' ? 'primary' : 'default'} onClick={() => setTradeSide('buy')}>买入</Button>
+          <Button size="middle" style={{ flex: 1 }} type={tradeSide === 'sell' ? 'primary' : 'default'} danger onClick={() => setTradeSide('sell')}>卖出</Button>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 12, color: '#8b95a7', marginBottom: 6 }}>成交股数</div>
+            <InputNumber min={0} step={100} value={tradeShares} onChange={setTradeShares} style={{ width: '100%' }} placeholder="如 1000" />
+          </div>
+          <div>
+            <div style={{ fontSize: 12, color: '#8b95a7', marginBottom: 6 }}>成交价（元）</div>
+            <InputNumber min={0} step={0.01} value={tradePrice} onChange={setTradePrice} style={{ width: '100%' }} placeholder="如 30.55" />
+          </div>
+        </div>
+        <Divider style={{ margin: '16px 0 8px' }} />
+        <div style={{ fontSize: 12, color: '#8b95a7', marginBottom: 6 }}>交易流水（按"累计买入 - 累计卖出"自动计算持仓与均价）</div>
+        {trades.length === 0 ? (
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无记录" style={{ margin: 0 }} />
+        ) : (
+          <Table size="small" rowKey="id" dataSource={trades} pagination={false} columns={[
+            { title: '方向', dataIndex: 'side', width: 70, render: v => <span style={{ color: v === 'buy' ? '#f6465d' : '#0ecb81' }}>{v === 'buy' ? '买入' : '卖出'}</span> },
+            { title: '股数', dataIndex: 'shares', align: 'right', render: v => <span style={{ fontFamily: 'monospace' }}>{v}</span> },
+            { title: '价格', dataIndex: 'price', align: 'right', render: v => Number(v).toFixed(3) },
+            { title: '金额', dataIndex: 'amount', align: 'right', render: v => Number(v).toFixed(0) },
+            { title: '时间', dataIndex: 'tradeTime', width: 150, render: v => (v ? String(v).replace('T', ' ').substring(5, 16) : '-') },
+          ]} />
+        )}
       </Modal>
 
       {/* 监控配置管理（列表 / 表单） */}
