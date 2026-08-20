@@ -16,11 +16,11 @@
  * 权限: 仅 SUPER_ADMIN 可访问 (后端校验, 前端菜单也只对超管可见)
  */
 import React, { useState, useEffect, useCallback } from 'react'
-import { Layout, Card, Row, Col, Statistic, Spin, Empty, Tag, Button, message, Input, Tooltip, Alert, Divider, Select, Space, Popconfirm } from 'antd'
+import { Layout, Card, Row, Col, Statistic, Spin, Empty, Tag, Button, message, Input, Tooltip, Alert, Divider, Select, Space, Popconfirm, Slider, InputNumber } from 'antd'
 import {
   ReloadOutlined, CheckCircleOutlined, ThunderboltOutlined,
   ApiOutlined, ArrowRightOutlined, UndoOutlined, ExclamationCircleOutlined,
-  ExperimentOutlined, PlusOutlined, DeleteOutlined, SettingOutlined,
+  ExperimentOutlined, DeleteOutlined, SettingOutlined,
 } from '@ant-design/icons'
 import api from './auth'
 
@@ -42,12 +42,12 @@ export default function LlmManagement() {
   const [applying, setApplying] = useState(false)
 
   // 推理强度等级配置
-  const [reasoning, setReasoning] = useState(null)                 // { global, agents, levels, known_agents }
+  const [reasoning, setReasoning] = useState(null)                 // { global, agents, levels, default_max_tokens, model_context }
   const [reasoningLoading, setReasoningLoading] = useState(false)
-  const [newAgent, setNewAgent] = useState('')                    // 新增配置的 agent 名
-  const [newLevel, setNewLevel] = useState('LOW')                 // 新增配置的档位
   const [savingLevel, setSavingLevel] = useState(false)
-  const [editingMap, setEditingMap] = useState({})                // { agent: 'HIGH' } 行内临时选择
+  const [savingKey, setSavingKey] = useState(null)                 // 正在保存的行 (agent 或 'GLOBAL')
+  const [draft, setDraft] = useState({})                           // agent -> { level, maxTokens, thinkingBudget }
+  const [globalDraft, setGlobalDraft] = useState({ level: null, maxTokens: null, thinkingBudget: null })
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -88,6 +88,22 @@ export default function LlmManagement() {
     try {
       const res = await api.get('/admin/llm/reasoning-configs')
       setReasoning(res.data)
+      // 为全部 agent 初始化草稿值（实际生效值），供滑动条/下拉直接编辑
+      const initDrafts = {}
+      for (const a of (res.data?.agents || [])) {
+        initDrafts[a.agent] = {
+          level: a.level || 'MEDIUM',
+          maxTokens: a.max_tokens ?? res.data?.default_max_tokens,
+          thinkingBudget: a.thinking_enabled ? (a.thinking_budget || 2048) : a.thinking_budget || 0,
+        }
+      }
+      setDraft(initDrafts)
+      const g = res.data?.global || {}
+      setGlobalDraft({
+        level: g.level || null,
+        maxTokens: g.max_tokens ?? res.data?.default_max_tokens,
+        thinkingBudget: g.thinking_budget ?? null,
+      })
     } catch (err) {
       message.error('获取推理强度配置失败: ' + (err.response?.data?.error || err.message))
     } finally {
@@ -101,26 +117,37 @@ export default function LlmManagement() {
     fetchReasoning()
   }, [fetchStatus, fetchModels, fetchReasoning])
 
-  const applyReasoning = async (agent, level) => {
-    setSavingLevel(true)
-    try {
-      await api.post('/admin/llm/reasoning-config', { agent, level })
-      message.success('推理强度配置已保存 (持久化, 立即生效)')
-      setNewAgent('')
-      setNewLevel('LOW')
-      setEditingMap({})
-      await fetchReasoning()
-    } catch (err) {
-      message.error('保存失败: ' + (err.response?.data?.error || err.message))
-    } finally {
-      setSavingLevel(false)
-    }
+  const applyReasoning = async (agent, cfg) => {
+  setSavingLevel(true)
+  setSavingKey(agent || 'GLOBAL')
+  try {
+    const body = { agent: agent || null }
+    if (cfg.level) body.level = cfg.level
+    if (cfg.maxTokens && cfg.maxTokens > 0) body.maxTokens = cfg.maxTokens
+    if (cfg.thinkingBudget !== null && cfg.thinkingBudget !== undefined) body.thinkingBudget = cfg.thinkingBudget
+    await api.post('/admin/llm/reasoning-config', body)
+    message.success('已保存 — 持久化, 立即生效')
+    await fetchReasoning()
+  } catch (err) {
+    message.error('保存失败: ' + (err.response?.data?.error || err.message))
+  } finally {
+    setSavingLevel(false)
+    setSavingKey(null)
   }
+}
+
+  const saveAgent = (agent) => {
+    const d = draft[agent]
+    if (!d) return
+    applyReasoning(agent, d)
+  }
+
+  const saveGlobal = () => applyReasoning('', globalDraft)
 
   const deleteReasoningAgent = async (agent) => {
     try {
       await api.delete(`/admin/llm/reasoning-config/${encodeURIComponent(agent)}`)
-      message.success(`已删除 ${agent} 的推理等级覆盖, 回退到全局默认`)
+      message.success(`已删除 ${agent} 的覆盖, 回退到全局默认`)
       await fetchReasoning()
     } catch (err) {
       message.error('删除失败: ' + (err.response?.data?.error || err.message))
@@ -425,119 +452,133 @@ export default function LlmManagement() {
             style={{ marginBottom: 16, background: COPPER_GLOW, borderColor: COPPER_DIM }}
             message={
               <span style={{ color: '#e8e3d8', fontSize: 12.5 }}>
-                按 agent 配置推理强度档位：<b style={{ color: COPPER }}>不推理 / 低 / 中 / 强</b>。
-                多数任务用"不推理"或"低"可显著提速省 token；少数复杂逻辑（代码补丁、根因分析、整体规划等）用"中/强"保证质量。
+                以下为<b style={{ color: COPPER }}>全部 agent</b>清单，可单独调节每个 agent 的<b style={{ color: COPPER }}>推理档位 / 思考token预算 / 最大输出token</b>。
+                模型上下文上限 {reasoning?.model_context?.toLocaleString() || '—'}，max_tokens 不得超过此值。
               </span>
             }
             description={
               <span style={{ color: '#807a6e', fontSize: 11.5 }}>
-                档位映射: 不推理=关闭 thinking · 低=开启(budget 2048) · 中=开启(budget 8192) · 强=开启(budget 32768)。
-                配置入库持久化，重启后保留；未配置的 agent 回退到全局默认档位（若未设全局则用原有 .env 配置）。
+                思考token: <b style={{ color: COPPER }}>0 = 不推理(关闭 thinking)</b>；每行滑动条调节，点「应用」即时入库生效。全局 max_tokens 在下方顶部配置，未单独设置的 agent 沿用全局值。
               </span>
             }
           />
 
-          {/* 全局默认档位 */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 12.5, color: '#a8a298', fontWeight: 500 }}>全局默认档位</span>
-            <Select
-              value={reasoning?.global?.level || 'UNSET'}
-              style={{ width: 140 }}
-              onChange={(v) => applyReasoning('', v)}
-              loading={savingLevel || reasoningLoading}
-              options={[
-                { value: 'UNSET', label: '未设置 (回退 .env)', disabled: true },
-                ...(reasoning?.levels || []).map(l => ({ value: l, label: l })),
-              ]}
-            />
-            <span style={{ fontSize: 11, color: '#807a6e' }}>
-              {reasoning?.global
-                ? `当前全局: ${reasoning.global.level} (${reasoning.global.level_label})`
-                : '当前未设置 — 未配置的 agent 将使用 .env 的 llm.thinking 配置'}
-            </span>
+          {/* 全局默认配置：推理档位 + 思考token + max_tokens（可编辑） */}
+          <div style={{ marginBottom: 16, padding: '12px 14px', border: '1px solid #2a2620', borderRadius: 4, background: '#141414' }}>
+            <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 16 }}>
+              <span style={{ fontSize: 12.5, color: '#a8a298', fontWeight: 500, width: 120 }}>全局默认</span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 11, color: '#807a6e' }}>档位</span>
+                <Select
+                  size="small" style={{ width: 130 }}
+                  value={globalDraft?.level || null}
+                  placeholder="不修改"
+                  allowClear
+                  onChange={(v) => setGlobalDraft(p => ({ ...p, level: v || null }))}
+                  options={(reasoning?.levels || []).map(l => ({ value: l, label: l }))}
+                />
+              </span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 11, color: '#807a6e' }}>思考token</span>
+                <InputNumber size="small" style={{ width: 110 }} min={0} step={512}
+                  value={globalDraft?.thinkingBudget ?? null}
+                  placeholder="不修改"
+                  onChange={(v) => setGlobalDraft(p => ({ ...p, thinkingBudget: v }))} />
+              </span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 11, color: '#807a6e' }}>max_tokens</span>
+                <InputNumber size="small" style={{ width: 130 }} min={1024}
+                  max={reasoning?.model_context || 131072} step={1024}
+                  value={globalDraft?.maxTokens ?? null}
+                  onChange={(v) => setGlobalDraft(p => ({ ...p, maxTokens: v }))} />
+              </span>
+              <Button size="small" type="primary" icon={<CheckCircleOutlined />}
+                loading={savingLevel && savingKey === 'GLOBAL'}
+                onClick={saveGlobal}
+                style={{ background: COPPER, borderColor: COPPER, color: '#0a0a0a', fontWeight: 500 }}>
+                应用全局
+              </Button>
+            </div>
+            <div style={{ fontSize: 11, color: '#5a554d', marginTop: 6 }}>
+              当前全局: 档位 {reasoning?.global?.level_label || '未设置(.env)'} · 思考token <b style={{ color: COPPER }}>{globalDraft?.thinkingBudget ?? reasoning?.global?.thinking_budget ?? 0}</b> · max_tokens <b style={{ color: COPPER }}>{globalDraft?.maxTokens ?? reasoning?.default_max_tokens}</b>
+            </div>
           </div>
 
-          {/* 新增配置 */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
-            <Input
-              placeholder="输入 Agent 名 (如 DocumentAgent-Outline)"
-              value={newAgent}
-              onChange={e => setNewAgent(e.target.value)}
-              style={{ width: 320, fontFamily: "'JetBrains Mono', monospace", fontSize: 12.5, background: '#0d0d0d', borderColor: '#333', color: '#e8e3d8' }}
-            />
-            <Select
-              value={newLevel}
-              style={{ width: 120 }}
-              onChange={setNewLevel}
-              options={(reasoning?.levels || []).map(l => ({ value: l, label: l }))}
-              placeholder="档位"
-            />
-            <Button
-              type="primary"
-              icon={<PlusOutlined />}
-              loading={savingLevel}
-              disabled={!newAgent.trim()}
-              onClick={() => applyReasoning(newAgent.trim(), newLevel)}
-              style={{ background: COPPER, borderColor: COPPER, color: '#0a0a0a', fontWeight: 500 }}
-            >
-              添加/更新
-            </Button>
-          </div>
-
-          {/* 已配置 agent 列表 */}
+          {/* 全部 agent 列表 */}
           {reasoningLoading ? (
             <div style={{ textAlign: 'center', padding: 30 }}><Spin /></div>
           ) : (reasoning?.agents || []).length === 0 ? (
-            <Empty description={<span style={{ color: '#807a6e', fontSize: 12 }}>尚未配置任何 agent 覆盖</span>} />
+            <Empty description={<span style={{ color: '#807a6e', fontSize: 12 }}>暂无 agent 清单</span>} />
           ) : (
-            <div style={{ maxHeight: 340, overflow: 'auto', border: '1px solid #2a2620', borderRadius: 4 }}>
-              {(reasoning?.agents || []).map(a => (
-                <div key={a.agent} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 14px', borderBottom: '1px solid #2a2620' }}>
-                  <ExperimentOutlined style={{ color: '#5a554d', fontSize: 13 }} />
-                  <span style={{ flex: 1, fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: '#a8a298', wordBreak: 'break-all' }}>
-                    {a.agent}
-                  </span>
-                  <Select
-                    size="small"
-                    value={editingMap[a.agent] || a.level}
-                    style={{ width: 110 }}
-                    onChange={(v) => setEditingMap(prev => ({ ...prev, [a.agent]: v }))}
-                    options={(reasoning?.levels || []).map(l => ({ value: l, label: l }))}
-                  />
-                  <Button
-                    size="small"
-                    type="primary"
-                    loading={savingLevel}
-                    style={{ background: '#333', borderColor: '#444', color: '#e8e3d8', fontWeight: 500 }}
-                    onClick={() => applyReasoning(a.agent, editingMap[a.agent] || a.level)}
-                  >
-                    应用
-                  </Button>
-                  <Popconfirm title={`删除 ${a.agent} 的推理等级覆盖?`} onConfirm={() => deleteReasoningAgent(a.agent)}>
-                    <Button size="small" type="text" danger icon={<DeleteOutlined />}
-                      style={{ borderColor: 'transparent' }} />
-                  </Popconfirm>
-                </div>
-              ))}
+            <div style={{ maxHeight: 480, overflow: 'auto', border: '1px solid #2a2620', borderRadius: 4 }}>
+              {(reasoning?.agents || []).map(a => {
+                const d = draft[a.agent] || {}
+                const maxCap = reasoning?.model_context || 131072
+                return (
+                  <div key={a.agent}
+                    style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '9px 14px', borderBottom: '1px solid #2a2620', flexWrap: 'wrap' }}>
+                    <div style={{ width: 270, flexShrink: 0 }}>
+                      <ExperimentOutlined style={{ color: '#5a554d', fontSize: 13, marginRight: 6 }} />
+                      <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: '#a8a298', wordBreak: 'break-all' }}>
+                        {a.agent}
+                      </span>
+                      {a.configured && <Tag color="gold" style={{ fontSize: 10, marginLeft: 6, borderColor: COPPER_DIM, color: COPPER, background: COPPER_GLOW }}>已配置</Tag>}
+                      {a.desc && <div style={{ fontSize: 10.5, color: '#5a554d', marginTop: 2 }}>{a.desc}</div>}
+                    </div>
+
+                    {/* 档位 */}
+                    <Space size={4}>
+                      <span style={{ fontSize: 10.5, color: '#807a6e', width: 26 }}>档位</span>
+                      <Select size="small" style={{ width: 96 }}
+                        value={d.level || 'MEDIUM'}
+                        onChange={(v) => setDraft(p => ({ ...p, [a.agent]: { ...p[a.agent], level: v } }))}
+                        options={(reasoning?.levels || []).map(l => ({ value: l, label: l }))} />
+                    </Space>
+
+                    {/* 思考token 滑动条 */}
+                    <div style={{ flex: 1, minWidth: 200 }}>
+                      <div style={{ fontSize: 10.5, color: '#807a6e' }}>思考token: <b style={{ color: d.thinkingBudget ? COPPER : '#555', marginLeft: 4 }}>{d.thinkingBudget || 0}{d.thinkingBudget ? '' : ' (不推理)'}</b></div>
+                      <Slider
+                        min={0} max={Math.max(16384, Math.min(65536, d.maxTokens || 32768))} step={256}
+                        value={d.thinkingBudget ?? 0}
+                        onChange={(v) => setDraft(p => ({ ...p, [a.agent]: { ...p[a.agent], thinkingBudget: v } }))}
+                        tooltip={{ open: false }}
+                        trackStyle={{ backgroundColor: d.thinkingBudget ? COPPER : '#333' }}
+                        railStyle={{ backgroundColor: '#2a2620' }}
+                        handleStyle={{ borderColor: COPPER, backgroundColor: d.thinkingBudget ? COPPER : '#444' }}
+                      />
+                    </div>
+
+                    {/* max_tokens 滑动条 (受模型上下文约束) */}
+                    <div style={{ flex: 1, minWidth: 200 }}>
+                      <div style={{ fontSize: 10.5, color: '#807a6e' }}>max_tokens: <b style={{ color: COPPER, marginLeft: 4 }}>{d.maxTokens ?? maxCap}</b></div>
+                      <Slider
+                        min={1024} max={maxCap} step={1024}
+                        value={Math.min(d.maxTokens || 8192, maxCap)}
+                        onChange={(v) => setDraft(p => ({ ...p, [a.agent]: { ...p[a.agent], maxTokens: v } }))}
+                        tooltip={{ open: false }}
+                        trackStyle={{ backgroundColor: COPPER }}
+                        railStyle={{ backgroundColor: '#2a2620' }}
+                        handleStyle={{ borderColor: COPPER, backgroundColor: COPPER }}
+                      />
+                    </div>
+
+                    <Button size="small" type="primary"
+                      loading={savingLevel && savingKey === a.agent}
+                      onClick={() => saveAgent(a.agent)}
+                      style={{ background: '#333', borderColor: '#444', color: '#e8e3d8', fontWeight: 500 }}>
+                      应用
+                    </Button>
+                    {a.configured && (
+                      <Popconfirm title={`删除 ${a.agent} 的覆盖?`} onConfirm={() => deleteReasoningAgent(a.agent)}>
+                        <Button size="small" type="text" danger icon={<DeleteOutlined />} style={{ borderColor: 'transparent' }} />
+                      </Popconfirm>
+                    )}
+                  </div>
+                )
+              })}
             </div>
           )}
-
-          {/* 已知 agent 建议 */}
-          <div style={{ fontSize: 12, color: '#807a6e', marginTop: 14, marginBottom: 8, fontFamily: "'Hanken Grotesk', system-ui, sans-serif" }}>
-            常见 agent 及建议档位 (可点击档位下方可直接复制名):
-          </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-            {(reasoning?.known_agents || []).map(ka => (
-              <Tooltip key={ka.agent} title={`${ka.agent} — ${ka.desc}`}>
-                <Tag
-                  style={{ cursor: 'pointer', borderColor: '#2a2620', color: '#a8a298', background: '#0d0d0d', fontSize: 11 }}
-                  onClick={() => setNewAgent(ka.agent)}
-                >
-                  {ka.agent} <span style={{ color: COPPER }}>({ka.suggest_label})</span>
-                </Tag>
-              </Tooltip>
-            ))}
-          </div>
         </Card>
 
         {/* 说明卡片 */}
