@@ -1,12 +1,12 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import {
   Card, Tag, Typography, Space, Button, Tooltip, Table, Empty, Spin,
-  Segmented, Modal, InputNumber, Input, Form, Popconfirm, Divider, message, Row, Col, Select, Switch
+  Segmented, Modal, InputNumber, Input, Form, Popconfirm, Divider, message, Row, Col, Select, Switch, Alert
 } from 'antd'
 import {
   ReloadOutlined, CheckCircleFilled, CloseCircleFilled, CopyOutlined,
   LineChartOutlined, BellOutlined, FileSearchOutlined, RocketOutlined,
-  SettingOutlined, PlusOutlined, DeleteOutlined, RobotOutlined, WalletOutlined
+  SettingOutlined, PlusOutlined, DeleteOutlined, RobotOutlined, WalletOutlined, SendOutlined
 } from '@ant-design/icons'
 import ReactMarkdown from 'react-markdown'
 import api from './auth'
@@ -75,6 +75,9 @@ export default function StockMonitorPage() {
   })
   const [profileOpen, setProfileOpen] = useState(false)
   const [profileForm] = Form.useForm()
+  // 2026-08-20: 个人微信推送（WxPusher 扫码绑定）
+  const [pushCfg, setPushCfg] = useState({ wxpusher_configured: false, wxpusher_qrcode: '', wxpusher_app_name: '', wxpusher_error: '' })
+  const [wxTestLoading, setWxTestLoading] = useState(false)
 
   const countdownRef = useRef(10)
 
@@ -89,6 +92,14 @@ export default function StockMonitorPage() {
     try {
       const r = await api.get('/stock-monitor/profile')
       setProfile(r.data || {})
+    } catch (e) { /* ignore */ }
+  }, [])
+
+  // 2026-08-20: 加载个人微信推送配置（扫码二维码/绑定状态）
+  const loadPushConfig = useCallback(async () => {
+    try {
+      const r = await api.get('/stock-monitor/push/config')
+      setPushCfg(r.data || {})
     } catch (e) { /* ignore */ }
   }, [])
 
@@ -122,7 +133,8 @@ export default function StockMonitorPage() {
     loadWatchlist()
     loadProfile()
     loadProfit()
-  }, [loadAll, loadWatchlist, loadProfile])
+    loadPushConfig()
+  }, [loadAll, loadWatchlist, loadProfile, loadPushConfig])
 
   // 10s 自动刷新倒计时
   useEffect(() => {
@@ -234,8 +246,10 @@ export default function StockMonitorPage() {
       max_liquidity_pct: profile.max_liquidity_pct ?? 0.05,
       correlation_threshold: profile.correlation_threshold ?? 0.7,
       sector_enabled: profile.sector_enabled ?? true,
+      push_wxpusher_uid: profile.push_wxpusher_uid || '',
     })
     setProfileOpen(true)
+    loadPushConfig()
   }
 
   const saveProfileCfg = async () => {
@@ -254,12 +268,26 @@ export default function StockMonitorPage() {
         max_liquidity_pct: v.max_liquidity_pct ?? null,
         correlation_threshold: v.correlation_threshold ?? null,
         sector_enabled: v.sector_enabled ?? null,
+        push_wxpusher_uid: v.push_wxpusher_uid || '',
       })
       if (r.data?.ok) { message.success('总体资金配置已保存'); setProfileOpen(false); loadProfile() }
       else message.error(r.data?.msg || '保存失败')
     } catch (e) {
       message.error('保存失败: ' + (e.response?.data?.message || e.message))
     }
+  }
+
+  // 2026-08-20: 向个人微信发送测试消息，验证扫码绑定
+  const sendWxTest = async () => {
+    setWxTestLoading(true)
+    try {
+      const r = await api.post('/stock-monitor/push/wxpusher-test')
+      if (r.data?.ok) message.success('测试消息已发送，请查看你的微信')
+      else message.warning(r.data?.msg || '未绑定微信或未配置推送')
+    } catch (e) {
+      message.error('发送失败: ' + (e.response?.data?.message || e.message))
+    }
+    setWxTestLoading(false)
   }
 
   const deleteConfig = async (id) => {
@@ -1078,7 +1106,40 @@ export default function StockMonitorPage() {
               </Form.Item>
             </Col>
           </Row>
+          <Form.Item name="push_wxpusher_uid" label="个人微信 UID（扫码关注后收到，保存即绑定）">
+            <Input placeholder="关注后微信收到的 UID_xxxx，填入后保存" allowClear />
+          </Form.Item>
         </Form>
+
+        <Divider style={{ margin: '12px 0' }} />
+        {/* 2026-08-20: 个人微信推送（WxPusher 扫码绑定） */}
+        <Text type="secondary" style={{ display: 'block', fontSize: 12, marginBottom: 8 }}>
+          用微信扫描下方二维码关注「股票财报推送」，关注后微信会收到你的 UID，填入上方「个人微信 UID」并保存，即可把该用户监控股票的财报日报推送到你的微信消息。
+        </Text>
+        {pushCfg.wxpusher_configured ? (
+          <Row gutter={16} align="middle">
+            <Col span={7} style={{ textAlign: 'center' }}>
+              {pushCfg.wxpusher_qrcode ? (
+                <img src={pushCfg.wxpusher_qrcode} alt="微信扫码绑定" style={{ width: 132, height: 132, border: '1px solid #444', borderRadius: 6 }} />
+              ) : (
+                <Text type="danger" style={{ fontSize: 12 }}>二维码加载失败{pushCfg.wxpusher_error ? `：${pushCfg.wxpusher_error}` : ''}</Text>
+              )}
+              <div><Text type="secondary" style={{ fontSize: 11 }}>微信扫码关注{pushCfg.wxpusher_app_name || ''}</Text></div>
+            </Col>
+            <Col span={17}>
+              {pushCfg.bound_uid && <Tag color="green" style={{ marginBottom: 8 }}>已绑定：{pushCfg.bound_uid}</Tag>}
+              <Button size="small" loading={wxTestLoading} onClick={sendWxTest} icon={<SendOutlined />}>
+                发送测试消息到微信（需先保存 UID）
+              </Button>
+              <Text type="secondary" style={{ display: 'block', marginTop: 6, fontSize: 11 }}>
+                绑定成功后，点右上角「推送财报日报」即可把该用户监控股票的财报推送至个人微信。
+              </Text>
+            </Col>
+          </Row>
+        ) : (
+          <Alert type="warning" showIcon message="管理员尚未配置微信推送（WxPusher AppToken）"
+            description="请管理员在部署配置（.env 的 stock-monitor.push.wxpusher-app-token）中填写 WxPusher 应用令牌后，本页面即可扫码绑定。" />
+        )}
       </Modal>
     </div>
   )
