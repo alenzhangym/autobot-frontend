@@ -43,6 +43,12 @@ export default function StockMonitorPage() {
   const [loading, setLoading] = useState(true)
   const [reportModal, setReportModal] = useState(null)  // { title, content }
   const [analyzingCode, setAnalyzingCode] = useState('')
+  // 2026-08-20: 基本面/财报分析
+  const [financial, setFinancial] = useState(null)       // { periods, name, code, updated_at }
+  const [finLoading, setFinLoading] = useState(false)
+  const [finAnalyzing, setFinAnalyzing] = useState('')   // 正在生成财报解读的 code
+  const [finReport, setFinReport] = useState(null)       // { title, content }
+  const [pushingFin, setPushingFin] = useState(false)
   const [posEdit, setPosEdit] = useState(null)          // { shares, cost }
   const [posSaving, setPosSaving] = useState(false)
   // 用户监控配置管理
@@ -260,6 +266,8 @@ export default function StockMonitorPage() {
 
   const selectStock = async (code) => {
     setSelectedCode(code)
+    setFinancial(null)
+    setReport('')
     try {
       const [k, rep] = await Promise.all([
         api.get('/stock-monitor/kline', { params: { code, days: 60 } }),
@@ -271,6 +279,53 @@ export default function StockMonitorPage() {
     } catch (e) {
       setKline([]); setReport('')
     }
+    loadFinancial(code)
+  }
+
+  // 2026-08-20: 加载结构化多期财报面板
+  const loadFinancial = async (code) => {
+    if (!code) { setFinancial(null); return }
+    setFinLoading(true)
+    try {
+      const r = await api.get('/stock-monitor/financial', { params: { code } })
+      setFinancial(r.data?.ok ? r.data : { ok: false, msg: r.data?.msg || '获取财报失败' })
+    } catch (e) {
+      setFinancial({ ok: false, msg: '获取财报失败: ' + (e.response?.data?.message || e.message) })
+    }
+    setFinLoading(false)
+  }
+
+  // 2026-08-20: 生成独立财报解读报告
+  const analyzeFinancial = async (code, name) => {
+    setFinAnalyzing(code)
+    try {
+      const r = await api.post('/stock-monitor/analyze-financial', { code })
+      if (!r.data?.ok) { message.error(r.data?.msg || '财报解读失败'); return }
+      message.success(`「${name || code}」财报解读完成`)
+      setFinReport({ title: `${name || code} 基本面/财报解读`, content: r.data.content || '' })
+      // 刷新分析报告列表
+      try {
+        const an = await api.get('/stock-monitor/analysis')
+        setAnalysis(an.data?.reports || [])
+      } catch (e) { /* ignore */ }
+    } catch (e) {
+      message.error('财报解读失败: ' + (e.response?.data?.message || e.message))
+    } finally {
+      setFinAnalyzing('')
+    }
+  }
+
+  // 2026-08-20: 手动推送当日财报日报（企业微信/钉钉/飞书）
+  const pushFinanceDaily = async () => {
+    setPushingFin(true)
+    try {
+      const r = await api.post('/stock-monitor/push-financial-daily')
+      if (r.data?.ok) message.success(r.data.msg || '财报日报已推送')
+      else message.warning(r.data?.msg || '未配置推送渠道，推送未成功')
+    } catch (e) {
+      message.error('推送失败: ' + (e.response?.data?.message || e.message))
+    }
+    setPushingFin(false)
   }
 
   const loadHistory = async (mode) => {
@@ -423,6 +478,10 @@ export default function StockMonitorPage() {
           >
             立即刷新行情
           </Button>
+          <Button icon={<BellOutlined />} loading={pushingFin} onClick={pushFinanceDaily}
+            style={{ background: 'rgba(7,119,3,.1)', border: '1px solid #1e2a3c', color: '#0ecb81' }}>
+            推送财报日报
+          </Button>
           <Button icon={<SettingOutlined />} onClick={openConfigList}>
             配置监控股票
           </Button>
@@ -520,6 +579,47 @@ export default function StockMonitorPage() {
                     </div>
 
                     <div style={{ marginTop: 6 }}><KlineChart klines={kline} /></div>
+
+                    {/* 2026-08-20: 基本面/财报面板 */}
+                    <div style={{ marginTop: 12, background: '#0f1622', border: '1px solid #1e2a3c', borderRadius: 8, padding: '12px 14px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                        <span style={{ fontSize: 13, fontWeight: 600, color: '#f5b301', letterSpacing: 1 }}>基本面 / 财报</span>
+                        <Space size={6}>
+                          <Button size="small" onClick={() => loadFinancial(selectedCode)} icon={<ReloadOutlined />}>刷新</Button>
+                          <Button size="small" icon={<RobotOutlined />}
+                            loading={finAnalyzing === selectedCode} disabled={!financial?.ok}
+                            onClick={() => analyzeFinancial(selectedCode, selQuote?.name)}>
+                            财报解读
+                          </Button>
+                        </Space>
+                      </div>
+                      {finLoading ? (
+                        <div style={{ textAlign: 'center', padding: '20px 0' }}><Spin size="small" /></div>
+                      ) : !financial?.ok ? (
+                        <div style={{ color: '#5b6577', fontSize: 12 }}>{financial?.msg || '暂无财报数据'}</div>
+                      ) : (financial.periods || []).length === 0 ? (
+                        <div style={{ color: '#5b6577', fontSize: 12 }}>
+                          {financial.raw ? String(financial.raw).slice(0, 220) : '暂无结构化财报数据'}
+                          <div style={{ marginTop: 6, fontSize: 11 }}>更新于 {financial.updated_at || '-'}</div>
+                        </div>
+                      ) : (
+                        <>
+                          <Table
+                            size="small" rowKey="period" pagination={false} dataSource={financial.periods}
+                            columns={[
+                              { title: '报告期', dataIndex: 'period', width: 110, render: v => <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{v}</span> },
+                              { title: '营收', dataIndex: 'revenue', align: 'right', render: v => <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{finFmt(v)}</span> },
+                              { title: '净利润', dataIndex: 'net_profit', align: 'right', render: v => <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{finFmt(v)}</span> },
+                              { title: 'ROE', dataIndex: 'roe', align: 'right', render: v => <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{finNumFmt(v, '%')}</span> },
+                              { title: '毛利率', dataIndex: 'gross_margin', align: 'right', render: v => <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{finNumFmt(v, '%')}</span> },
+                              { title: 'EPS', dataIndex: 'eps', align: 'right', render: v => <span style={{ fontFamily: 'monospace', fontSize: 12 }}>{finNumFmt(v, '')}</span> },
+                            ]}
+                            locale={{ emptyText: '暂无数据' }}
+                          />
+                          <div style={{ marginTop: 6, fontSize: 11, color: '#5b6577' }}>数据来源：东方财富 · 更新于 {financial.updated_at || '-'}</div>
+                        </>
+                      )}
+                    </div>
 
                     {report && (
                       <>
@@ -655,6 +755,18 @@ export default function StockMonitorPage() {
         styles={{ body: { maxHeight: '70vh', overflowY: 'auto', fontSize: 14, lineHeight: 1.8 } }}
       >
         {reportModal?.content ? <ReactMarkdown>{reportModal.content}</ReactMarkdown> : <Empty />}
+      </Modal>
+
+      {/* 2026-08-20: 财报解读全屏弹窗 */}
+      <Modal
+        open={!!finReport} onCancel={() => setFinReport(null)} width={980}
+        title={finReport?.title} footer={[
+          <Button key="copy" icon={<CopyOutlined />} onClick={() => copyText(finReport?.content)}>复制全部</Button>,
+          <Button key="close" onClick={() => setFinReport(null)}>关闭</Button>,
+        ]}
+        styles={{ body: { maxHeight: '70vh', overflowY: 'auto', fontSize: 14, lineHeight: 1.8 } }}
+      >
+        {finReport?.content ? <ReactMarkdown>{finReport.content}</ReactMarkdown> : <Empty />}
       </Modal>
 
       {/* 监控配置管理（列表 / 表单） */}
@@ -868,6 +980,20 @@ function groupByDate(reports) {
   const groups = {}
   reports.forEach(r => { (groups[r.date] = groups[r.date] || []).push(r) })
   return Object.keys(groups).sort().reverse().map(date => ({ date, items: groups[date] }))
+}
+
+/** 2026-08-20: 金额格式化（元 → 亿/万）。 */
+function finFmt(v) {
+  const n = Number(v)
+  if (v === null || v === undefined || isNaN(n)) return '--'
+  return Math.abs(n) >= 1e8 ? `${(n / 1e8).toFixed(2)}亿` : (Math.abs(n) >= 1e4 ? `${(n / 1e4).toFixed(0)}万` : n.toFixed(0))
+}
+
+/** 2026-08-20: 数值格式化，suffix 如 '%'。 */
+function finNumFmt(v, suffix = '') {
+  const n = Number(v)
+  if (v === null || v === undefined || isNaN(n)) return '--'
+  return `${n.toFixed(2)}${suffix}`
 }
 
 /** 区间列表摘要（如 "买: 10.0-10.5；买: 9.5-10.0"）。 */
