@@ -39,9 +39,19 @@ export default function SessionSidebar({
   const normalizedCompanyChannels = (companyChannels || []).map(c =>
     LEGACY_BUSINESS_CHANNELS.includes(c) ? 'cross' : c
   )
-  const CHANNELS = isSuper || normalizedCompanyChannels.length === 0
+  const baseChannels = isSuper || normalizedCompanyChannels.length === 0
     ? ALL_CHANNELS
     : ALL_CHANNELS.filter(ch => ch.isBaseDefault || normalizedCompanyChannels.includes(ch.key))
+  // 股票会话与股票监控共用授权: 公司勾选 stock_monitor 即开放"股票会话"聊天频道
+  const hasStockMonitorGranted =
+    isSuper || normalizedCompanyChannels.length === 0
+      ? ALL_CHANNELS.some(ch => ch.key === 'stock_monitor')
+      : normalizedCompanyChannels.includes('stock_monitor')
+  const CHANNELS = baseChannels.slice()
+  if (hasStockMonitorGranted && !CHANNELS.some(ch => ch.key === 'stock')) {
+    const stockChat = ALL_CHANNELS.find(ch => ch.key === 'stock')
+    if (stockChat) CHANNELS.push(stockChat)
+  }
 
   // Phase 4: erp/crm 合并为 cross, 管理菜单入口在 cross 可用时都显示
   const hasErpChannel = CHANNELS.some(ch => ch.key === 'cross');

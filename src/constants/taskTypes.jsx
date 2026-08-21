@@ -157,6 +157,21 @@ export const CHANNELS = [
     capabilities: ['行情监控', '买卖/做T/止损提醒', 'K线图', 'LLM 详细分析'],
     agentNames: [],
   },
+  // 2026-08-21: 股票会话 channel — 对话式股票交易，权限与股票监控共用 stock_monitor
+  // isPageOnly 未设置(false): 出现在"新建会话"下拉
+  // isBaseDefault 未设置: 公司需在管理页勾选 stock_monitor 后才可见（SessionSidebar 网关处理）
+  {
+    key: 'stock',
+    label: '股票会话',
+    desc: '对话式股票会话 - 买卖/查收益/图片录入持仓',
+    icon: '💹',
+    antIcon: <StockOutlined />,
+    taskType: null,
+    subType: null,
+    hideInCompanyConfig: true, // 权限与 stock_monitor 共用, 不在公司频道勾选中单列
+    capabilities: ['买入卖出', '持仓查询', '收益统计', '图片录入持仓'],
+    agentNames: ['StockChatService'],
+  },
 ];
 
 // ── 历史会话 channel 兼容 (Phase 4: erp/crm 合并为 cross) ──

@@ -256,6 +256,15 @@ export default function LlmManagement() {
     }
   }
 
+  // 模块模型下拉候选: 以 omlx 已加载模型列表为主; 若当前已保存的模型不在列表中则追加一项, 保证可回显/可选择
+  const modelOptionsForModule = (currentName) => {
+    const opts = (models || []).map(m => ({ value: m, label: m }))
+    if (currentName && !opts.some(o => o.value === currentName)) {
+      opts.push({ value: currentName, label: currentName + ' (不在 omlx 列表)' })
+    }
+    return opts
+  }
+
   const handleApply = async (modelName) => {
     if (!modelName || !modelName.trim()) {
       message.warning('请先选择或输入模型名')
@@ -787,11 +796,19 @@ export default function LlmManagement() {
                         onChange={(e) => setModuleDrafts(p => ({ ...p, [m.module_key]: { ...p[m.module_key], endpoint_url: e.target.value } }))} />
                     </div>
 
-                    <div style={{ width: 170 }}>
-                      <div style={{ fontSize: 10.5, color: '#807a6e' }}>模型</div>
-                      <Input size="small" placeholder="轻量模型, 如 gemma4"
-                        value={d.model_name || ''}
-                        onChange={(e) => setModuleDrafts(p => ({ ...p, [m.module_key]: { ...p[m.module_key], model_name: e.target.value } }))} />
+                    <div style={{ width: 240 }}>
+                      <div style={{ fontSize: 10.5, color: '#807a6e' }}>模型 (omlx 列表)</div>
+                      <Select
+                        size="small"
+                        style={{ width: '100%' }}
+                        placeholder={moduleGlobal.model || '从 omlx 列表选择'}
+                        allowClear
+                        showSearch
+                        optionFilterProp="label"
+                        value={d.model_name || null}
+                        onChange={(v) => setModuleDrafts(p => ({ ...p, [m.module_key]: { ...p[m.module_key], model_name: v || '' } }))}
+                        options={modelOptionsForModule(d.model_name)}
+                      />
                     </div>
 
                     <div style={{ width: 150 }}>

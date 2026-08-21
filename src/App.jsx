@@ -889,8 +889,8 @@ function App() {
   // C1 (2026-07-14): 粘贴即预览 — 检测输入框中的表格形态, 提示用户声明意图
   const [pasteTableInfo, setPasteTableInfo] = useState(null)
 
-  const [selectedImage, setSelectedImage] = useState(null)
-  const [selectedImageBase64, setSelectedImageBase64] = useState(null)
+  // 多附件图片: [{ name, mime, base64 }] — 支持一次多选、可多张
+  const [selectedImages, setSelectedImages] = useState([])
 
   const fileInputRef = useRef(null)
   const chatWsRef = useRef(null)
@@ -2440,7 +2440,7 @@ function App() {
 
   const sendMessage = async (presetText) => {
     let text = typeof presetText === 'string' ? presetText : input;
-    if ((!text.trim() && !selectedImageBase64 && uploadedDocuments.length === 0) || isLoading) return
+    if ((!text.trim() && selectedImages.length === 0 && uploadedDocuments.length === 0) || isLoading) return
 
     // Reset the streaming __CMD__ buffer for the new response
     resetStreamBuffer(sessionId)
@@ -2482,11 +2482,15 @@ function App() {
     }
 
     let contentToDisplay = text;
-    if (selectedImage) {
-      contentToDisplay = `[Image: ${selectedImage}]\n${text}`;
-    } else if (uploadedDocuments.length > 0) {
-      const docNames = uploadedDocuments.map(d => d.name).join(', ');
-      contentToDisplay = `[Document context: ${docNames}]\n${text}`;
+    const attachParts = [];
+    if (selectedImages.length > 0) {
+      attachParts.push(`[图片 x${selectedImages.length}: ${selectedImages.map(i => i.name).join(', ')}]`);
+    }
+    if (uploadedDocuments.length > 0) {
+      attachParts.push(`[Document context: ${uploadedDocuments.map(d => d.name).join(', ')}]`);
+    }
+    if (attachParts.length > 0) {
+      contentToDisplay = attachParts.join('\n') + '\n' + text;
     }
     setMessages(prev => [...prev, { id: nextMsgId(), role: 'user', content: contentToDisplay }])
     // S6: 记录最近一条 user query（供 intent 弹层用）
@@ -2495,7 +2499,7 @@ function App() {
     if (!sessions.find(s => s.id === sessionId)) {
       const currentSession = sessions.find(s => s.id === sessionId)
       const channelToUse = currentSession?.channel || currentChannel
-      setSessions(prev => [{ id: sessionId, title: text || selectedImage || (uploadedDocuments.length > 0 ? uploadedDocuments[0].name : 'New Session'), channel: channelToUse, timestamp: new Date().toISOString() }, ...prev])
+      setSessions(prev => [{ id: sessionId, title: text || (selectedImages[0]?.name) || (uploadedDocuments.length > 0 ? uploadedDocuments[0].name : 'New Session'), channel: channelToUse, timestamp: new Date().toISOString() }, ...prev])
     }
     try {
       if (isCodeSess && workspaceDir) {
@@ -2513,8 +2517,10 @@ function App() {
       // 旧 'plan' 锁定可通过 IssuesSidePanel 的修复按钮 + IssuesSidePanel "auto" 模式替代；
       // 旧 'build' 锁定 → 后端会基于 isImplementationContinuation 自动升级。
       if (codeMode && codeMode !== 'auto') payload.code_mode = codeMode;
-      if (selectedImageBase64) {
-        payload.image_base64 = selectedImageBase64;
+      // 多图片附件 (数组); 兼容旧 image_base64 (首图), 后端含去重
+      if (selectedImages.length > 0) {
+        payload.images = selectedImages.map(i => i.base64);
+        payload.image_base64 = selectedImages[0].base64;
       }
       if (uploadedDocuments.length > 0) {
         payload.document_ids = uploadedDocuments.map(d => d.id);
@@ -2649,8 +2655,7 @@ function App() {
       setMessages(prev => [...prev, { role: 'error', content: `Network Error: ${err.message}` }])
     } finally {
       setIsLoading(false);
-      setSelectedImage(null);
-      setSelectedImageBase64(null);
+      setSelectedImages([]);
     }
   }
 
@@ -2949,79 +2954,93 @@ function App() {
   }
 
   const handleFileUpload = async (e) => {
-    const file = e.target.files[0]
-    if (!file) return
+    const files = Array.from(e.target.files || [])
+    if (files.length === 0) return
 
-    if (file.type.startsWith('image/')) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const base64Data = event.target.result.split(',')[1]; // Extract base64 part
-        setSelectedImage(file.name);
-        setSelectedImageBase64(base64Data);
-      };
-      reader.readAsDataURL(file);
-      return;
+    // 图片附件: 转 base64 累积到多图数组 (支持多张, 与文档可并存)
+    const imageFiles = files.filter(f => f.type.startsWith('image/'))
+    if (imageFiles.length > 0) {
+      const readers = imageFiles.map(file => new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          const base64Data = event.target.result.split(',')[1]; // Extract base64 part
+          resolve({ name: file.name, mime: file.type, base64: base64Data });
+        };
+        reader.readAsDataURL(file);
+      }));
+      const loaded = await Promise.all(readers);
+      setSelectedImages(prev => [...prev, ...loaded]);
     }
 
-    // Handle document uploads
-    const formData = new FormData()
-    formData.append('file', file)
-    
-    // Give user immediate feedback that document is uploading
-    const msgId = Date.now();
-    setMessages(prev => [...prev, { id: msgId, role: 'user', content: `[Uploading Document: ${file.name}...]` }]);
-    setIsLoading(true);
+    // 文档附件: 逐个走 /documents/upload (自动解析) 并累积到 uploadedDocuments
+    const docFiles = files.filter(f => !f.type.startsWith('image/'))
+    if (docFiles.length === 0) return
 
-    try {
-      const res = await api.post('/documents/upload', formData, {
-        headers: { 
-          'Content-Type': 'multipart/form-data'
-        },
-        baseURL: getBackendHost().startsWith('http') ? getBackendHost() : `http://${getBackendHost()}`
-      })
-      if (res.data.status === 'success') {
-        const docId = res.data.document.id;
-        setUploadedDocuments(prev => [...prev, { id: docId, name: file.name }]);
-        message.success(`${file.name} uploaded successfully and is being parsed.`);
-        
-        // Start polling for parsing progress
-        let checkCount = 0;
-        const intervalId = setInterval(async () => {
-          checkCount++;
-          try {
-            const baseURL = getBackendHost().startsWith('http') ? getBackendHost() : `http://${getBackendHost()}`;
-            const docRes = await api.get('/documents/my', { baseURL });
-            if (docRes.data && docRes.data.data) {
-              const doc = docRes.data.data.find(d => d.id === docId);
-              if (doc) {
-                if (doc.status === 'COMPLETED') {
-                  clearInterval(intervalId);
-                  setMessages(prev => prev.map(msg => msg.id === msgId ? { ...msg, content: `[Document Parsed: ${file.name}]\nI have added this document to the knowledge base. Your next question will be answered using this document as context.` } : msg));
-                } else if (doc.status === 'FAILED') {
-                  clearInterval(intervalId);
-                  setMessages(prev => prev.map(msg => msg.id === msgId ? { ...msg, content: `[Document Parsing Failed: ${file.name}]\nPlease try again or check the file format.` } : msg));
-                } else {
-                  // PARSING
-                  setMessages(prev => prev.map(msg => msg.id === msgId ? { ...msg, content: `[Parsing Document: ${file.name}] Progress: ${doc.parsingProgress || 0}%...` } : msg));
+    const uploadOne = async (file) => {
+      const formData = new FormData()
+      formData.append('file', file)
+
+      // Give user immediate feedback that document is uploading
+      const msgId = Date.now();
+      setMessages(prev => [...prev, { id: msgId, role: 'user', content: `[Uploading Document: ${file.name}...]` }]);
+      setIsLoading(true);
+
+      try {
+        const res = await api.post('/documents/upload', formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data'
+          },
+          baseURL: getBackendHost().startsWith('http') ? getBackendHost() : `http://${getBackendHost()}`
+        })
+        if (res.data.status === 'success') {
+          const docId = res.data.document.id;
+          setUploadedDocuments(prev => [...prev, { id: docId, name: file.name }]);
+          message.success(`${file.name} uploaded successfully and is being parsed.`);
+
+          // Start polling for parsing progress
+          let checkCount = 0;
+          const intervalId = setInterval(async () => {
+            checkCount++;
+            try {
+              const baseURL = getBackendHost().startsWith('http') ? getBackendHost() : `http://${getBackendHost()}`;
+              const docRes = await api.get('/documents/my', { baseURL });
+              if (docRes.data && docRes.data.data) {
+                const doc = docRes.data.data.find(d => d.id === docId);
+                if (doc) {
+                  if (doc.status === 'COMPLETED') {
+                    clearInterval(intervalId);
+                    setMessages(prev => prev.map(msg => msg.id === msgId ? { ...msg, content: `[Document Parsed: ${file.name}]\nI have added this document to the knowledge base. Your next question will be answered using this document as context.` } : msg));
+                  } else if (doc.status === 'FAILED') {
+                    clearInterval(intervalId);
+                    setMessages(prev => prev.map(msg => msg.id === msgId ? { ...msg, content: `[Document Parsing Failed: ${file.name}]\nPlease try again or check the file format.` } : msg));
+                  } else {
+                    // PARSING
+                    setMessages(prev => prev.map(msg => msg.id === msgId ? { ...msg, content: `[Parsing Document: ${file.name}] Progress: ${doc.parsingProgress || 0}%...` } : msg));
+                  }
                 }
               }
-            }
-            if (checkCount > 60) clearInterval(intervalId); // timeout after 3 mins
-          } catch (e) {}
-        }, 3000);
-        
-      } else {
-        message.error(`Upload failed: ${res.data.message}`)
+              if (checkCount > 60) clearInterval(intervalId); // timeout after 3 mins
+            } catch (e) {}
+          }, 3000);
+
+        } else {
+          message.error(`Upload failed: ${res.data.message}`)
+          setMessages(prev => prev.filter(msg => msg.id !== msgId));
+        }
+      } catch (error) {
+        message.error('Upload failed: ' + error.message)
         setMessages(prev => prev.filter(msg => msg.id !== msgId));
+      } finally {
+        setIsLoading(false);
       }
-    } catch (error) {
-      message.error('Upload failed: ' + error.message)
-      setMessages(prev => prev.filter(msg => msg.id !== msgId));
-    } finally {
-      setIsLoading(false);
-      // reset file input
-      e.target.value = null;
     }
+
+    for (const file of docFiles) {
+      await uploadOne(file)
+    }
+
+    // reset file input
+    e.target.value = null;
   }
 
   if (!user) return <HomeWrapper onLoginSuccess={handleLoginSuccess} />
@@ -3811,15 +3830,18 @@ const handleDeleteSession = (id) => {
                           onClick={() => fileInputRef.current?.click()}
                           style={{ color: '#524d44', padding: '4px 6px' }} />
                       </Tooltip>
-                      <input type="file" ref={fileInputRef} style={{ display: 'none' }} onChange={handleFileUpload} accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.md,.csv,.dxf,.dwg,.step,.stp,.iges,.igs" />
+                      <input type="file" ref={fileInputRef} style={{ display: 'none' }} multiple onChange={handleFileUpload} accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.md,.csv,.dxf,.dwg,.step,.stp,.iges,.igs" />
 
-                      {selectedImage && (
-                        <div style={{ display: 'flex', alignItems: 'center', background: '#0e0e0e', padding: '2px 8px', borderRadius: 2, marginRight: 8, gap: 4, border: '1px solid #2a2620' }}>
-                          <FileImageOutlined style={{ color: '#7ab5b0', fontSize: 12 }} />
-                          <Text style={{ color: '#e8e3d8', fontSize: 12, maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedImage}</Text>
-                          <CloseOutlined style={{ fontSize: 10, color: '#807a6e', cursor: 'pointer' }} onClick={() => { setSelectedImage(null); setSelectedImageBase64(null); }} />
+                      {selectedImages.map((img, idx) => (
+                        <div key={idx} title={img.name} style={{ display: 'flex', alignItems: 'center', background: '#0e0e0e', padding: '2px 8px', borderRadius: 2, marginRight: 8, gap: 6, border: '1px solid #2a2620' }}>
+                          {img.mime?.startsWith('image/')
+                            ? <img src={`data:${img.mime};base64,${img.base64}`} alt={img.name}
+                                style={{ width: 22, height: 22, objectFit: 'cover', borderRadius: 2 }} />
+                            : <FileImageOutlined style={{ color: '#7ab5b0', fontSize: 12 }} />}
+                          <Text style={{ color: '#e8e3d8', fontSize: 12, maxWidth: 90, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{img.name}</Text>
+                          <CloseOutlined style={{ fontSize: 10, color: '#807a6e', cursor: 'pointer' }} onClick={() => setSelectedImages(prev => prev.filter((_, i) => i !== idx))} />
                         </div>
-                      )}
+                      ))}
 
                       {uploadedDocuments.map((doc, idx) => (
                         <div key={idx} style={{ display: 'flex', alignItems: 'center', background: '#0e0e0e', padding: '2px 8px', borderRadius: 2, marginRight: 8, gap: 4, border: '1px solid #2a2620' }}>
@@ -3898,7 +3920,7 @@ const handleDeleteSession = (id) => {
 
                       <Space style={{ paddingBottom: 2 }}>
                         {(() => {
-                          const hasInput = input.trim() || selectedImageBase64 || selectedQuickAction
+                          const hasInput = input.trim() || selectedImages.length > 0 || uploadedDocuments.length > 0 || selectedQuickAction
                           if (hasInput) {
                             return (
                               <Button type="primary" shape="circle" icon={<SendOutlined />}
