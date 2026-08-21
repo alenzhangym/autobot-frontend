@@ -16,11 +16,11 @@
  * 权限: 仅 SUPER_ADMIN 可访问 (后端校验, 前端菜单也只对超管可见)
  */
 import React, { useState, useEffect, useCallback } from 'react'
-import { Layout, Card, Row, Col, Statistic, Spin, Empty, Tag, Button, message, Input, Tooltip, Alert, Divider, Select, Space, Popconfirm, Slider, InputNumber } from 'antd'
+import { Layout, Card, Row, Col, Statistic, Spin, Empty, Tag, Button, message, Input, Tooltip, Alert, Divider, Select, Space, Popconfirm, Slider, InputNumber, Switch } from 'antd'
 import {
   ReloadOutlined, CheckCircleOutlined, ThunderboltOutlined,
   ApiOutlined, ArrowRightOutlined, UndoOutlined, ExclamationCircleOutlined,
-  ExperimentOutlined, DeleteOutlined, SettingOutlined,
+  ExperimentOutlined, DeleteOutlined, SettingOutlined, PlusOutlined, KeyOutlined,
 } from '@ant-design/icons'
 import api from './auth'
 
@@ -48,6 +48,16 @@ export default function LlmManagement() {
   const [savingKey, setSavingKey] = useState(null)                 // 正在保存的行 (agent 或 'GLOBAL')
   const [draft, setDraft] = useState({})                           // agent -> { level, maxTokens, thinkingBudget }
   const [globalDraft, setGlobalDraft] = useState({ level: null, maxTokens: null, thinkingBudget: null })
+
+  // 2026-08-21: 功能模块级端点配置
+  const [modules, setModules] = useState([])                       // [{ module_key, display_name, agent_patterns, ... }]
+  const [knownModules, setKnownModules] = useState([])             // [{ moduleKey, name, agentPattern }]
+  const [moduleGlobal, setModuleGlobal] = useState({ url: '', model: '' })
+  const [modulesLoading, setModulesLoading] = useState(false)
+  const [moduleDrafts, setModuleDrafts] = useState({})             // module_key -> { display_name, agent_patterns, endpoint_url, model_name, api_key, maxTokens, temperature, enabled }
+  const [savingModule, setSavingModule] = useState(false)
+  const [savingModuleKey, setSavingModuleKey] = useState(null)
+  const [showNewModule, setShowNewModule] = useState(false)
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -111,11 +121,41 @@ export default function LlmManagement() {
     }
   }, [])
 
+  const fetchModules = useCallback(async () => {
+    setModulesLoading(true)
+    try {
+      const res = await api.get('/admin/llm/module-configs')
+      setModules(res.data?.modules || [])
+      setKnownModules(res.data?.known || [])
+      setModuleGlobal(res.data?.global || { url: '', model: '' })
+      // 为全部模块初始化草稿值（实际生效值）
+      const initDrafts = {}
+      for (const m of (res.data?.modules || [])) {
+        initDrafts[m.module_key] = {
+          display_name: m.display_name || '',
+          agent_patterns: m.agent_patterns || '',
+          endpoint_url: m.endpoint_url || '',
+          model_name: m.model_name || '',
+          api_key: m.has_api_key ? '******' : (m.api_key || ''),
+          maxTokens: m.max_tokens ?? null,
+          temperature: m.temperature ?? null,
+          enabled: m.enabled !== false,
+        }
+      }
+      setModuleDrafts(initDrafts)
+    } catch (err) {
+      message.error('获取模块配置失败: ' + (err.response?.data?.error || err.message))
+    } finally {
+      setModulesLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     fetchStatus()
     fetchModels()
     fetchReasoning()
-  }, [fetchStatus, fetchModels, fetchReasoning])
+    fetchModules()
+  }, [fetchStatus, fetchModels, fetchReasoning, fetchModules])
 
   const applyReasoning = async (agent, cfg) => {
   setSavingLevel(true)
@@ -149,6 +189,68 @@ export default function LlmManagement() {
       await api.delete(`/admin/llm/reasoning-config/${encodeURIComponent(agent)}`)
       message.success(`已删除 ${agent} 的覆盖, 回退到全局默认`)
       await fetchReasoning()
+    } catch (err) {
+      message.error('删除失败: ' + (err.response?.data?.error || err.message))
+    }
+  }
+
+  const saveModule = async (mkey, draft) => {
+    if (!mkey) return
+    setSavingModule(true)
+    setSavingModuleKey(mkey)
+    try {
+      const body = {
+        module_key: mkey,
+        display_name: draft.display_name,
+        agent_patterns: draft.agent_patterns,
+        endpoint_url: draft.endpoint_url,
+        model_name: draft.model_name,
+        maxTokens: draft.maxTokens,
+        temperature: draft.temperature,
+        enabled: draft.enabled !== false,
+      }
+      // api_key: 仅当用户输入了真实值时提交；'******' 占位表示保留原值则不传
+      if (draft.api_key && draft.api_key !== '******') body.api_key = draft.api_key
+      await api.post('/admin/llm/module-config', body)
+      message.success(`模块 ${draft.display_name || mkey} 保存成功 (持久化, 立即生效)`)
+      await fetchModules()
+    } catch (err) {
+      message.error('保存失败: ' + (err.response?.data?.error || err.message))
+    } finally {
+      setSavingModule(false)
+      setSavingModuleKey(null)
+    }
+  }
+
+  const applyModule = (mkey) => {
+    const d = moduleDrafts[mkey]
+    if (!d) return
+    saveModule(mkey, d)
+  }
+
+  const createEmptyModule = (m) => {
+    const mkey = m.moduleKey
+    setModuleDrafts(prev => ({
+      ...prev,
+      [mkey]: {
+        display_name: m.name || '',
+        agent_patterns: m.agentPattern || '',
+        endpoint_url: '',
+        model_name: '',
+        api_key: '',
+        maxTokens: null,
+        temperature: null,
+        enabled: true,
+      },
+    }))
+    setShowNewModule(false)
+  }
+
+  const deleteModule = async (mkey) => {
+    try {
+      await api.delete(`/admin/llm/module-config/${encodeURIComponent(mkey)}`)
+      message.success(`已删除模块 ${mkey} 配置, 回退到全局配置`)
+      await fetchModules()
     } catch (err) {
       message.error('删除失败: ' + (err.response?.data?.error || err.message))
     }
@@ -571,6 +673,165 @@ export default function LlmManagement() {
                     </Button>
                     {a.configured && (
                       <Popconfirm title={`删除 ${a.agent} 的覆盖?`} onConfirm={() => deleteReasoningAgent(a.agent)}>
+                        <Button size="small" type="text" danger icon={<DeleteOutlined />} style={{ borderColor: 'transparent' }} />
+                      </Popconfirm>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </Card>
+
+        {/* 功能模块级端点配置 */}
+        <Card
+          style={{ background: '#1a1a1a', borderColor: '#333', marginTop: 20 }}
+          headStyle={{ borderBottomColor: '#333', color: '#e8e3d8' }}
+          title={
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <ApiOutlined style={{ color: COPPER }} />
+              <span>功能模块 LLM 端点 (按模块)</span>
+              <Button size="small" type="text" icon={<ReloadOutlined />} onClick={fetchModules} loading={modulesLoading}
+                style={{ color: '#888', marginLeft: 8 }} />
+            </div>
+          }
+          extra={<Tag style={{ fontSize: 11, borderColor: '#2a2620', color: '#807a6e', background: '#0d0d0d' }}>持久化 · 立即生效</Tag>}
+        >
+          <Alert
+            type="info"
+            showIcon
+            icon={<SettingOutlined />}
+            style={{ marginBottom: 16, background: COPPER_GLOW, borderColor: COPPER_DIM }}
+            message={
+              <span style={{ color: '#e8e3d8', fontSize: 12.5 }}>
+                为不同<b style={{ color: COPPER }}>功能模块</b>绑定独立的 LLM <b style={{ color: COPPER }}>端点 URL + 模型</b>，
+                让轻量任务（如股票分析、小说生成）走轻量模型，而不用 dense 大模型。
+                按 <code style={{ color: COPPER, fontFamily: "'JetBrains Mono', monospace" }}>agentPatterns</code> 前缀命中 agent 即生效。
+              </span>
+            }
+            description={
+              <span style={{ color: '#807a6e', fontSize: 11.5 }}>
+                全局默认: <code style={{ color: COPPER, fontFamily: "'JetBrains Mono', monospace" }}>{moduleGlobal.url}</code> · 模型 <code style={{ color: COPPER, fontFamily: "'JetBrains Mono', monospace" }}>{moduleGlobal.model || '—'}</code>。
+                命中模块时对应字段覆盖全局；未填的字段回退全局。
+              </span>
+            }
+          />
+
+          {/* 新建模块 (从已知候选创建) */}
+          <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 12, color: '#807a6e' }}>从候选新建模块:</span>
+            {!showNewModule ? (
+              <Button size="small" icon={<PlusOutlined />} onClick={() => setShowNewModule(true)}
+                style={{ borderColor: COPPER_DIM, color: COPPER, background: COPPER_GLOW }}>
+                新建模块
+              </Button>
+            ) : (
+              <Select
+                size="small"
+                style={{ width: 260 }}
+                placeholder="选择要创建的模块"
+                autoFocus
+                options={knownModules.map(k => ({ value: k.moduleKey, label: `${k.name} (${k.moduleKey})` }))}
+                onChange={(v) => {
+                  const k = knownModules.find(x => x.moduleKey === v)
+                  if (k) createEmptyModule(k)
+                }}
+              />
+            )}
+            {knownModules.length > 0 && (
+              <span style={{ fontSize: 10.5, color: '#5a554d' }}>
+                提示: 候选含默认 agent 前缀, 创建后按需修改
+              </span>
+            )}
+          </div>
+
+          {modulesLoading ? (
+            <div style={{ textAlign: 'center', padding: 24 }}><Spin /></div>
+          ) : modules.length === 0 ? (
+            <Empty description={<span style={{ color: '#807a6e', fontSize: 12 }}>暂无模块配置 — 点击"新建模块"开始</span>} />
+          ) : (
+            <div style={{ maxHeight: 480, overflow: 'auto', border: '1px solid #2a2620', borderRadius: 4 }}>
+              {modules.map(m => {
+                const d = moduleDrafts[m.module_key] || {}
+                return (
+                  <div key={m.module_key}
+                    style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderBottom: '1px solid #2a2620', flexWrap: 'wrap' }}>
+                    <div style={{ width: 160, flexShrink: 0 }}>
+                      <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: m.configured ? '#a8a298' : '#5a554d', wordBreak: 'break-all' }}>
+                        {m.display_name || m.module_key}
+                      </div>
+                      {m.configured && <Tag color="gold" style={{ fontSize: 10, marginTop: 3, borderColor: COPPER_DIM, color: COPPER, background: COPPER_GLOW }}>已配置</Tag>}
+                      {!m.configured && <span style={{ fontSize: 10, color: '#5a554d', marginTop: 2 }}>未配置(用全局)</span>}
+                    </div>
+
+                    <Space size={4} style={{ flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 10.5, color: '#807a6e' }}>显示名</span>
+                      <Input size="small" style={{ width: 120 }}
+                        value={d.display_name || ''}
+                        placeholder={m.display_name || m.module_key}
+                        onChange={(e) => setModuleDrafts(p => ({ ...p, [m.module_key]: { ...p[m.module_key], display_name: e.target.value } }))} />
+                    </Space>
+
+                    <div style={{ flex: 1, minWidth: 180 }}>
+                      <div style={{ fontSize: 10.5, color: '#807a6e' }}>Agent 前缀 (逗号分隔)</div>
+                      <Input size="small"
+                        value={d.agent_patterns || ''}
+                        placeholder={m.agent_patterns || 'e.g. AcademicResearch-Novel'}
+                        onChange={(e) => setModuleDrafts(p => ({ ...p, [m.module_key]: { ...p[m.module_key], agent_patterns: e.target.value } }))} />
+                    </div>
+
+                    <div style={{ flex: 1, minWidth: 180 }}>
+                      <div style={{ fontSize: 10.5, color: '#807a6e' }}>端点 URL</div>
+                      <Input size="small" placeholder={moduleGlobal.url || '回退全局'}
+                        value={d.endpoint_url || ''}
+                        onChange={(e) => setModuleDrafts(p => ({ ...p, [m.module_key]: { ...p[m.module_key], endpoint_url: e.target.value } }))} />
+                    </div>
+
+                    <div style={{ width: 170 }}>
+                      <div style={{ fontSize: 10.5, color: '#807a6e' }}>模型</div>
+                      <Input size="small" placeholder="轻量模型, 如 gemma4"
+                        value={d.model_name || ''}
+                        onChange={(e) => setModuleDrafts(p => ({ ...p, [m.module_key]: { ...p[m.module_key], model_name: e.target.value } }))} />
+                    </div>
+
+                    <div style={{ width: 150 }}>
+                      <div style={{ fontSize: 10.5, color: '#807a6e' }}>API Key ({d.api_key === '******' ? '已设置' : '不填=回退'})</div>
+                      <Input size="small" placeholder="可选"
+                        prefix={<KeyOutlined style={{ color: '#5a554d' }} />}
+                        value={d.api_key || ''}
+                        onChange={(e) => setModuleDrafts(p => ({ ...p, [m.module_key]: { ...p[m.module_key], api_key: e.target.value } }))} />
+                    </div>
+
+                    <div style={{ width: 120 }}>
+                      <div style={{ fontSize: 10.5, color: '#807a6e' }}>max_tokens</div>
+                      <InputNumber size="small" style={{ width: '100%' }} min={0} step={1024}
+                        value={d.maxTokens ?? null}
+                        placeholder="回退"
+                        onChange={(v) => setModuleDrafts(p => ({ ...p, [m.module_key]: { ...p[m.module_key], maxTokens: v } }))} />
+                    </div>
+
+                    <div style={{ width: 110 }}>
+                      <div style={{ fontSize: 10.5, color: '#807a6e' }}>temperature</div>
+                      <InputNumber size="small" style={{ width: '100%' }} min={0} max={2} step={0.1}
+                        value={d.temperature ?? null}
+                        placeholder="回退"
+                        onChange={(v) => setModuleDrafts(p => ({ ...p, [m.module_key]: { ...p[m.module_key], temperature: v === null ? null : v } }))} />
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontSize: 11, color: '#807a6e' }}>启用</span>
+                      <Switch size="small" checked={d.enabled !== false}
+                        onChange={(v) => setModuleDrafts(p => ({ ...p, [m.module_key]: { ...p[m.module_key], enabled: v } }))} />
+                    </div>
+
+                    <Button size="small" type="primary"
+                      loading={savingModule && savingModuleKey === m.module_key}
+                      onClick={() => applyModule(m.module_key)}
+                      style={{ background: '#333', borderColor: '#444', color: '#e8e3d8', fontWeight: 500 }}>
+                      应用
+                    </Button>
+                    {m.configured && (
+                      <Popconfirm title={`删除模块 ${m.module_key} 配置?`} onConfirm={() => deleteModule(m.module_key)}>
                         <Button size="small" type="text" danger icon={<DeleteOutlined />} style={{ borderColor: 'transparent' }} />
                       </Popconfirm>
                     )}

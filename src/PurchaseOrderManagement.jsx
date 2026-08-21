@@ -253,6 +253,16 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
       const values = await form.validateFields()
       // 至少 1 条物料
       if (items.length === 0) { message.error('请至少添加一行物料明细'); return }
+      // 同单据同物料去重: 同一采购单内不允许相同物料(partId)出现多行
+      const seenPart = new Map()
+      for (const it of items) {
+        if (!it.partId) continue
+        if (seenPart.has(it.partId)) {
+          message.error('同一采购单内物料不能重复，请将相同物料合并为一行后再保存')
+          return
+        }
+        seenPart.set(it.partId, true)
+      }
       // 部分提交：只取用户实际改过的行；未改的 (dirty=false) 不进后端
       const dirty = items.filter(it => it.dirty)
       if (dirty.length === 0) { message.error('请至少修改一条物料明细'); return }
@@ -299,6 +309,7 @@ export default function PurchaseOrderManagement({ user, companies = [] }) {
       }
       setShowModal(false); setEditing(null); form.resetFields(); setItems([emptyItem()]); setDeletedItemIds([])
       setExistingPo(null); setExistingPoItems([])
+      setExpandedItems({}) // 保存后清空展开明细缓存, 确保重新展开时拉取最新数量
       setPage(1); fetchOrders()
     } catch (e) {
       if (!e.errorFields) message.error('保存失败: ' + (e.response?.data?.error || e.message))
