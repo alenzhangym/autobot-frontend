@@ -24,6 +24,14 @@ export class SignalAggregator extends EventEmitter {
     this.requestSamples = [];
     this.agentFailures = [];
     this.activeIssue = new Map();
+    // 完整版 B ReAct 续接裁决计数器 (供监控大盘展示)
+    this.reactCounters = { appends: 0, compensated: 0, compensationFailed: 0 };
+    this.reactAppendSamples = [];
+  }
+
+  /** 返回 ReAct 续接计数 (接入 MonitorService.getStatus / 监控大盘). */
+  getReactCounters() {
+    return { ...this.reactCounters };
   }
 
   onEvent(ev) {
@@ -36,6 +44,12 @@ export class SignalAggregator extends EventEmitter {
       this._trackRequestLatency(ev);
     } else if (ev.kind === 'agent_step_failure') {
       this._trackAgentFailure(ev);
+    } else if (ev.kind === 'react_compensation_failed') {
+      this._trackReactCompensationFailed(ev);
+    } else if (ev.kind === 'react_compensated') {
+      this.reactCounters.compensated += 1;
+    } else if (ev.kind === 'react_decide_next_append') {
+      this._trackReactAppend(ev);
     }
   }
 
@@ -149,6 +163,53 @@ export class SignalAggregator extends EventEmitter {
     while (arr.length && arr[0].ts < cutoff) {
       arr.shift();
     }
+  }
+
+  /**
+   * 完整版 B: 补偿失败 (回滚缺口) → 立即触发 issue (门槛=1), 按 action 去重.
+   * 一旦出现即代表追加写步骤失败且补偿也失败, 必须第一时间呈现到监控大盘.
+   */
+  _trackReactCompensationFailed(ev) {
+    this.reactCounters.compensationFailed += 1;
+    const fp = `react_rollback_gap:${ev.action}`;
+    if (this.activeIssue.has(fp)) return;
+    this.activeIssue.set(fp, { firstSeen: Date.now(), lastEv: ev });
+    this.emit('trigger', {
+      kind: 'react_compensation_failed',
+      fingerprint: fp,
+      count: 1,
+      windowMs: this.windowMs,
+      exceptionClass: ev.class,
+      action: ev.action,
+      undoAction: ev.undoAction,
+      message: ev.message,
+      rawEvents: [ev],
+      lastEvent: ev
+    });
+  }
+
+  /**
+   * 完整版 B: 续接裁决追加命中 → 累计计数; 高频追加 (>=5 次/窗口) 提示提示词过激.
+   * 正常续接仅计数, 不轻易打扰.
+   */
+  _trackReactAppend(ev) {
+    this.reactCounters.appends += 1;
+    const cutoff = Date.now() - this.windowMs;
+    this.reactAppendSamples = this.reactAppendSamples.filter(x => x.ts >= cutoff);
+    this.reactAppendSamples.push({ ts: Date.now(), ev });
+    if (this.reactAppendSamples.length < 5) return;
+    const fp = 'react_decide_next_append_high_frequency';
+    if (this.activeIssue.has(fp)) return;
+    this.activeIssue.set(fp, { firstSeen: Date.now() });
+    this.emit('trigger', {
+      kind: 'react_decide_next_append',
+      fingerprint: fp,
+      count: this.reactAppendSamples.length,
+      windowMs: this.windowMs,
+      exceptionClass: 'ReactDecideNextAppendHigh',
+      message: `${this.reactAppendSamples.length} 次 ReAct 续接追加在窗口内 — 可能提示词过激, 需收敛`,
+      lastEvent: ev
+    });
   }
 
   releaseActive(fingerprint) {

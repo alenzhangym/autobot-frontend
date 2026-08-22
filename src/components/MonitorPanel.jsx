@@ -400,6 +400,29 @@ export default function MonitorPanel() {
         </Card></Col>
       </Row>
 
+      <Row gutter={16} style={{ marginBottom: 16 }}>
+        <Col span={6}><Card size="small">
+          <div style={{ fontSize: 12, color: '#888' }}>ReAct 续接追加</div>
+          <div style={{ fontSize: 22, color: '#1677ff' }}>{status.reactCounters?.appends ?? '—'}</div>
+        </Card></Col>
+        <Col span={6}><Card size="small">
+          <div style={{ fontSize: 12, color: '#888' }}>ReAct 补偿成功</div>
+          <div style={{ fontSize: 22, color: '#52c41a' }}>{status.reactCounters?.compensated ?? '—'}</div>
+        </Card></Col>
+        <Col span={6}><Card size="small">
+          <div style={{ fontSize: 12, color: '#888' }}>ReAct 补偿失败</div>
+          <div style={{ fontSize: 22, color: (status.reactCounters?.compensationFailed || 0) ? '#ff4d4f' : '#888' }}>
+            {status.reactCounters?.compensationFailed ?? '—'}
+          </div>
+        </Card></Col>
+        <Col span={6}><Card size="small">
+          <div style={{ fontSize: 12, color: '#888' }}>ReAct 续接裁决灰度</div>
+          <div style={{ fontSize: 14, lineHeight: '22px' }}>
+            <Tag>decide-next</Tag>
+          </div>
+        </Card></Col>
+      </Row>
+
       <Card
         size="small"
         style={{ marginBottom: 16 }}

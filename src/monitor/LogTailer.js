@@ -104,6 +104,10 @@ export class LogTailer extends EventEmitter {
     const ts = new Date().toISOString();
     const file = path.basename(filePath);
 
+    // 完整版 B ReAct 续接裁决信号 (可出现在 autobot-backend.log 的任意行, 先于文件分支匹配)
+    const react = this._parseReactLine(ts, file, line);
+    if (react) return react;
+
     if (file === 'autobot-backend.log') {
       const exMatch = line.match(/\[EXCEPTION\]\s+([\w$.]+(?:\.[\w$]+)+)\s*:\s*(.+?)(?:\s+at\s+|$)/);
       if (exMatch) {
@@ -164,5 +168,62 @@ export class LogTailer extends EventEmitter {
 
   _extractStack(filePath, firstLine) {
     return [firstLine];
+  }
+
+  /**
+   * 完整版 B ReAct 续接裁决日志解析.
+   *
+   * 识别 ERPOrchestrator-DecideNext 三类信号 (按危险级):
+   *   - react_compensation_failed: 追加写失败 + 补偿也失败 → 回滚缺口, 即时告警
+   *   - react_compensated:         追加写失败但已成功补偿
+   *   - react_decide_next_append:  续接裁决命中 (追加了 write/read 步骤)
+   *
+   * 返回 null 表示不匹配.
+   */
+  _parseReactLine(ts, file, line) {
+    if (line.indexOf('Compensation FAILED') !== -1) {
+      // 统一回滚循环里的补偿失败: "[ERPOrchestrator-Saga] Compensation FAILED for step N (UNDO): msg"
+      const m = line.match(/Compensation FAILED for step\s+\d+\s+\((\S+)\)/);
+      return {
+        kind: 'react_compensation_failed',
+        ts,
+        source: file,
+        class: 'ReactRollbackGap',
+        action: m ? m[1] : '?',
+        undoAction: m ? m[1] : null,
+        message: `ERP 补偿失败 (回滚缺口): ${m ? m[1] : line}`,
+        raw: line
+      };
+    }
+    if (line.indexOf('Compensation succeeded') !== -1) {
+      const m = line.match(/Compensation succeeded for step\s+\d+\s+\((\S+)\)/);
+      return {
+        kind: 'react_compensated',
+        ts,
+        source: file,
+        class: 'ReactCompensated',
+        action: m ? m[1] : '?',
+        undoAction: m ? m[1] : null,
+        message: `ERP 补偿成功: ${m ? m[1] : line}`,
+        raw: line
+      };
+    }
+    // 计划内顺延命中 (ERP/CRM): "appended step X after Y (revocable=..)"
+    if (line.indexOf('] appended step ') !== -1) {
+      const m = line.match(/appended step\s+(\S+)\s+after\s+(\S+)/);
+      if (m) {
+        return {
+          kind: 'react_decide_next_append',
+          ts,
+          source: file,
+          class: 'ReactDecideNextAppend',
+          action: m[1],
+          prevAction: m[2],
+          message: `ReAct 计划内顺延追加了步骤: ${m[1]} (接在 ${m[2]} 之后)`,
+          raw: line
+        };
+      }
+    }
+    return null;
   }
 }

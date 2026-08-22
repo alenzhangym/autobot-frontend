@@ -85,7 +85,8 @@ export class MonitorService extends EventEmitter {
       logsDir: this.logsDir,
       storePath: this.storePath,
       autoRestart: this.autoRestart,
-      running: this.running
+      running: this.running,
+      reactCounters: this.aggregator.getReactCounters()
     };
   }
 
