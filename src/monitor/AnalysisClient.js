@@ -31,6 +31,18 @@ function parseCmdBlocks(text) {
   return parseAllCmdBlocks(text).map(b => b.cmd);
 }
 
+// P1 线协议升级: 构造 [COMMAND_RESULTS] 可选的 [META:{json}] 行。
+// 仅携带已跟踪字段 (session_id 必有); turn_id / tool_call_id / session_version 尚未跟踪
+// 时可缺省, 由后端填权威值。无 sessionId 时返回空串 → 消息保持与 legacy 格式一致。
+function buildCommandResultsMeta(sessionId, extra) {
+  if (!sessionId) return '';
+  const meta = { session_id: sessionId };
+  if (extra?.turnId != null) meta.turn_id = extra.turnId;
+  if (extra?.toolCallId != null) meta.tool_call_id = extra.toolCallId;
+  if (extra?.sessionVersion != null) meta.session_version = extra.sessionVersion;
+  return `[META:${JSON.stringify(meta)}]`;
+}
+
 function extractFinalJson(text) {
   if (!text) return null;
   const fenceRe = /```json\s*([\s\S]+?)\s*```/g;
@@ -115,7 +127,8 @@ export class AnalysisClient extends EventEmitter {
       }
 
       const state = this._extractTrailingState(responseText);
-      lastResponse = `[COMMAND_RESULTS]\n${results.join('\n\n')}\n\n${state}`;
+      const metaLine = buildCommandResultsMeta(this.sessionId);
+      lastResponse = `[COMMAND_RESULTS]\n${metaLine ? metaLine + '\n' : ''}${results.join('\n\n')}\n\n${state}`;
     }
 
     throw new Error(`AnalysisClient exceeded ${this.maxRounds} rounds without final answer`);

@@ -459,6 +459,23 @@ function extractTrailingAnalysisStateJson(content) {
   return parts.join('')
 }
 
+/**
+ * P1 线协议升级: 构造 [COMMAND_RESULTS] 可选的 [META:{json}] 行。
+ * 仅携带已跟踪的字段 (session_id 必有; turn_id / tool_call_id / session_version 尚未
+ * 跟踪时可缺省, 由后端填权威值)。无 sessionId 时返回空串 → 消息保持与 legacy 格式一致。
+ * @param {string} sessionId
+ * @param {{turnId?: number, toolCallId?: string, sessionVersion?: number}} [extra]
+ * @returns {string} '[META:{...}]' 或 ''
+ */
+export function buildCommandResultsMeta(sessionId, extra) {
+  if (!sessionId) return ''
+  const meta = { session_id: sessionId }
+  if (extra?.turnId != null) meta.turn_id = extra.turnId
+  if (extra?.toolCallId != null) meta.tool_call_id = extra.toolCallId
+  if (extra?.sessionVersion != null) meta.session_version = extra.sessionVersion
+  return `[META:${JSON.stringify(meta)}]`
+}
+
 // ── Streaming __CMD__ pre-dispatch ───
 // When the LLM streams tokens via WebSocket, we intercept __CMD__ blocks and
 // dispatch them immediately so file reads / scans complete before the full
@@ -667,7 +684,10 @@ export async function executeAgentCommands(text, workspaceDir, onLog, sessionId)
   // Preserve the full trailing state JSON so backend can recover the next round correctly
   const stateJson = extractTrailingAnalysisStateJson(text)
 
-  return `[COMMAND_RESULTS]\n${results.join('\n\n')}\n\n${stateJson}`
+  // P1: 可选 [META:...] 头 (有 sessionId 时前置), body 部分与 legacy 格式逐字节一致.
+  const metaLine = buildCommandResultsMeta(sessionId)
+
+  return `[COMMAND_RESULTS]\n${metaLine ? metaLine + '\n' : ''}${results.join('\n\n')}\n\n${stateJson}`
 }
 
 function isAbsoluteCommandPath(filePath) {
