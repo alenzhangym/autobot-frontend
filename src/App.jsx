@@ -2749,6 +2749,10 @@ function App() {
 
   const appendLiveLog = (chunk) => {
     if (!chunk) return
+    // 转发到本地 Node(server.js) 落盘 frontend.log，供排查 "__CMD__ 未回传/只看到步骤" 问题（best-effort）。
+    try {
+      api.post('/api/local/frontend-log', { line: chunk, sessionId }, { baseURL: getLocalAgentBaseUrl() })
+    } catch (_) { /* best-effort，不影响 UI */ }
     if (!liveLogActiveRef.current) {
       startLiveLogSession(true)
       setLocalTerminalOutput(chunk)

@@ -1004,6 +1004,27 @@ async function executeSingleCommand(cmd, workspaceDir, onLog, sessionId) {
         return `Error removing backup ${cmd.path}: ${detail}`
       }
     }
+    case 'graph':
+    case 'graph_search':
+    case 'graph_callchain':
+    case 'graph_references': {
+      // 图谱数据在服务端(FalkorDB)由 ServerSideCommandResolver 就地解析；若该命令仍漏到
+      // 前端(例如中间轮或 regex 未覆盖), 这里返回中性提示而非 "Unknown command",
+      // 不伪造数据, 也不中断命令回环。
+      const op = cmd.op || cmd.action || 'graph'
+      onLog?.(`[AgentCMD] graph (server-side) id=${cmd.id || '(no id)'} op=${op}\n`)
+      return `(graph ${op} 查询由服务端图谱解析, 命令 ${cmd.id || ''} 已忽略)`
+    }
+    case 'focus': {
+      // focus 是回灌协议: 前端需要回应 LLM 声明的 focus domain, 后端从 COMMAND_RESULTS 里
+      // 抽取 "domain" 落库。这里回一个含 domain 的 ack, 让后端能正常锁定 focus 域。
+      const domain = cmd.domain || String(cmd.id || '').replace(/^cmd-focus:?/, '')
+      onLog?.(`[AgentCMD] focus ack domain=${domain}\n`)
+      return domain ? `{"domain":"${domain}","ack":true}` : 'focus ack'
+    }
+    case 'skill':
+      // skill 文档由服务端 SkillService 就地加载, 前端无需拦截.
+      return '(skill 文档由服务端加载)'
     default:
       return `Unknown command: ${cmd.action}`
   }

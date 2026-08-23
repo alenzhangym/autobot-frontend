@@ -1817,6 +1817,35 @@ if (AUTOBOT_MONITOR_ENABLED) {
   }
 }
 
+// ── 前端 __CMD__ 调试日志（落盘，供排查"只看到步骤没有结论"）──
+// 由浏览器端 appendLiveLog 转发到这里，追加写入 java-backend/logs/frontend.log。
+app.post('/api/local/frontend-log', (req, res) => {
+  const { line, sessionId } = req.body || {};
+  if (!line) return res.json({ ok: false });
+  try {
+    const logsDir = path.join(AUTOBOT_REPO_ROOT, 'java-backend', 'logs');
+    fs.mkdirSync(logsDir, { recursive: true });
+    fs.appendFileSync(
+      path.join(logsDir, 'frontend.log'),
+      `[${new Date().toISOString()}]${sessionId ? ` [${sessionId}]` : ''} ${line}\n`
+    );
+    return res.json({ ok: true });
+  } catch (e) {
+    console.warn('[FrontendLog] write failed', e.message);
+    return res.json({ ok: false });
+  }
+});
+
+app.get('/api/local/frontend-log', (req, res) => {
+  try {
+    const f = path.join(AUTOBOT_REPO_ROOT, 'java-backend', 'logs', 'frontend.log');
+    if (!fs.existsSync(f)) return res.json({ ok: true, lines: [] });
+    return res.json({ ok: true, lines: fs.readFileSync(f, 'utf-8').split('\n').filter(Boolean) });
+  } catch (e) {
+    return res.json({ ok: true, lines: [] });
+  }
+});
+
 app.get('/api/monitor/status', (req, res) => {
   res.json({
     available: AUTOBOT_MONITOR_ENABLED,

@@ -187,6 +187,26 @@ export class AnalysisClient extends EventEmitter {
         case 'diff': {
           return '(diff not supported by monitor — backend should include diffs in fix_proposal)';
         }
+        case 'graph':
+        case 'graph_search':
+        case 'graph_callchain':
+        case 'graph_references': {
+          // 图谱数据由服务端(FalkorDB) ServerSideCommandResolver 就地解析; 漏到前端时
+          // 返回中性提示而非 "Unknown command", 不伪造数据, 不中断回环.
+          const op = cmd.op || cmd.action || 'graph';
+          this.logger.log?.(`[AnalysisClient] graph (server-side) id=${cmd.id || '(no-id)'} op=${op}`);
+          return `(graph ${op} 查询由服务端图谱解析, 命令 ${cmd.id || ''} 已忽略)`;
+        }
+        case 'focus': {
+          // focus 回灌协议: 回含 domain 的 ack, 供后端从 COMMAND_RESULTS 抽取锁定 focus 域.
+          const domain = cmd.domain || String(cmd.id || '').replace(/^cmd-focus:?/, '');
+          this.logger.log?.(`[AnalysisClient] focus ack domain=${domain}`);
+          return domain ? `{"domain":"${domain}","ack":true}` : 'focus ack';
+        }
+        case 'issues':
+          return '(issues 列表由服务端解析)';
+        case 'skill':
+          return '(skill 文档由服务端加载)';
         default:
           return `Unknown command: ${cmd.action}`;
       }
