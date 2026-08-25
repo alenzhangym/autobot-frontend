@@ -1185,8 +1185,10 @@ function App() {
   }, [activeTab])
 
   const handleLoginSuccess = (loginData) => {
-    // Save token to localStorage if not already saved
-    if (loginData && loginData.token && !localStorage.getItem('token')) {
+    // 2026-08-25: 始终保存最新 token, 移除 !localStorage.getItem('token') 守卫.
+    // 旧 token 可能已过期/失效, 登录后必须用新 token 替换, 否则后续 API 请求
+    // 会带旧 token 导致 401, 触发 axios 响应拦截器的登出逻辑.
+    if (loginData && loginData.token) {
       localStorage.setItem('token', loginData.token)
     }
     
@@ -2749,10 +2751,9 @@ function App() {
 
   const appendLiveLog = (chunk) => {
     if (!chunk) return
-    // 转发到本地 Node(server.js) 落盘 frontend.log，供排查 "__CMD__ 未回传/只看到步骤" 问题（best-effort）。
-    try {
-      api.post('/api/local/frontend-log', { line: chunk, sessionId }, { baseURL: getLocalAgentBaseUrl() })
-    } catch (_) { /* best-effort，不影响 UI */ }
+    // 转发到本地 Vite 插件 frontendLogPlugin 落盘 frontend.log（best-effort）。
+    api.post('/api/local/frontend-log', { line: chunk, sessionId }, { baseURL: getLocalAgentBaseUrl() })
+      .catch(() => {}) // 静默处理 Promise 拒绝，不影响 UI
     if (!liveLogActiveRef.current) {
       startLiveLogSession(true)
       setLocalTerminalOutput(chunk)
@@ -2769,12 +2770,22 @@ function App() {
   }
 
   useEffect(() => {
-    const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null
-    if (!lastMsg || lastMsg.role !== 'assistant') return
-    if (!lastMsg.content || !lastMsg.content.includes('__CMD__{')) return
-    if (!lastMsg.id) return
+    // 从后往前找：找第一个包含 __CMD__{ 的未处理 assistant 消息
+    // 在 ReAct 模式下，最后一条消息是 role=react_flow（进度显示），__CMD__ 在倒数第二条 assistant 消息里
+    // 所以不能只检查最后一条，必须向前遍历
+    let targetMsg = null
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i]
+      if (msg.role === 'assistant' && msg.content && msg.content.includes('__CMD__{') && msg.id) {
+        targetMsg = msg
+        break
+      }
+      // 如果遇到 user 消息就停，用户提问前的 assistant 消息肯定已经处理过了
+      if (msg.role === 'user') break
+    }
+    if (!targetMsg) return
 
-    const commandExecutionKey = `${sessionId}:${lastMsg.id}:${lastMsg.content}`
+    const commandExecutionKey = `${sessionId}:${targetMsg.id}:${targetMsg.content}`
     if (processedCmdMsgs.current.has(commandExecutionKey)) return
     if (processingCmdMsgs.current.has(commandExecutionKey)) return
 
@@ -2786,7 +2797,7 @@ function App() {
 
     const wsDir = workspaceDir || getDefaultWorkspaceDir()
     startLiveLogSession(true)
-    executeAgentCommands(lastMsg.content, wsDir, (line) => {
+    executeAgentCommands(targetMsg.content, wsDir, (line) => {
       appendLiveLog(line)
     }, sessionId).then(results => {
       if (!results) {
@@ -2800,7 +2811,7 @@ function App() {
         const arr = [...processedCmdMsgs.current]
         processedCmdMsgs.current = new Set(arr.slice(-30))
       }
-      sendCommandResultsSilently(results, lastMsg.id)
+      sendCommandResultsSilently(results, targetMsg.id)
     }).catch(e => {
       processingCmdMsgs.current.delete(commandExecutionKey)
       console.warn('Agent command execution failed:', e)
