@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import {
   Layout, Menu, Button, Input, Avatar, Typography, Space, Tooltip,
   Modal, Form, Tabs, Tag, Dropdown, Divider, ConfigProvider, theme, Badge, Select, InputNumber, TimePicker, message, Checkbox,
-  List, Spin, Drawer, Segmented, Grid
+  List, Spin, Drawer, Segmented, Grid, Switch
 } from 'antd'
 import dayjs from 'dayjs'
 import {
@@ -54,6 +54,7 @@ import DocumentPreviewModal from './DocumentPreviewModal'
 import SessionSidebar from './components/SessionSidebar'
 import { executeAgentCommands, appendStreamToken, tryStreamDispatch, resetStreamBuffer } from './components/WorkspacePanel'
 import MessageBubble from './components/MessageBubble'
+import EventLogPanel from './components/EventLogPanel'
 import IssuesSidePanel from './components/IssuesSidePanel'
 import InteractivePanel from './components/InteractivePanel'
 import OrderFormModal from './components/OrderFormModal'
@@ -845,6 +846,8 @@ function App() {
   const nextMsgId = () => { msgIdCounter.current += 1; return msgIdCounter.current }
   const [input, setInput] = useState('')
   const [sessionId, setSessionId] = useState('')
+  // P4: 自动上下文投影开关 — 默认开启，用户可在 header 中关闭
+  const [contextProjectionEnabled, setContextProjectionEnabled] = useState(true)
   // A 方案：code 会话不再需要 'plan'/'build' 二选 toggle；'auto' 表示由后端自动推断。
   // 保留 codeMode 状态变量是为未来可能的"高级用户强制锁定"留口子（UI 已不再暴露）。
   const [codeMode, setCodeMode] = useState('auto')  // 'auto' (默认) | 'plan' (强制只分析) | 'build' (强制实施)
@@ -1494,6 +1497,12 @@ function App() {
               return newMsgs
             })
             return  // 短路后面的 plan 消息处理
+          } else if (data.type === 'PARALLEL_DISPATCH') {
+            // P2: 并行工具调用派发事件 — 在日志中展示并行调用信息
+            const batchSize = data.batchSize || data.toolCalls?.length || 0
+            const logLine = `[Parallel] 并行派发 ${batchSize} 个工具调用\n`
+            if (typeof appendLiveLog === 'function') appendLiveLog(logLine)
+            return
           } else if (data.type === 'ui_render') {
             const localId = data.id || Date.now()
             setMessages(prev => [...prev, { id: data.id || null, _localId: localId, role: 'ui_render', content: data.message }])
@@ -2536,6 +2545,8 @@ function App() {
       if (workspaceDir) {
         payload.workspace_dir = workspaceDir;
       }
+      // P4: 自动上下文投影开关
+      payload.context_projection = contextProjectionEnabled;
       // Include client platform/tool info so the backend adapts commands per OS
       if (probeResult) {
         payload.client_info = getClientInfo(probeResult);
@@ -2849,7 +2860,21 @@ function App() {
     const nextVersion = (silentResponseVersionRef.current.get(targetMsgId) || 0) + 1
     silentResponseVersionRef.current.set(targetMsgId, nextVersion)
     try {
-      const payload = { message: results, session_id: sessionId }
+      // P2: 解析 [BATCH_COMPLETE:...] 元信息，附加到 payload 通知后端
+      let processedResults = results
+      const batchMatch = results.match(/\[BATCH_COMPLETE:([^\]]+)\]\n?/)
+      if (batchMatch) {
+        const batchIds = batchMatch[1].split(',').map(id => id.trim()).filter(Boolean)
+        const logLine = `[Parallel] 并行批次完成: ${batchIds.length} 个工具调用\n`
+        if (typeof appendLiveLog === 'function') appendLiveLog(logLine)
+        // 从结果中移除 BATCH_COMPLETE 行，后端只解析 COMMAND_RESULTS
+        processedResults = results.replace(/\[BATCH_COMPLETE:[^\]]+\]\n?/, '')
+      }
+      const payload = { message: processedResults, session_id: sessionId }
+      if (batchMatch) {
+        const batchIds = batchMatch[1].split(',').map(id => id.trim()).filter(Boolean)
+        payload.batch_complete = batchIds
+      }
       const session = sessions.find(s => s.id === sessionId)
       if (session && session.channel) payload.channel = session.channel
       if (workspaceDir) payload.workspace_dir = workspaceDir
@@ -3414,6 +3439,21 @@ const handleDeleteSession = (id) => {
                 >
                   图谱
                 </Button>
+              )}
+              {/* P3: 事件溯源状态面板 — 仅在有活跃会话时显示 */}
+              {sessionId && !isMobile && (
+                <EventLogPanel sessionId={sessionId} />
+              )}
+              {/* P4: 自动上下文投影开关 */}
+              {sessionId && !isMobile && (
+                <Switch
+                  size="small"
+                  checked={contextProjectionEnabled}
+                  onChange={setContextProjectionEnabled}
+                  checkedChildren="投影"
+                  unCheckedChildren="投影"
+                  style={{ fontSize: 11 }}
+                />
               )}
             </Space>
             <Space style={{ flexShrink: 0 }}>

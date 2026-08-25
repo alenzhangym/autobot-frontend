@@ -587,6 +587,42 @@ export function clearStreamedCmdCache() {
 // ── Full-response command executor ───
 
 /**
+ * 宽松修复 LLM 生成的 __CMD__ JSON: Windows 绝对路径中的反斜杠(如 E:\code\autobot)
+ * 在 JSON 字符串里是未转义字符, 而 \c / \a 等不是合法 JSON 转义序列, 会导致
+ * JSON.parse 报 "Bad escaped character"。本函数做字符串感知的逐字符扫描:
+ * 在字符串值内部, 遇到"后跟非法转义字符"的反斜杠时把它转义为 \\, 使 \c 被解析
+ * 为字面量"反斜杠+c"(恢复原始 Windows 路径); 合法的 \n / \\ / \" / \u 等转义
+ * 原样保留, 不受影响。
+ */
+function repairJsonBackslashes(str) {
+  let out = ''
+  let inStr = false
+  for (let i = 0; i < str.length; i++) {
+    const ch = str[i]
+    if (inStr) {
+      if (ch === '\\') {
+        const next = str[i + 1]
+        // 合法 JSON 转义字符: " \ / b f n r t u
+        if (next && '"\\/bfnrtu'.includes(next)) {
+          out += ch + next
+          i++
+        } else {
+          out += '\\\\' + (next || '')
+          i++
+        }
+        continue
+      }
+      if (ch === '"') inStr = false
+      out += ch
+      continue
+    }
+    if (ch === '"') inStr = true
+    out += ch
+  }
+  return out
+}
+
+/**
  * Execute agent commands embedded in a message text.
  * Returns results as a string to send back to the agent.
  * @param {string} text - The agent message text containing __CMD__ markers
@@ -628,7 +664,15 @@ export async function executeAgentCommands(text, workspaceDir, onLog, sessionId)
       try {
         commands.push(JSON.parse(jsonStr))
       } catch (e) {
-        onLog?.(`[AgentCMD] JSON parse failed: ${e.message}\n`)
+        // LLM 生成的 Windows 绝对路径(如 E:\code\autobot\java-backend)里反斜杠未转义,
+        // \c/\a 不是合法 JSON 转义 → JSON.parse 失败。尝试宽松修复后重试。
+        const repaired = repairJsonBackslashes(jsonStr)
+        try {
+          commands.push(JSON.parse(repaired))
+          onLog?.(`[AgentCMD] JSON parse recovered (fixed unescaped backslashes)\n`)
+        } catch (e2) {
+          onLog?.(`[AgentCMD] JSON parse failed: ${e.message}\n`)
+        }
       }
       searchStart = i + 1
     } else {
@@ -687,7 +731,13 @@ export async function executeAgentCommands(text, workspaceDir, onLog, sessionId)
   // P1: 可选 [META:...] 头 (有 sessionId 时前置), body 部分与 legacy 格式逐字节一致.
   const metaLine = buildCommandResultsMeta(sessionId)
 
-  return `[COMMAND_RESULTS]\n${metaLine ? metaLine + '\n' : ''}${results.join('\n\n')}\n\n${stateJson}`
+  // P2: 当有并行只读命令时，在结果中嵌入批次元信息，让后端能匹配到 pendingToolCalls
+  const batchLine = readCmds.length > 1
+    ? `[BATCH_COMPLETE:${readCmds.map(c => c.id || '?').join(',')}]`
+    : ''
+
+  const header = `[COMMAND_RESULTS]\n${batchLine ? batchLine + '\n' : ''}${metaLine ? metaLine + '\n' : ''}`
+  return `${header}${results.join('\n\n')}\n\n${stateJson}`
 }
 
 function isAbsoluteCommandPath(filePath) {

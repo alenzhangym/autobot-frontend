@@ -1249,6 +1249,43 @@ function renderContent(content, preParsedAnalysis) {
     return <MarkdownContent content={'```json\n' + content + '\n```'} />;
   }
 
+  // P4: 自动上下文投影 — 检测并渲染为可折叠面板
+  if (content.includes('【自动上下文投影')) {
+    const parts = content.split(/(【自动上下文投影[\s\S]*?自动上下文投影结束】)/)
+    return (
+      <div>
+        {parts.map((part, i) => {
+          if (part.startsWith('【自动上下文投影')) {
+            return (
+              <Collapse
+                key={i}
+                size="small"
+                style={{ margin: '4px 0', background: 'var(--ab-bg-2, #1a1a2e)', borderRadius: 6 }}
+                items={[{
+                  key: 'ctx-proj',
+                  label: (
+                    <span style={{ fontSize: 12, color: 'var(--ab-text-2, #aaa)' }}>
+                      自动上下文投影
+                    </span>
+                  ),
+                  children: (
+                    <pre style={{
+                      fontSize: 11, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                      margin: 0, color: 'var(--ab-text-2, #aaa)', lineHeight: 1.6
+                    }}>
+                      {part}
+                    </pre>
+                  )
+                }]}
+              />
+            )
+          }
+          return <MarkdownContent key={i} content={part} />
+        })}
+      </div>
+    )
+  }
+
   return <MarkdownContent content={content} />;
 }
 
