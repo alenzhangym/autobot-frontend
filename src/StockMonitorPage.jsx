@@ -50,7 +50,8 @@ export default function StockMonitorPage() {
   const [finReport, setFinReport] = useState(null)       // { title, content }
   const [pushingFin, setPushingFin] = useState(false)
   // 2026-08-26: 全局数据源偏好（auto|eastmoney|ths）
-  const [dataSource, setDataSource] = useState('auto')
+  const [finDataSource, setFinDataSource] = useState('auto')   // 财报数据源：auto|eastmoney|ths
+  const [quoteDataSource, setQuoteDataSource] = useState('auto') // 实时/日线数据源：auto|eastmoney|ths|tencent
   const [posEdit, setPosEdit] = useState(null)          // { shares, cost }
   const [posSaving, setPosSaving] = useState(false)
   // 2026-08-20: 持仓盈利总结 + 买卖交易流水
@@ -130,11 +131,14 @@ export default function StockMonitorPage() {
     }
   }, [analysisMode])
 
-  // 2026-08-26: 全局数据源偏好 —— 读取（须在 useEffect 依赖数组引用前定义，避免 TDZ）
+  // 2026-08-26: 数据源偏好 —— 财报(fin)与实时/日线(quote)分开读取（须在 useEffect 依赖引用前定义，避免 TDZ）
   const loadDataSource = useCallback(async () => {
     try {
       const r = await api.get('/stock-monitor/data-source')
-      if (r.data?.ok && r.data?.dataSource) setDataSource(r.data.dataSource)
+      if (r.data?.ok) {
+        if (r.data.fin?.dataSource) setFinDataSource(r.data.fin.dataSource)
+        if (r.data.quote?.dataSource) setQuoteDataSource(r.data.quote.dataSource)
+      }
     } catch (e) { /* 后端未就绪则保持默认 auto */ }
   }, [])
 
@@ -198,16 +202,23 @@ export default function StockMonitorPage() {
     setCfgOpen(true)
   }
 
-  const saveDataSource = async (v) => {
-    const prev = dataSource
-    setDataSource(v)
-    const label = v === 'ths' ? '同花顺优先' : v === 'eastmoney' ? '东方财富优先' : '自动'
+  const cfgLabel = {
+    auto: '自动', eastmoney: '东方财富优先', ths: '同花顺优先', tencent: '腾讯优先',
+  }
+  // 保存单类数据源偏好：kind = 'fin' | 'quote'
+  const saveDataSource = async (kind, v) => {
+    const setter = kind === 'fin' ? setFinDataSource : setQuoteDataSource
+    const prev = kind === 'fin' ? finDataSource : quoteDataSource
+    setter(v)
+    const label = cfgLabel[v] || v
     try {
-      const r = await api.post('/stock-monitor/data-source', { dataSource: v })
-      if (r.data?.ok && r.data?.dataSource) { setDataSource(r.data.dataSource); message.success(`数据源已设为「${label}」，失败时自动回退另一源`) }
-      else { setDataSource(prev); message.warning('保存失败，已还原') }
+      const r = await api.post('/stock-monitor/data-source', { [kind]: v })
+      if (r.data?.ok) {
+        setter((kind === 'fin' ? r.data.fin?.dataSource : r.data.quote?.dataSource) || v)
+        message.success(`已设为「${label}」，首选源失败时自动回退另一源`)
+      } else { setter(prev); message.warning('保存失败，已还原') }
     } catch (e) {
-      setDataSource(prev)
+      setter(prev)
       message.error('保存数据源失败: ' + (e.response?.data?.message || e.message))
     }
   }
@@ -595,26 +606,31 @@ export default function StockMonitorPage() {
           <Button icon={<SettingOutlined />} onClick={openConfigList}>
             配置监控股票
           </Button>
-          {/* 2026-08-26: 全局数据源偏好 —— 财报与股市行情下载接口选择 */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Tooltip
-              placement="bottomRight"
-              title="财报与股市行情数据的下载接口偏好：自动（默认）= 平衡使用；东方财富优先 / 同花顺优先 = 首选源失败时自动回退另一源。保存后全局生效并持久化。"
-            >
-              <span style={{ fontSize: 12, color: '#8b95a7', whiteSpace: 'nowrap' }}>数据源</span>
+          {/* 2026-08-26: 数据源偏好 —— 财报(fin) 与 实时/日线(quote) 两组独立设置 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <Tooltip placement="bottomRight"
+              title="财报数据接口偏好：自动=平衡使用；东方财富优先 / 同花顺优先 = 首选源失败时自动回退另一源。保存后全局生效并持久化。">
+              <span style={{ fontSize: 12, color: '#8b95a7', whiteSpace: 'nowrap' }}>财报源</span>
             </Tooltip>
-            <Select
-              size="middle"
-              value={dataSource}
-              onChange={saveDataSource}
-              style={{ width: 150 }}
-              popupMatchSelectWidth={false}
+            <Select size="middle" value={finDataSource} onChange={v => saveDataSource('fin', v)}
+              style={{ width: 140 }} popupMatchSelectWidth={false}
               options={[
                 { value: 'auto', label: '自动（默认）' },
                 { value: 'eastmoney', label: '东方财富优先' },
                 { value: 'ths', label: '同花顺优先' },
-              ]}
-            />
+              ]} />
+            <Tooltip placement="bottomRight"
+              title="实时/日线行情接口偏好：自动=平衡使用；东方财富 / 同花顺 / 腾讯 优先 = 首选源失败时自动回退另一源。保存后全局生效并持久化。">
+              <span style={{ fontSize: 12, color: '#8b95a7', whiteSpace: 'nowrap' }}>行情源</span>
+            </Tooltip>
+            <Select size="middle" value={quoteDataSource} onChange={v => saveDataSource('quote', v)}
+              style={{ width: 140 }} popupMatchSelectWidth={false}
+              options={[
+                { value: 'auto', label: '自动（默认）' },
+                { value: 'eastmoney', label: '东方财富优先' },
+                { value: 'ths', label: '同花顺优先' },
+                { value: 'tencent', label: '腾讯优先' },
+              ]} />
           </div>
         </div>
       </div>
