@@ -49,6 +49,8 @@ export default function StockMonitorPage() {
   const [finAnalyzing, setFinAnalyzing] = useState('')   // 正在生成财报解读的 code
   const [finReport, setFinReport] = useState(null)       // { title, content }
   const [pushingFin, setPushingFin] = useState(false)
+  // 2026-08-26: 全局数据源偏好（auto|eastmoney|ths）
+  const [dataSource, setDataSource] = useState('auto')
   const [posEdit, setPosEdit] = useState(null)          // { shares, cost }
   const [posSaving, setPosSaving] = useState(false)
   // 2026-08-20: 持仓盈利总结 + 买卖交易流水
@@ -128,13 +130,22 @@ export default function StockMonitorPage() {
     }
   }, [analysisMode])
 
+  // 2026-08-26: 全局数据源偏好 —— 读取（须在 useEffect 依赖数组引用前定义，避免 TDZ）
+  const loadDataSource = useCallback(async () => {
+    try {
+      const r = await api.get('/stock-monitor/data-source')
+      if (r.data?.ok && r.data?.dataSource) setDataSource(r.data.dataSource)
+    } catch (e) { /* 后端未就绪则保持默认 auto */ }
+  }, [])
+
   useEffect(() => {
     loadAll()
     loadWatchlist()
     loadProfile()
     loadProfit()
     loadPushConfig()
-  }, [loadAll, loadWatchlist, loadProfile, loadPushConfig])
+    loadDataSource()
+  }, [loadAll, loadWatchlist, loadProfile, loadPushConfig, loadDataSource])
 
   // 10s 自动刷新倒计时
   useEffect(() => {
@@ -185,6 +196,20 @@ export default function StockMonitorPage() {
     setAiResult(null)
     setCfgView('list')
     setCfgOpen(true)
+  }
+
+  const saveDataSource = async (v) => {
+    const prev = dataSource
+    setDataSource(v)
+    const label = v === 'ths' ? '同花顺优先' : v === 'eastmoney' ? '东方财富优先' : '自动'
+    try {
+      const r = await api.post('/stock-monitor/data-source', { dataSource: v })
+      if (r.data?.ok && r.data?.dataSource) { setDataSource(r.data.dataSource); message.success(`数据源已设为「${label}」，失败时自动回退另一源`) }
+      else { setDataSource(prev); message.warning('保存失败，已还原') }
+    } catch (e) {
+      setDataSource(prev)
+      message.error('保存数据源失败: ' + (e.response?.data?.message || e.message))
+    }
   }
 
   // LLM 自动配置：分析 资金画像+个股行情+大盘+消息+财报 后生成并保存策略
@@ -570,6 +595,27 @@ export default function StockMonitorPage() {
           <Button icon={<SettingOutlined />} onClick={openConfigList}>
             配置监控股票
           </Button>
+          {/* 2026-08-26: 全局数据源偏好 —— 财报与股市行情下载接口选择 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Tooltip
+              placement="bottomRight"
+              title="财报与股市行情数据的下载接口偏好：自动（默认）= 平衡使用；东方财富优先 / 同花顺优先 = 首选源失败时自动回退另一源。保存后全局生效并持久化。"
+            >
+              <span style={{ fontSize: 12, color: '#8b95a7', whiteSpace: 'nowrap' }}>数据源</span>
+            </Tooltip>
+            <Select
+              size="middle"
+              value={dataSource}
+              onChange={saveDataSource}
+              style={{ width: 150 }}
+              popupMatchSelectWidth={false}
+              options={[
+                { value: 'auto', label: '自动（默认）' },
+                { value: 'eastmoney', label: '东方财富优先' },
+                { value: 'ths', label: '同花顺优先' },
+              ]}
+            />
+          </div>
         </div>
       </div>
 
@@ -851,9 +897,11 @@ export default function StockMonitorPage() {
           <Button key="copy" icon={<CopyOutlined />} onClick={() => copyText(reportModal?.content)}>复制全部</Button>,
           <Button key="close" onClick={() => setReportModal(null)}>关闭</Button>,
         ]}
-        styles={{ body: { maxHeight: '70vh', overflowY: 'auto', fontSize: 14, lineHeight: 1.8 } }}
+        styles={{ body: { padding: 0 } }}
       >
-        {reportModal?.content ? <ReactMarkdown>{reportModal.content}</ReactMarkdown> : <Empty />}
+        <div style={{ maxHeight: '72vh', overflowY: 'auto', padding: '12px 16px', fontSize: 14, lineHeight: 1.8 }}>
+          {reportModal?.content ? <ReactMarkdown>{reportModal.content}</ReactMarkdown> : <Empty />}
+        </div>
       </Modal>
 
       {/* 2026-08-20: 财报解读全屏弹窗 */}
@@ -863,9 +911,11 @@ export default function StockMonitorPage() {
           <Button key="copy" icon={<CopyOutlined />} onClick={() => copyText(finReport?.content)}>复制全部</Button>,
           <Button key="close" onClick={() => setFinReport(null)}>关闭</Button>,
         ]}
-        styles={{ body: { maxHeight: '70vh', overflowY: 'auto', fontSize: 14, lineHeight: 1.8 } }}
+        styles={{ body: { padding: 0 } }}
       >
-        {finReport?.content ? <ReactMarkdown>{finReport.content}</ReactMarkdown> : <Empty />}
+        <div style={{ maxHeight: '72vh', overflowY: 'auto', padding: '12px 16px', fontSize: 14, lineHeight: 1.8 }}>
+          {finReport?.content ? <ReactMarkdown>{finReport.content}</ReactMarkdown> : <Empty />}
+        </div>
       </Modal>
 
       {/* 2026-08-20: 买卖记录弹窗 —— 录入单笔买卖，自动计算持仓与均价 */}
