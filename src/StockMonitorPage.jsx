@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import {
-  Card, Tag, Typography, Space, Button, Tooltip, Table, Empty, Spin,
+  Card, Tag, Typography, Space, Button, Table, Empty, Spin,
   Segmented, Modal, InputNumber, Input, Form, Popconfirm, Divider, message, Row, Col, Select, Switch, Alert
 } from 'antd'
 import {
@@ -49,9 +49,7 @@ export default function StockMonitorPage() {
   const [finAnalyzing, setFinAnalyzing] = useState('')   // 正在生成财报解读的 code
   const [finReport, setFinReport] = useState(null)       // { title, content }
   const [pushingFin, setPushingFin] = useState(false)
-  // 2026-08-26: 全局数据源偏好（auto|eastmoney|ths）
-  const [finDataSource, setFinDataSource] = useState('auto')   // 财报数据源：auto|eastmoney|ths
-  const [quoteDataSource, setQuoteDataSource] = useState('auto') // 实时/日线数据源：auto|eastmoney|ths|tencent
+  // 2026-08-27: 数据源偏好 (fin/quote) 已移至设置弹窗的"股票配置" tab, 此页不再持有状态.
   const [posEdit, setPosEdit] = useState(null)          // { shares, cost }
   const [posSaving, setPosSaving] = useState(false)
   // 2026-08-20: 持仓盈利总结 + 买卖交易流水
@@ -131,16 +129,7 @@ export default function StockMonitorPage() {
     }
   }, [analysisMode])
 
-  // 2026-08-26: 数据源偏好 —— 财报(fin)与实时/日线(quote)分开读取（须在 useEffect 依赖引用前定义，避免 TDZ）
-  const loadDataSource = useCallback(async () => {
-    try {
-      const r = await api.get('/stock-monitor/data-source')
-      if (r.data?.ok) {
-        if (r.data.fin?.dataSource) setFinDataSource(r.data.fin.dataSource)
-        if (r.data.quote?.dataSource) setQuoteDataSource(r.data.quote.dataSource)
-      }
-    } catch (e) { /* 后端未就绪则保持默认 auto */ }
-  }, [])
+  // 2026-08-27: 数据源偏好由设置弹窗的"股票配置" tab 管理, 此页不再加载/保存.
 
   useEffect(() => {
     loadAll()
@@ -148,8 +137,7 @@ export default function StockMonitorPage() {
     loadProfile()
     loadProfit()
     loadPushConfig()
-    loadDataSource()
-  }, [loadAll, loadWatchlist, loadProfile, loadPushConfig, loadDataSource])
+  }, [loadAll, loadWatchlist, loadProfile, loadPushConfig])
 
   // 10s 自动刷新倒计时
   useEffect(() => {
@@ -202,26 +190,7 @@ export default function StockMonitorPage() {
     setCfgOpen(true)
   }
 
-  const cfgLabel = {
-    auto: '自动', eastmoney: '东方财富优先', ths: '同花顺优先', tencent: '腾讯优先',
-  }
-  // 保存单类数据源偏好：kind = 'fin' | 'quote'
-  const saveDataSource = async (kind, v) => {
-    const setter = kind === 'fin' ? setFinDataSource : setQuoteDataSource
-    const prev = kind === 'fin' ? finDataSource : quoteDataSource
-    setter(v)
-    const label = cfgLabel[v] || v
-    try {
-      const r = await api.post('/stock-monitor/data-source', { [kind]: v })
-      if (r.data?.ok) {
-        setter((kind === 'fin' ? r.data.fin?.dataSource : r.data.quote?.dataSource) || v)
-        message.success(`已设为「${label}」，首选源失败时自动回退另一源`)
-      } else { setter(prev); message.warning('保存失败，已还原') }
-    } catch (e) {
-      setter(prev)
-      message.error('保存数据源失败: ' + (e.response?.data?.message || e.message))
-    }
-  }
+  // 2026-08-27: saveDataSource/cfgLabel 已随数据源偏好 UI 移到设置弹窗删除.
 
   // LLM 自动配置：分析 资金画像+个股行情+大盘+消息+财报 后生成并保存策略
   const autoGenerate = async () => {
@@ -606,32 +575,7 @@ export default function StockMonitorPage() {
           <Button icon={<SettingOutlined />} onClick={openConfigList}>
             配置监控股票
           </Button>
-          {/* 2026-08-26: 数据源偏好 —— 财报(fin) 与 实时/日线(quote) 两组独立设置 */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <Tooltip placement="bottomRight"
-              title="财报数据接口偏好：自动=平衡使用；东方财富优先 / 同花顺优先 = 首选源失败时自动回退另一源。保存后全局生效并持久化。">
-              <span style={{ fontSize: 12, color: '#8b95a7', whiteSpace: 'nowrap' }}>财报源</span>
-            </Tooltip>
-            <Select size="middle" value={finDataSource} onChange={v => saveDataSource('fin', v)}
-              style={{ width: 140 }} popupMatchSelectWidth={false}
-              options={[
-                { value: 'auto', label: '自动（默认）' },
-                { value: 'eastmoney', label: '东方财富优先' },
-                { value: 'ths', label: '同花顺优先' },
-              ]} />
-            <Tooltip placement="bottomRight"
-              title="实时/日线行情接口偏好：自动=平衡使用；东方财富 / 同花顺 / 腾讯 优先 = 首选源失败时自动回退另一源。保存后全局生效并持久化。">
-              <span style={{ fontSize: 12, color: '#8b95a7', whiteSpace: 'nowrap' }}>行情源</span>
-            </Tooltip>
-            <Select size="middle" value={quoteDataSource} onChange={v => saveDataSource('quote', v)}
-              style={{ width: 140 }} popupMatchSelectWidth={false}
-              options={[
-                { value: 'auto', label: '自动（默认）' },
-                { value: 'eastmoney', label: '东方财富优先' },
-                { value: 'ths', label: '同花顺优先' },
-                { value: 'tencent', label: '腾讯优先' },
-              ]} />
-          </div>
+          {/* 2026-08-27: 数据源偏好 (财报源/行情源) 已移至设置弹窗的"股票配置" tab, 由 super admin 统一配置, 此处不再展示. */}
         </div>
       </div>
 

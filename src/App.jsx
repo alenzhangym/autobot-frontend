@@ -68,6 +68,9 @@ import CrossDomainEntityCard from './components/CrossDomainEntityCard'
 import GraphStatusPanel from './components/GraphStatusPanel'
 import LspSettingsPanel from './components/LspSettingsPanel'
 import McpSettingsPanel from './components/McpSettingsPanel'
+// 2026-08-27: 设置弹窗新增 tab — MCP/LSP/股票配置/LLM配置 作为独立管理 tab (super admin 可见)
+import StockConfigTab from './components/StockConfigTab'
+import LlmModuleConfigTab from './components/LlmModuleConfigTab'
 import CodeGraphExplorer from './components/CodeGraphExplorer'
 import CodePreviewDrawer from './components/CodePreviewDrawer'
 import IntentCorrectionFloater from './components/IntentCorrectionFloater'
@@ -750,23 +753,58 @@ function SettingsModal({ open, onClose, user, dbConfigs, onDeleteDbConfig, onAdd
   })
   }
 
+  // 2026-08-27: 设置弹窗 tab 整理 — MCP/LSP/股票配置/LLM配置 作为独立 tab
+  //   - MCP/LSP: 原底部独立 Panel, 现提升为 tab (super admin 可见)
+  //   - 股票配置: 财报源/行情源偏好 (仅 super admin, 全公司共用)
+  //   - LLM配置: 按功能模块的 LLM 端点配置 (仅 super admin, 简化版, 不含 agent 级推理强度滑动条)
+  if (isSuperAdmin) {
+    tabItems.push({
+      key: 'mcp',
+      label: 'MCP',
+      children: (
+        <div>
+          <Text style={{ color: '#888', fontSize: 12, marginBottom: 16, display: 'block' }}>
+            MCP server 配置管理 — 列出已配置的 server, 支持新增 / 编辑 / 删除 / 启动预热 / 刷新 tool discovery.
+          </Text>
+          <McpSettingsPanel />
+        </div>
+      )
+    })
+    tabItems.push({
+      key: 'lsp',
+      label: 'LSP',
+      children: (
+        <div>
+          <Text style={{ color: '#888', fontSize: 12, marginBottom: 16, display: 'block' }}>
+            LSP 语言服务器安装与配置 — 桌面壳模式可本地探测安装, 浏览器模式调用后端或提示下载客户端.
+          </Text>
+          <LspSettingsPanel />
+        </div>
+      )
+    })
+    tabItems.push({
+      key: 'stock_config',
+      label: '股票配置',
+      children: <StockConfigTab />
+    })
+    tabItems.push({
+      key: 'llm_config',
+      label: 'LLM配置',
+      children: <LlmModuleConfigTab />
+    })
+  }
+
   return (
-    <Modal title={t('settings.title')} open={open} onCancel={onClose} footer={null} 
+    <Modal title={t('settings.title')} open={open} onCancel={onClose} footer={null}
       width="100vw"
       style={{ top: 0, padding: 0, margin: 0, maxWidth: '100vw', height: '100vh' }}
-      styles={{ 
-        content: { background: '#161616', border: 'none', borderRadius: 0, height: '100vh', display: 'flex', flexDirection: 'column' }, 
-        header: { background: '#161616', borderBottom: '1px solid #2a2a2a', padding: '16px 24px', margin: 0 }, 
+      styles={{
+        content: { background: '#161616', border: 'none', borderRadius: 0, height: '100vh', display: 'flex', flexDirection: 'column' },
+        header: { background: '#161616', borderBottom: '1px solid #2a2a2a', padding: '16px 24px', margin: 0 },
         body: { flex: 1, overflow: 'auto', padding: '24px' },
-        mask: { backdropFilter: 'blur(4px)' } 
+        mask: { backdropFilter: 'blur(4px)' }
       }}>
       <Tabs items={tabItems} />
-      <div style={{ marginTop: 24 }}>
-        <McpSettingsPanel />
-      </div>
-      <div style={{ marginTop: 16 }}>
-        <LspSettingsPanel />
-      </div>
     </Modal>
   )
 }
@@ -933,25 +971,53 @@ function App() {
     return () => window.removeEventListener('theme-change', handler)
   }, [])
 
+  // 2026-08-27: 集中化 role 规范化.
+  //  - 用户名 "admin" 一律对齐为 SUPER_ADMIN (兜底防止 role 列异常)
+  //  - 其它按后端规范 SUPER_ADMIN / COMPANY_ADMIN / USER 三档
+  const normalizeUserRole = (u) => {
+    if (!u) return u
+    const user = { ...u }
+    const uname = user.username ? String(user.username).trim() : ''
+    let role = user.role
+    if (uname.toLowerCase() === 'admin') {
+      role = 'SUPER_ADMIN'
+    } else if (role) {
+      const ru = String(role).toUpperCase()
+      if (ru.includes('SUPER') || ru === 'ADMINISTRATOR') role = 'SUPER_ADMIN'
+      else if (ru === 'ADMIN') role = 'SUPER_ADMIN'
+      else if (ru.includes('COMPANY') || ru.includes('ENTERPRISE') || ru.includes('TENANT')) role = 'COMPANY_ADMIN'
+      else if (!['SUPER_ADMIN', 'COMPANY_ADMIN', 'USER'].includes(role)) role = 'USER'
+    } else {
+      role = 'USER'
+    }
+    user.role = role
+    return user
+  }
+
   useEffect(() => {
     const bootstrap = async () => {
       const tokenExists = isAuthenticated()
       const cachedUser = getCurrentUser()
       if (tokenExists && cachedUser) {
-        setUser(cachedUser)
+        const normedCached = normalizeUserRole(cachedUser)
+        setUser(normedCached)
         initSessions()
         checkFrontendUpdate()
         // background verify
         const me = await fetchMe()
-        if (!me) { 
-          logout() 
+        if (!me) {
+          logout()
         } else {
-          setUser({ id: me.id, username: me.username, role: me.role, companyId: me.companyId })
+          const normed = normalizeUserRole({ id: me.id, username: me.username, role: me.role, companyId: me.companyId })
+          localStorage.setItem('user', JSON.stringify(normed))
+          setUser(normed)
         }
       } else if (tokenExists) {
         const me = await fetchMe()
         if (me) {
-          setUser({ id: me.id, username: me.username, role: me.role, companyId: me.companyId })
+          const normed = normalizeUserRole({ id: me.id, username: me.username, role: me.role, companyId: me.companyId })
+          localStorage.setItem('user', JSON.stringify(normed))
+          setUser(normed)
           initSessions()
           checkFrontendUpdate()
         } else {
@@ -1194,21 +1260,39 @@ function App() {
     if (loginData && loginData.token) {
       localStorage.setItem('token', loginData.token)
     }
-    
+
+    // 2026-08-27: role 规范化 — 避免数据库 / 历史缓存里残留的非标准值
+    // (如 'ADMIN'/'admin'/'超级管理员') 导致 isSuperAdmin 误判.
+    // 用户名是 "admin" 的默认账号强制对齐为规范值 "SUPER_ADMIN".
+    let role = loginData?.role
+    const uname = loginData?.username ? String(loginData.username).trim() : ''
+    if (uname.toLowerCase() === 'admin') {
+      role = 'SUPER_ADMIN'
+    } else if (role) {
+      // 其它账号: 按后端规范值对齐 (宽松解析)
+      const ru = String(role).toUpperCase()
+      if (ru.includes('SUPER') || ru === 'ADMINISTRATOR') role = 'SUPER_ADMIN'
+      else if (ru === 'ADMIN') role = 'SUPER_ADMIN'
+      else if (ru.includes('COMPANY') || ru.includes('ENTERPRISE') || ru.includes('TENANT')) role = 'COMPANY_ADMIN'
+      else if (!['SUPER_ADMIN', 'COMPANY_ADMIN', 'USER'].includes(role)) role = 'USER'
+    } else {
+      role = 'USER'
+    }
+
     // Build user object from login response
     const currentUser = {
       id: loginData?.id,
       username: loginData?.username,
-      role: loginData?.role,
+      role,
       companyId: loginData?.companyId
     }
-    
+
     // Save user info to localStorage
     localStorage.setItem('user', JSON.stringify(currentUser))
-    
+
     // Set user directly in Zustand store
     setUser(currentUser)
-    
+
     // Initialize sessions immediately
     initSessions()
   }
@@ -4345,6 +4429,7 @@ const handleDeleteSession = (id) => {
       <SettingsModal
         open={showSettings}
         onClose={() => setShowSettings(false)}
+        user={user}
         onToggleSkill={toggleSkill}
         companies={companies}
         onAddCompany={addCompany}
