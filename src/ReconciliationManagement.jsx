@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { Layout, Table, Pagination, Button, Tabs, Tag, Space, message, Popconfirm, Typography, InputNumber, Tooltip, Modal, Form, DatePicker, Input, Select } from 'antd'
+import { Layout, Table, Pagination, Button, Tabs, Tag, Space, message, Popconfirm, Typography, InputNumber, Tooltip, Modal, Form, DatePicker, Input, Select, Checkbox } from 'antd'
 import { CheckOutlined, ReloadOutlined, InboxOutlined, SendOutlined, SaveOutlined, DeleteOutlined, HistoryOutlined, DownloadOutlined, ExportOutlined } from '@ant-design/icons'
 import api from './auth'
 import dayjs from 'dayjs'
@@ -383,6 +383,7 @@ export default function ReconciliationManagement({ user, companies = [] }) {
         dateTo: values.dateRange[1].format('YYYY-MM-DD'),
         format,
       }
+      if (activeTab === 'OUTBOUND' && values.includeSubstitute) params.includeSubstitute = true
       if (effectiveCompanyId) params.companyId = effectiveCompanyId
       if (activeTab === 'OUTBOUND' && values.customerName) params.customerName = values.customerName
       if (activeTab === 'INBOUND' && values.supplierName) params.supplierName = values.supplierName
@@ -807,6 +808,11 @@ export default function ReconciliationManagement({ user, companies = [] }) {
                   optionFilterProp="label"
                   options={suppliers.map(s => ({ value: s.name, label: s.name }))}
                 />
+              </Form.Item>
+            )}
+            {activeTab === 'OUTBOUND' && (
+              <Form.Item name="includeSubstitute" valuePropName="checked" shouldUpdate>
+                <Checkbox>显示替代物料（勾选后导出表格包含替代物料列）</Checkbox>
               </Form.Item>
             )}
             <div style={{ color: '#888', fontSize: 12 }}>

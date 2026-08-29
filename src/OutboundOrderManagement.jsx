@@ -854,6 +854,7 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
       const values = await exportForm.validateFields()
       setExporting(true)
       const params = { format }
+      if (values.includeSubstitute) params.includeSubstitute = true
       if (effectiveCompanyId) params.companyId = effectiveCompanyId
       if (values.customerName) params.customerName = values.customerName
       if (values.dateRange && values.dateRange.length === 2) {
@@ -1396,6 +1397,9 @@ export default function OutboundOrderManagement({ user, companies = [] }) {
             </Form.Item>
             <Form.Item name="dateRange" label="订单日期范围">
               <RangePicker style={{ width: '100%' }} />
+            </Form.Item>
+            <Form.Item name="includeSubstitute" valuePropName="checked" shouldUpdate>
+              <Checkbox>显示替代物料（勾选后导出表格包含替代物料列）</Checkbox>
             </Form.Item>
           </Form>
         </Modal>
