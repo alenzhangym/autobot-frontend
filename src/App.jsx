@@ -1997,6 +1997,15 @@ function App() {
     const cached = sessionCacheRef.current.get(id)
     if (cached) {
       if (!isSameSession) setSessionId(id)
+      // 2026-08-28: 切换会话时(即使命中缓存)也要把顶部工作目录同步为目标会话真实目录,
+      // 避免残留上一个会话的目录导致显示串错. code 会话取它的 workspaceDir, 非 code 清空.
+      const targetSess = sessions.find(s => s.id === id)
+      const targetIsCode = targetSess?.channel === 'code' || (!targetSess?.channel && currentChannel === 'code')
+      if (targetIsCode && targetSess?.workspaceDir) {
+        setWorkspaceDir(targetSess.workspaceDir)
+      } else if (!targetIsCode) {
+        setWorkspaceDir('')
+      }
       // eslint-disable-next-line no-console
       console.log('[loadSession] CACHE HIT for', id, '— replaying',
         cached.length, 'messages; last id=',
@@ -2039,6 +2048,10 @@ function App() {
         setWsPickerChannel('code')
         setShowWsPicker(true)
         loadWsBrowse(getInitialBrowsePath())
+      } else {
+        // 2026-08-28: 非 code 会话(如 stock/general 等)没有工作目录, 清空残留的
+        // 上一个会话目录, 避免顶部工作目录显示串错.
+        setWorkspaceDir('')
       }
 
       history = history
