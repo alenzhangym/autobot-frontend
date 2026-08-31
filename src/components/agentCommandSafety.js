@@ -122,6 +122,60 @@ const FORBIDDEN_TOP_LEVEL_COMMANDS = new Set([
  * updated. The two stay in lock-step on purpose.</p>
  */
 export const EXPLICIT_SAFE_SHAPES = [
+  // ── Toolchain env probes (read-only, auto-run before the LLM works) ──
+  // The backend emits these via AdapterCommandSupport.envCheck(...) as
+  // trustedRun (requires_confirmation=false). Listing them here is pure
+  // defense-in-depth: even if a future backend regression flips the flag,
+  // a fixed `--version`/`version` probe still can't be hijacked.
+  // cmd-envcheck:python   →  python --version
+  {
+    idPattern: /^cmd-envcheck:python$/,
+    commands: ['python', 'python3', 'py'],
+    argsPrefix: ['--version'],
+  },
+  // cmd-envcheck:pip      →  python -m pip --version
+  {
+    idPattern: /^cmd-envcheck:pip$/,
+    commands: ['python', 'python3', 'py'],
+    argsPrefix: ['-m', 'pip', '--version'],
+  },
+  // cmd-envcheck:node     →  node --version
+  {
+    idPattern: /^cmd-envcheck:node$/,
+    commands: ['node'],
+    argsPrefix: ['--version'],
+  },
+  // cmd-envcheck:npm      →  npm --version
+  {
+    idPattern: /^cmd-envcheck:npm$/,
+    commands: ['npm'],
+    argsPrefix: ['--version'],
+  },
+  // cmd-envcheck:go       →  go version
+  {
+    idPattern: /^cmd-envcheck:go$/,
+    commands: ['go'],
+    argsPrefix: ['version'],
+  },
+  // cmd-envcheck:java     →  java -version
+  {
+    idPattern: /^cmd-envcheck:java$/,
+    commands: ['java'],
+    argsPrefix: ['-version'],
+  },
+  // cmd-envcheck:mvn      →  mvn --version
+  {
+    idPattern: /^cmd-envcheck:mvn$/,
+    commands: ['mvn', 'mvnw', './mvnw', 'mvnw.cmd'],
+    argsPrefix: ['--version'],
+  },
+  // cmd-envcheck:gradle   →  gradle --version
+  {
+    idPattern: /^cmd-envcheck:gradle$/,
+    commands: ['gradle', 'gradlew', './gradlew', 'gradlew.bat'],
+    argsPrefix: ['--version'],
+  },
+
   // ── Java (Maven) ────────────────────────────────────────────────────
   // cmd-verify-quick:<tool>  →  <tool> -q -B compile -DskipTests -Dsurefire.skip=true
   {
@@ -221,6 +275,30 @@ export const EXPLICIT_SAFE_SHAPES = [
     argsPrefix: ['reset', 'HEAD'],
   },
 ]
+
+/**
+ * Why install / mkdir / cp are NOT in {@link EXPLICIT_SAFE_SHAPES}.
+ *
+ * This whitelist means "run with NO confirmation". Deliberately:
+ * <ul>
+ *   <li><b>install</b> (pip/npm/go install, id prefix {@code cmd-setup:}) — the
+ *       backend emits it as a {@code run} command with
+ *       {@code requires_confirmation=true} (Gap 1). It mutates the environment
+ *       and hits the network, so it MUST prompt. Auto-whitelisting it would
+ *       silently bypass the very confirmation the backend gate is meant to
+ *       enforce. Handled in {@code WorkspacePanel} run branch → confirm dialog.</li>
+ *   <li><b>mkdir</b> (id prefix {@code cmd-mkdir:}) — a dedicated {@code mkdir}
+ *       action handled in {@code WorkspacePanel} via Node fs directly; it never
+ *       reaches {@link shouldRequireConfirmation} and carries no confirmation,
+ *       which is equivalent to being auto-safe at the component level.</li>
+ *   <li><b>cp</b> (id prefix {@code cmd-cp:}) — a dedicated {@code cp} action
+ *       with {@code requires_confirmation=true} (Gap 2). Copying mutates the
+ *       workspace, so it must prompt. Handled in {@code WorkspacePanel} cp
+ *       branch → confirm dialog.</li>
+ * </ul>
+ * Adding any of these here would create a privilege-escalation hole, so they
+ * stay gated where they belong.
+ */
 
 /**
  * Test whether a {@code run} command matches the explicit-safe whitelist.
