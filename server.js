@@ -1310,6 +1310,48 @@ app.post('/api/local/workspace/write', (req, res) => {
     }
 });
 
+app.post('/api/local/workspace/mkdir', (req, res) => {
+    const { path: targetPath } = req.body;
+    if (!targetPath) return res.status(400).json({ error: 'path is required' });
+    try {
+        fs.mkdirSync(targetPath, { recursive: true });
+        res.json({ created: true, path: targetPath });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/local/workspace/copy', (req, res) => {
+    const { from: fromPath, to: toPath } = req.body;
+    if (!fromPath || !toPath) {
+        return res.status(400).json({ error: 'from and to are required' });
+    }
+    try {
+        const stat = fs.statSync(fromPath);
+        if (!stat.isDirectory()) {
+            // File copy — ensure target dir exists.
+            const dir = path.dirname(toPath);
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+            fs.copyFileSync(fromPath, toPath);
+            return res.json({ copied: true, from: fromPath, to: toPath, type: 'file' });
+        }
+        // Directory copy — recreate tree recursively.
+        const copyRecursive = (src, dst) => {
+            fs.mkdirSync(dst, { recursive: true });
+            for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+                const s = path.join(src, entry.name);
+                const d = path.join(dst, entry.name);
+                if (entry.isDirectory()) copyRecursive(s, d);
+                else fs.copyFileSync(s, d);
+            }
+        };
+        copyRecursive(fromPath, toPath);
+        res.json({ copied: true, from: fromPath, to: toPath, type: 'directory' });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 app.post('/api/local/workspace/delete_file', (req, res) => {
     const { path: targetPath } = req.body;
     if (!targetPath) return res.status(400).json({ error: 'path is required' });

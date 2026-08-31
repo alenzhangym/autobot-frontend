@@ -988,13 +988,61 @@ async function executeSingleCommand(cmd, workspaceDir, onLog, sessionId) {
         return `Error deleting ${cmd.path}: ${detail}`
       }
     }
+    case 'mkdir': {
+      // Create a directory (recursively). Safe and idempotent — backend
+      // emits it with requires_confirmation=false, no prompt needed.
+      try {
+        const target = resolveCommandPath(workspaceDir, cmd.path)
+        const res = await localApi.post('/api/local/workspace/mkdir', { path: target })
+        onLog?.(`[AgentCMD] mkdir ok ${target}${formatCommandLogMeta(cmd)}\n`)
+        return res.data?.message || 'Created'
+      } catch (e) {
+        const detail = e.response?.data?.error || e.message
+        const target = resolveCommandPath(workspaceDir, cmd.path)
+        onLog?.(`[AgentCMD] mkdir failed ${target}: ${detail}\n`)
+        return `Error creating directory ${cmd.path}: ${detail}`
+      }
+    }
+    case 'cp': {
+      // Copy a file/directory (recursive). Mutates the workspace, so honor
+      // the backend's requires_confirmation flag and reuse the confirm modal.
+      if (cmd.requires_confirmation) {
+        const reason = 'Copying a file/directory modifies your workspace.'
+        onLog?.(`[AgentCMD] cp awaiting user confirmation: ${reason}\n`)
+        const approved = await confirmRunCommand(
+          { ...cmd, command: 'cp', args: [cmd.from, cmd.to] },
+          reason,
+          onLog
+        )
+        if (!approved) {
+          onLog?.(`[AgentCMD] cp REJECTED by user: ${cmd.id || '(no id)'}\n`)
+          return `Error: cp command rejected by user`
+        }
+        onLog?.(`[AgentCMD] cp APPROVED by user: ${cmd.id || '(no id)'}\n`)
+      }
+      try {
+        const from = resolveCommandPath(workspaceDir, cmd.from)
+        const to = resolveCommandPath(workspaceDir, cmd.to)
+        const res = await localApi.post('/api/local/workspace/copy', { from, to })
+        onLog?.(`[AgentCMD] cp ok ${from} -> ${to}${formatCommandLogMeta(cmd)}\n`)
+        return res.data?.message || 'Copied'
+      } catch (e) {
+        const detail = e.response?.data?.error || e.message
+        onLog?.(`[AgentCMD] cp failed: ${detail}\n`)
+        return `Error copying ${cmd.from || '?'} -> ${cmd.to || '?'}: ${detail}`
+      }
+    }
+    case 'network':
     case 'run': {
       // ── Safety gate ─────────────────────────────────────────────────
       // Every `run` command requires user confirmation by default. The
       // backend flags the command via `requires_confirmation` and a
       // defense-in-depth pattern scan also runs here. If either signals
-      // danger, pop a modal and let the user explicitly approve.
-      const dangerReason = shouldRequireConfirmation(cmd)
+      // danger, pop a modal and let the user explicitly approve. `network`
+      // (curl/wget/... emitted by adapters as a `network` action) goes
+      // through the exact same gate — the command line is normalized to
+      // action `run` so the existing pattern/whitelist logic applies.
+      const dangerReason = shouldRequireConfirmation({ ...cmd, action: 'run' })
       if (dangerReason) {
         onLog?.(`[AgentCMD] run awaiting user confirmation: ${dangerReason}\n`)
         const approved = await confirmRunCommand(cmd, dangerReason, onLog)
