@@ -206,7 +206,9 @@ export default function SessionSidebar({
         />
       </div>
 
-    <div style={{ padding: '12px', borderTop: '1px solid #1f1f1f' }}>
+    <div style={{ padding: '12px', borderTop: '1px solid #1f1f1f', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+      {/* 2026-09-02: 导航菜单超高时在自身内滚动, 否则展开"基础数据"后尾部菜单(如审计日志)会被 Sider 裁掉且无法滚动到 */}
+      <div style={{ overflowY: 'auto', minHeight: 0, flexShrink: 1 }} className="custom-scrollbar">
       <Menu
         mode="inline" theme="dark"
         selectedKeys={[activeTab]}
@@ -295,6 +297,7 @@ export default function SessionSidebar({
         ]}
         style={{ background: 'transparent', border: 'none', marginBottom: 12, padding: 0 }}
       />
+      </div>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, overflow: 'hidden' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, overflow: 'hidden', flex: 1 }}>
             <Avatar size={28} style={{ background: '#1677ff', fontSize: 12, flexShrink: 0 }}>
