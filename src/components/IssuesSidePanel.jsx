@@ -10,6 +10,7 @@ import api, { getBackendHost } from '../auth'
 import FixSummaryCard from './FixSummaryCard'
 import FixTaskStateMachine from './FixTaskStateMachine'
 import { useFixTaskBus, useIssueList } from '../hooks/useFixTaskPoller'
+import { useReactSessionEvents } from '../hooks/useReactSessionEvents'
 
 const { Text } = Typography
 
@@ -54,6 +55,14 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
     window.addEventListener('agent-issue-ops-applied', handler)
     return () => window.removeEventListener('agent-issue-ops-applied', handler)
   }, [refresh, sessionId])
+  // 2026-09-01: 会话终态实时刷新 — 订阅 /ws/react/{sessionId}, 当会话达到终态
+  // (COMPLETED/FAILED/CANCELLED) 时立即 refresh 一次, 让问题列表与刚结束的分析对齐,
+  // 不依赖下一轮自适应轮询间隔。
+  useReactSessionEvents(sessionId, {
+    onSessionTerminated: (_sid, _terminalState) => {
+      try { refresh() } catch (e) { console.error('[IssuesSidePanel] refresh on session terminated failed:', e) }
+    },
+  })
   const [busyId, setBusyId] = useState(null)
   // S7: WS + 状态机 + 确认弹窗 走 useFixTaskBus
   const {

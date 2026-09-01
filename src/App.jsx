@@ -17,6 +17,7 @@ import {
   ApartmentOutlined, MenuOutlined
 } from '@ant-design/icons'
 import api, { logout, isAuthenticated, getCurrentUser, fetchMe, getWsBaseUrl, getLocalAgentBaseUrl, getBackendHost } from './auth'
+import { useReactSessionEvents } from './hooks/useReactSessionEvents'
 import Login from './Login'
 import HomeWrapper from './Home'
 import LogPanel from './LogPanel'
@@ -884,6 +885,8 @@ function App() {
   const nextMsgId = () => { msgIdCounter.current += 1; return msgIdCounter.current }
   const [input, setInput] = useState('')
   const [sessionId, setSessionId] = useState('')
+  // 2026-09-01: ReactSession 实时状态（经 /ws/react/{sessionId} 推送），用于主聊天状态徽标。
+  const [reactSessionState, setReactSessionState] = useState('')
   // P4: 自动上下文投影开关 — 默认开启，用户可在 header 中关闭
   const [contextProjectionEnabled, setContextProjectionEnabled] = useState(true)
   // A 方案：code 会话不再需要 'plan'/'build' 二选 toggle；'auto' 表示由后端自动推断。
@@ -1960,6 +1963,18 @@ function App() {
     };
   }, []);
 
+  // 2026-09-01: ReactSession 事件实时推送 — 主聊天页订阅 /ws/react/{sessionId}。
+  // 实时反映会话状态（RUNNING/WAITING_CONFIRMATION/...），并在会话创建/终结时刷新会话列表。
+  useReactSessionEvents(sessionId, {
+    enabled: !!sessionId && activeTab === 'chat',
+    onStateChanged: (_sid, _prev, current) => setReactSessionState(current || ''),
+    onSessionCreated: (_sid) => { setReactSessionState(''); fetchSessions() },
+    onSessionTerminated: (_sid, terminalState) => {
+      setReactSessionState(terminalState || '')
+      fetchSessions()
+    },
+  })
+
   const fetchScheduledTasks = async () => {
     try {
       const res = await api.get('/scheduled-tasks')
@@ -2621,10 +2636,18 @@ function App() {
         payload.clarify_response = pendingResumeRef.current.clarifyResponse
         pendingResumeRef.current = null
       }
-      // A 方案：code 会话意图由后端推断——前端不再发 code_mode（除非用户强制锁定）。
-      // 旧 'plan' 锁定可通过 IssuesSidePanel 的修复按钮 + IssuesSidePanel "auto" 模式替代；
-      // 旧 'build' 锁定 → 后端会基于 isImplementationContinuation 自动升级。
-      if (codeMode && codeMode !== 'auto') payload.code_mode = codeMode;
+      // 2026-09-01 (P3 #4): plan/build 语义澄清。
+      //   · 默认 'auto'：不发 code_mode/execution_mode，后端 CodeIntentClassifier 自动分类
+      //     —— 明确只读(分析/不要改/先给方案) → ANALYZE/DESIGN_ONLY(不改文件)，
+      //       功能动词(增加/加一个/显示) → BUILD(进入确认/落盘流程)；
+      //   · 显式锁定 'build'：强制 code_mode=build + execution_mode=apply（override，无视问句）；
+      //   · 显式锁定 'plan'：只分析/只给方案，不改文件（code_mode=plan）。
+      // 当前 UI 已移除 plan/build toggle，默认 auto；此处保留强制锁定通道供高级用户/子页面复用。
+      if (codeMode && codeMode !== 'auto') {
+        payload.code_mode = codeMode;
+        if (codeMode === 'build') payload.execution_mode = 'apply';
+        else if (codeMode === 'plan') payload.execution_mode = 'plan';
+      }
       // 多图片附件 (数组); 兼容旧 image_base64 (首图), 后端含去重
       if (selectedImages.length > 0) {
         payload.images = selectedImages.map(i => i.base64);
@@ -3813,20 +3836,34 @@ const handleDeleteSession = (id) => {
                           </div>
                         </div>
                       ) : null,
-                      Footer: () => isLoading && messages.length > 0 ? (
-                        <div style={{ maxWidth: 1000, margin: '0 auto', padding: isMobile ? '0 12px' : '0 24px' }}>
-                          <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
-                            <Avatar icon={<RobotOutlined />} size={32} style={{ background: '#1677ff', flexShrink: 0 }} />
-                            <div>
-                              <Text style={{ color: '#888', fontSize: 12, display: 'block', marginBottom: 6 }}>AutoBot</Text>
-                              <Space style={{ color: '#888' }}>
-                                <LoadingOutlined spin />
-                                <Text style={{ color: '#888', fontSize: 13 }}>Thinking...</Text>
-                              </Space>
+                      Footer: () => {
+                        // 2026-09-01: 附加 ReactSession 实时状态徽标（经 /ws/react/{sessionId} 推送）
+                        const running = isLoading && messages.length > 0;
+                        if (!running && !reactSessionState) return null;
+                        const st = reactSessionState || '';
+                        const terminal = ['COMPLETED', 'FAILED', 'CANCELLED', 'SESSION_UNAVAILABLE'].includes(st);
+                        const meta = { COMPLETED: ['success', '已完成'], FAILED: ['error', '失败'], CANCELLED: ['default', '已取消'] };
+                        const [color, label] = meta[st] || (terminal ? ['default', st] : ['processing', `会话状态: ${st}`]);
+                        return (
+                          <div style={{ maxWidth: 1000, margin: '0 auto', padding: isMobile ? '0 12px' : '0 24px' }}>
+                            <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
+                              <Avatar icon={<RobotOutlined />} size={32} style={{ background: '#1677ff', flexShrink: 0 }} />
+                              <div>
+                                <Text style={{ color: '#888', fontSize: 12, display: 'block', marginBottom: 6 }}>
+                                  AutoBot
+                                  {reactSessionState && <Tag color={color} style={{ marginLeft: 8, fontSize: 11 }}>{label}</Tag>}
+                                </Text>
+                                {running && (
+                                  <Space style={{ color: '#888' }}>
+                                    <LoadingOutlined spin />
+                                    <Text style={{ color: '#888', fontSize: 13 }}>Thinking...</Text>
+                                  </Space>
+                                )}
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      ) : null,
+                        );
+                      },
                     }}
                   />
                 </div>

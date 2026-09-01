@@ -1,14 +1,17 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { Badge, Collapse, Spin, Tag, Typography } from 'antd'
+import { Badge, Spin, Tag, Typography } from 'antd'
 import api from '../auth'
+import { useReactSessionEvents } from '../hooks/useReactSessionEvents'
 const { Text } = Typography
 
 /**
- * EventLogPanel — P3 事件溯源调试面板 (2026-08-25).
+ * EventLogPanel — P3 事件溯源调试面板 (2026-09-01).
  *
  * <p>显示当前会话的事件溯源日志数量和状态，帮助用户了解会话的生命周期和历史。
- * <p>所有数据通过 {@code GET /react/session/{sessionId}/events} 获取。
- * (axios baseURL 已含 /api 前缀, 路径不能再带 /api, 否则会变成 /api/api/... 导致 404)
+ *
+ * <p><b>实时推送</b>: 订阅 {@code /ws/react/{sessionId}}，从 {@link ReactEventBus}
+ * 实时收到会话状态 / 工具调用 / 流转式事件（替代 5s HTTP 轮询）。进出事件都视为一次
+ * 溯源活动，用于动态刷新计数；同时兜底保留一次 HTTP GET 初始快照。</p>
  *
  * <p>Fail-open: 如果后端未启用事件溯源，面板显示"未启用"状态，不阻塞界面。
  */
@@ -17,6 +20,23 @@ export default function EventLogPanel({ sessionId, style }) {
   const [enabled, setEnabled] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+
+  // 实时事件→溯源计数：会话有事件流转时即时增加计数，替代依赖轮询刷新。
+  const handleActivity = useCallback(() => {
+    setEventCount((prev) => {
+      setEnabled(true)
+      return (prev ?? 0) + 1
+    })
+  }, [])
+  useReactSessionEvents(sessionId, {
+    onStateChanged: handleActivity,
+    onSessionCreated: handleActivity,
+    onSessionTerminated: handleActivity,
+    onToolDispatched: handleActivity,
+    onToolReceived: handleActivity,
+    onParallelDispatch: handleActivity,
+    onBatchResult: handleActivity,
+  })
 
   const fetchEvents = useCallback(async () => {
     if (!sessionId) return
