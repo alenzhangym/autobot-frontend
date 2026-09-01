@@ -69,6 +69,7 @@ import CrossDomainEntityCard from './components/CrossDomainEntityCard'
 import GraphStatusPanel from './components/GraphStatusPanel'
 import LspSettingsPanel from './components/LspSettingsPanel'
 import McpSettingsPanel from './components/McpSettingsPanel'
+import ClarifyStrategyConfigPanel, { getClarifyStrategy } from './components/ClarifyStrategyConfigPanel'
 // 2026-08-27: 设置弹窗新增 tab — MCP/LSP/股票配置/LLM配置 作为独立管理 tab (super admin 可见)
 import StockConfigTab from './components/StockConfigTab'
 import LlmModuleConfigTab from './components/LlmModuleConfigTab'
@@ -793,6 +794,12 @@ function SettingsModal({ open, onClose, user, dbConfigs, onDeleteDbConfig, onAdd
       label: 'LLM配置',
       children: <LlmModuleConfigTab />
     })
+    // P4 (2026-09-01): 澄清策略配置 — clarifyType 默认优先级 + 高风险触发阈值 (仅 super admin)
+    tabItems.push({
+      key: 'clarify_strategy',
+      label: '澄清策略',
+      children: <ClarifyStrategyConfigPanel />
+    })
   }
 
   return (
@@ -879,8 +886,17 @@ function App() {
   // 路线 B: re-verify 模式右下角 toast 开关 (命中"是否修复"语义 + 提交成功后置 true)
   const [reVerifyToastEnabled, setReVerifyToastEnabled] = useState(false)
   const lastUserQueryRef = useRef('')
-  // P0-4: 结构化恢复协议 — clarify/pause 恢复时携带 resumeContext + clarifyResponse
-  const pendingResumeRef = useRef(null)
+  // P0-4 + P3: 结构化恢复协议 — clarify/pause 恢复时携带 resumeContext + clarifyResponse。
+  // P3 (2026-09-01): 由单对象改为先入先出队列，支持多个待处理澄清按到达顺序依次消费。
+  const pendingResumeRef = useRef([])  // List<ClarificationRequest> = [{resumeContext, clarifyResponse}]
+  // P3: 入队一个澄清响应（每次弹窗 resolve/cancel 时 enqueue，发送时 dequeue 队头）。
+  const enqueueClarification = (resumeContext, clarifyResponse) => {
+    pendingResumeRef.current.push({ resumeContext, clarifyResponse })
+  }
+  // P3: 出队队头；队列为空返回 null。
+  const dequeueClarification = () => (
+    pendingResumeRef.current.length > 0 ? pendingResumeRef.current.shift() : null
+  )
   const msgIdCounter = useRef(Date.now())
   const nextMsgId = () => { msgIdCounter.current += 1; return msgIdCounter.current }
   const [input, setInput] = useState('')
@@ -1975,6 +1991,32 @@ function App() {
     },
   })
 
+  // P2 (2026-09-01): 澄清实时推送 — 订阅 /ws/agent-decision/{sessionId}。
+  // 服务端在 ERP/CRM/代码通道产出澄清时广播 agent:clarify_question，前端即时弹出
+  // ClarifyQuestionModal（与 HTTP 响应的 reply_context 互为双保险）。已弹窗时不重复开。
+  useEffect(() => {
+    if (!sessionId || activeTab !== 'chat') return
+    const token = localStorage.getItem('token')
+    let ws
+    try {
+      ws = new WebSocket(
+        `${getWsBaseUrl()}/ws/agent-decision/${encodeURIComponent(sessionId)}` +
+        `?token=${encodeURIComponent(token || '')}`
+      )
+    } catch (e) {
+      return
+    }
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data)
+        if (data?.type === 'agent:clarify_question' && data?.clarifyQuestion) {
+          setPendingClarify(prev => prev || { clarifyQuestion: data.clarifyQuestion, sessionId })
+        }
+      } catch (e) { /* 非本次相关消息，忽略 */ }
+    }
+    return () => { try { ws && ws.close() } catch (e) { /* ignore */ } }
+  }, [sessionId, activeTab])
+
   const fetchScheduledTasks = async () => {
     try {
       const res = await api.get('/scheduled-tasks')
@@ -2630,12 +2672,16 @@ function App() {
       }
 
       const payload = { message: text, session_id: sessionId };
-      // P0-4: 结构化恢复协议 — 携带 resumeContext + clarifyResponse 供后端恢复暂停的计划
-      if (pendingResumeRef.current) {
-        payload.resume_context = pendingResumeRef.current.resumeContext
-        payload.clarify_response = pendingResumeRef.current.clarifyResponse
-        pendingResumeRef.current = null
+      // P0-4 + P3: 结构化恢复协议 — 携带 resumeContext + clarifyResponse 供后端恢复暂停的计划。
+      // P3 (2026-09-01): 出队澄清队列（FIFO），保证多澄清依顺序处理。队列空时不添加字段。
+      const pending = dequeueClarification()
+      if (pending) {
+        payload.resume_context = pending.resumeContext
+        payload.clarify_response = pending.clarifyResponse
       }
+      // P4 (2026-09-01): 澄清策略配置 — 用户开启「下发」时才附加 clarify_strategy（后端按需消费）
+      const clarifyStrategy = getClarifyStrategy()
+      if (clarifyStrategy) payload.clarify_strategy = clarifyStrategy
       // 2026-09-01 (P3 #4): plan/build 语义澄清。
       //   · 默认 'auto'：不发 code_mode/execution_mode，后端 CodeIntentClassifier 自动分类
       //     —— 明确只读(分析/不要改/先给方案) → ANALYZE/DESIGN_ONLY(不改文件)，
@@ -4169,9 +4215,9 @@ const handleDeleteSession = (id) => {
                         }
                         const resumeContext = pendingClarify.clarifyQuestion?.resumeContext || null
                         setPendingClarify(null)
-                        // 复用 sendMessage 逻辑发送回复
+                        // P0-4 + P3: 结构化恢复协议 — 入队澄清响应（多澄清依序处理）
                         if (replyText) {
-                          pendingResumeRef.current = { resumeContext, clarifyResponse }
+                          enqueueClarification(resumeContext, clarifyResponse)
                           // 直接发送, 不走 quick action 拼装
                           setInput(replyText)
                           // 用 setTimeout 等状态更新后自动发送
@@ -4206,7 +4252,7 @@ const handleDeleteSession = (id) => {
                             const resumeContext = pendingPause.clarifyQuestion?.resumeContext || null
                             const clarifyResponse = { confirmed: true, editedParams: hasEdits ? editedParams : null }
                             setPendingPause(null)
-                            pendingResumeRef.current = { resumeContext, clarifyResponse }
+                            enqueueClarification(resumeContext, clarifyResponse)
                             setInput(hasEdits ? '确认' : replyText)
                             setTimeout(() => { sendMessage(replyText) }, 0)
                           } finally {
@@ -4221,7 +4267,7 @@ const handleDeleteSession = (id) => {
                             const resumeContext = pendingPause.clarifyQuestion?.resumeContext || null
                             const clarifyResponse = { confirmed: false }
                             setPendingPause(null)
-                            pendingResumeRef.current = { resumeContext, clarifyResponse }
+                            enqueueClarification(resumeContext, clarifyResponse)
                             setInput(replyText)
                             setTimeout(() => { sendMessage(replyText) }, 0)
                           } finally {
@@ -4246,7 +4292,7 @@ const handleDeleteSession = (id) => {
                             const resumeContext = pendingPause.clarifyQuestion?.resumeContext || null
                             const clarifyResponse = { confirmed: !!result.confirmed }
                             setPendingPause(null)
-                            pendingResumeRef.current = { resumeContext, clarifyResponse }
+                            enqueueClarification(resumeContext, clarifyResponse)
                             setInput(replyText)
                             setTimeout(() => {
                               sendMessage(replyText)
