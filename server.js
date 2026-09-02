@@ -10,6 +10,7 @@ import crypto from 'crypto';
 import http from 'http';
 import https from 'https';
 import dotenv from 'dotenv';
+import { runInSandbox } from './src/runtime/sandboxExecutor.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -18,6 +19,19 @@ dotenv.config({ path: path.join(__dirname, '.env') });
 
 const app = express();
 const PORT = process.env.PORT || process.env.VITE_PORT || 3000;
+
+// ── P2-7 沙箱 OS 级强制（可选, 默认关闭）───────────────────────────────
+// 开启后 /api/local/workspace/run 的命令在预创建 Docker 容器内执行（网络/资源/只读挂载隔离）。
+// 默认关闭 → 行为与现状完全一致。配置项对应设计文档 docs/architecture/sandbox-os-level-enforcement-design.md §3.3。
+const SANDBOX = {
+    enabled: process.env.AUTOBOT_SANDBOX === 'true',
+    image: process.env.AUTOBOT_SANDBOX_IMAGE || 'autobot-runner:latest',
+    containerName: process.env.AUTOBOT_SANDBOX_CONTAINER || '',
+    network: process.env.AUTOBOT_SANDBOX_NETWORK || 'none', // 默认禁网
+    readOnlyWorkspace: (process.env.AUTOBOT_SANDBOX_RO_WS || 'false') === 'true',
+    memory: process.env.AUTOBOT_SANDBOX_MEMORY || '',
+    cpu: process.env.AUTOBOT_SANDBOX_CPU || '',
+};
 
 const AUTOBOT_MONITOR_ENABLED = process.env.AUTOBOT_MONITOR !== '0' && process.env.AUTOBOT_MONITOR !== 'false';
 const AUTOBOT_REPO_ROOT = process.env.AUTOBOT_REPO_ROOT || path.resolve(__dirname, '..');
@@ -1495,20 +1509,11 @@ app.post('/api/local/workspace/run', (req, res) => {
     }
 
     const startedAt = Date.now();
-    const child = execFile(resolvedCommand, effectiveArgs, {
-        cwd: resolvedCwd,
-        timeout: timeout * 1000,
-        maxBuffer: MAX_RUN_OUTPUT_BYTES,
-        windowsHide: true,
-        // shell:false is the default for execFile; keep argv-only
-    }, (error, stdout, stderr) => {
+
+    function finishRun(combined, exitCode, timedOut) {
         cleanupTemp();
         const elapsed = Date.now() - startedAt;
-        const timedOut = error && (error.killed || error.signal === 'SIGTERM') && error.code === null;
-        const exitCode = error && typeof error.code === 'number' ? error.code : (error ? 1 : 0);
-
         // Keep tail of stdout+stderr
-        const combined = (stdout || '') + (stderr || '');
         const tail = trimToTail(combined, tailLines);
         res.json({
             output: tail,
@@ -1516,12 +1521,41 @@ app.post('/api/local/workspace/run', (req, res) => {
             timed_out: !!timedOut,
             duration_ms: elapsed,
         });
-    });
+    }
 
-    child.on('error', (err) => {
-        cleanupTemp();
-        res.status(500).json({ error: err.message });
-    });
+    if (SANDBOX.enabled) {
+        // P2-7: 沙箱 OS 级强制（可选, 默认关闭）— 命令在预创建容器内执行。
+        // 走 sandboxExecutor 统一入口, 本地/容器双路径由开关分发; 默认关闭时行为与现状一致。
+        runInSandbox({
+            command: resolvedCommand,
+            args: effectiveArgs,
+            cwd: resolvedCwd,
+            timeoutMs: timeout * 1000,
+            hostTempFile: tempFile,
+        }, SANDBOX)
+            .then((r) => finishRun(r.output, r.exitCode, r.timedOut))
+            .catch((err) => {
+                cleanupTemp();
+                res.status(500).json({ error: 'sandbox run failed: ' + err.message });
+            });
+    } else {
+        const child = execFile(resolvedCommand, effectiveArgs, {
+            cwd: resolvedCwd,
+            timeout: timeout * 1000,
+            maxBuffer: MAX_RUN_OUTPUT_BYTES,
+            windowsHide: true,
+            // shell:false is the default for execFile; keep argv-only
+        }, (error, stdout, stderr) => {
+            const timedOut = error && (error.killed || error.signal === 'SIGTERM') && error.code === null;
+            const exitCode = error && typeof error.code === 'number' ? error.code : (error ? 1 : 0);
+            finishRun((stdout || '') + (stderr || ''), exitCode, timedOut);
+        });
+
+        child.on('error', (err) => {
+            cleanupTemp();
+            res.status(500).json({ error: err.message });
+        });
+    }
 
     function cleanupTemp() {
         if (tempFile) {
