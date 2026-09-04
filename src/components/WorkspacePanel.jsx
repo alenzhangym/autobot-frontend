@@ -1213,7 +1213,9 @@ function confirmRunCommand(cmd, reason, onLog) {
 function formatRunOutput(output, exitCode, timedOut) {
   if (typeof output !== 'string') output = String(output || '')
   let suffix = ''
+  // 始终追加结构化退出码标记（成功 [exit=0] / 失败 [exit=N] / 超时），
+  // 让后端 isExecutionFailure 优先按退出码判定，避免"成功但 stdout 含 Error 字样"被误判为失败。
   if (timedOut) suffix += `\n[Execution timed out]`
-  else if (exitCode !== 0) suffix += `\n[exit=${exitCode}]`
+  else suffix += `\n[exit=${exitCode}]`
   return output + suffix
 }
