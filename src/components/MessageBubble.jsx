@@ -1176,6 +1176,14 @@ function parseProvenanceText(text) {
 function renderContent(content, preParsedAnalysis) {
   if (typeof content !== 'string') return null;
 
+  // P4: 自动上下文投影（【自动上下文投影…投影结束】）仅用于给 LLM 提供上下文参考，
+  // 不占聊天显示空间（2026-09-05）—— 剥离后递归渲染剩余内容，避免超大投影面板挤占界面。
+  if (content.includes('【自动上下文投影')) {
+    const stripped = content.replace(/【自动上下文投影[\s\S]*?自动上下文投影结束】/g, '');
+    if (!stripped.trim()) return null;
+    return renderContent(stripped, preParsedAnalysis);
+  }
+
   // Try structured code-analysis result (modules/linkages/issues/recommendations)
   // Use pre-parsed data from normalization when available (avoids re-parsing)
   const analysis = preParsedAnalysis || tryParseAnalysisResult(content);
@@ -1249,42 +1257,7 @@ function renderContent(content, preParsedAnalysis) {
     return <MarkdownContent content={'```json\n' + content + '\n```'} />;
   }
 
-  // P4: 自动上下文投影 — 检测并渲染为可折叠面板
-  if (content.includes('【自动上下文投影')) {
-    const parts = content.split(/(【自动上下文投影[\s\S]*?自动上下文投影结束】)/)
-    return (
-      <div>
-        {parts.map((part, i) => {
-          if (part.startsWith('【自动上下文投影')) {
-            return (
-              <Collapse
-                key={i}
-                size="small"
-                style={{ margin: '4px 0', background: 'var(--ab-bg-2, #1a1a2e)', borderRadius: 6 }}
-                items={[{
-                  key: 'ctx-proj',
-                  label: (
-                    <span style={{ fontSize: 12, color: 'var(--ab-text-2, #aaa)' }}>
-                      自动上下文投影
-                    </span>
-                  ),
-                  children: (
-                    <pre style={{
-                      fontSize: 11, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                      margin: 0, color: 'var(--ab-text-2, #aaa)', lineHeight: 1.6
-                    }}>
-                      {part}
-                    </pre>
-                  )
-                }]}
-              />
-            )
-          }
-          return <MarkdownContent key={i} content={part} />
-        })}
-      </div>
-    )
-  }
+  // P4: 自动上下文投影已在 renderContent 开头剥离（不占聊天显示空间），这里不再渲染。
 
   return <MarkdownContent content={content} />;
 }

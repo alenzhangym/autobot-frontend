@@ -55,6 +55,7 @@ import DocumentPreviewModal from './DocumentPreviewModal'
 import SessionSidebar from './components/SessionSidebar'
 import { executeAgentCommands, appendStreamToken, tryStreamDispatch, resetStreamBuffer } from './components/WorkspacePanel'
 import MessageBubble from './components/MessageBubble'
+import FlowProcessCard from './components/FlowProcessCard'
 import EventLogPanel from './components/EventLogPanel'
 import IssuesSidePanel from './components/IssuesSidePanel'
 import InteractivePanel from './components/InteractivePanel'
@@ -120,6 +121,34 @@ const profileDataAsync = (rows) => new Promise((resolve) => {
 const { Sider, Header, Content } = Layout
 const { Text, Title } = Typography
 const { TextArea } = Input
+
+// ── 流程过程合并 (2026-09-05) ──────────────────────────────────────────────
+// 会话未得出结论前，每轮会追加一条 assistant 中间消息（含 __CMD__ 待执行命令 /
+// AWAITING_COMMANDS 中间态 / 未完成标记）。逐条渲染会形成多个占位大卡片。
+// 这里把"连续的中间消息"收敛为单个 FlowProcessCard：组内只渲染最后一条，
+// 其余隐藏，减少显示空间占用。
+const isFlowIntermediateMsg = (m) => {
+  if (!m || m.role !== 'assistant') return false
+  const content = typeof m.content === 'string' ? m.content : ''
+  if (content.includes('__CMD__{')) return true
+  const cmd = m.__cmd
+  if (!cmd) return false
+  if (cmd.hasCommands === true) return true
+  if (cmd.state && typeof cmd.state === 'object' && cmd.state.__state === 'AWAITING_COMMANDS') return true
+  if (m._isComplete === false) return true
+  return false
+}
+
+// 返回 index 所在"连续中间消息组"的 [start, end]；非中间消息返回 null。
+const resolveFlowGroup = (messages, index) => {
+  if (!Array.isArray(messages) || index < 0 || index >= messages.length) return null
+  if (!isFlowIntermediateMsg(messages[index])) return null
+  let start = index
+  while (start - 1 >= 0 && isFlowIntermediateMsg(messages[start - 1])) start--
+  let end = index
+  while (end + 1 < messages.length && isFlowIntermediateMsg(messages[end + 1])) end++
+  return { start, end }
+}
 
 function extractCommandSignature(content) {
   if (!content || typeof content !== 'string' || !content.includes('__CMD__{')) return ''
@@ -1611,15 +1640,19 @@ function App() {
             setMessages(prev => [...prev, { id: data.id || null, _localId: localId, role: 'ui_render', content: data.message }])
           } else if (data.type === 'AGENT_STREAM' || data.type === 'AGENT_THOUGHT') {
             // Also show stream/thought output in terminal (skip HTML generation streaming)
+            // 后台 fix-task 驱动 (FixPhaseDriver*) 的流式日志只进缓冲,
+            // 不自动弹出 Terminal 面板 —— 面板会盖住问题列表 (见 appendLiveLog)。
+            const isFixDriverAgent = !!(data.agent
+              && String(data.agent).startsWith('FixPhaseDriver'))
             if (data.type === 'AGENT_STREAM' && data.token && data.agent !== 'UIAgent') {
-              appendLiveLog(data.token)
+              appendLiveLog(data.token, !isFixDriverAgent)
               // Accumulate tokens for early __CMD__ dispatch
               appendStreamToken(data.token, sessionId)
               if (workspaceDir && data.token.includes('__CMD__')) {
-                tryStreamDispatch(workspaceDir, (line) => appendLiveLog(line), sessionId)
+                tryStreamDispatch(workspaceDir, (line) => appendLiveLog(line, !isFixDriverAgent), sessionId)
               }
             } else if (data.type === 'AGENT_THOUGHT' && data.thought) {
-              appendLiveLog(`[${data.agent || 'agent'}] ${data.thought}\n`)
+              appendLiveLog(`[${data.agent || 'agent'}] ${data.thought}\n`, !isFixDriverAgent)
             }
             setMessages(prev => {
               const newMsgs = [...prev]
@@ -2774,9 +2807,17 @@ function App() {
           setMessages(prev => [...prev, normalizeMessage({ id: nextMsgId(), role: 'assistant', content: res.data.response || clarifyQuestion.question || '请补充信息' })])
           setPendingClarify({ clarifyQuestion, sessionId })
         } else {
-          // 无结构化 ClarifyQuestion → 退化为纯文本展示
+          // 无结构化 ClarifyQuestion → 构造通用 MISSING_SLOT 澄清弹窗兜底（2026-09-05），
+          // 保证用户始终有输入入口（否则纯文本展示无输入框 → 澄清后无法推进/会话卡死）。
           setMessages(prev => [...prev, normalizeMessage({ id: nextMsgId(), role: 'assistant', content: res.data.response })])
+          const fallbackClarify = {
+            clarifyType: 'MISSING_SLOT',
+            blockingSlot: 'user_goal',
+            question: res.data.response || '需求信息不够明确，请补充更多细节',
+          }
+          setPendingClarify({ clarifyQuestion: fallbackClarify, sessionId })
           fetchSessions()
+          // 保留 ERP/CRM formSpec 表单流（reply_context 带 formSpec 时才生效）
           tryOpenOrderFormModal(res.data)
         }
       } else if (res.data.status === 'plan_generated') {
@@ -2917,22 +2958,25 @@ function App() {
     }
   }
 
-  const startLiveLogSession = (reset = false) => {
+  const startLiveLogSession = (reset = false, autoOpen = true) => {
     if (reset || !liveLogActiveRef.current) {
       setLocalTerminalOutput('')
     }
     liveLogActiveRef.current = true
     setLiveLogActive(true)
-    setShowLogs(true)
+    // autoOpen=false: 只标记"有活跃日志"(顶部 Terminal 按钮亮起),
+    // 不强制弹出面板。用于后台 fix-task 驱动 (FixPhaseDriver) 的流式
+    // 日志 —— 面板会盖住用户正在盯的问题列表。
+    if (autoOpen) setShowLogs(true)
   }
 
-  const appendLiveLog = (chunk) => {
+  const appendLiveLog = (chunk, autoOpen = true) => {
     if (!chunk) return
     // 转发到本地 Vite 插件 frontendLogPlugin 落盘 frontend.log（best-effort）。
     api.post('/api/local/frontend-log', { line: chunk, sessionId }, { baseURL: getLocalAgentBaseUrl() })
       .catch(() => {}) // 静默处理 Promise 拒绝，不影响 UI
     if (!liveLogActiveRef.current) {
-      startLiveLogSession(true)
+      startLiveLogSession(true, autoOpen)
       setLocalTerminalOutput(chunk)
       return
     }
@@ -3858,6 +3902,17 @@ const handleDeleteSession = (id) => {
                     increaseViewportBy={{ top: 200, bottom: 200 }}
                     itemContent={(index) => {
                       const msg = messages[index]
+                      // 2026-09-05: 流程过程合并 — 连续中间消息收敛为单个卡片。
+                      // 组内除最后一条外全部隐藏；最新一条渲染 FlowProcessCard（含进度条 + 折叠的各轮过程）。
+                      const flowGroup = resolveFlowGroup(messages, index)
+                      if (flowGroup) {
+                        if (index !== flowGroup.end) return null
+                        return (
+                          <div style={{ maxWidth: 1000, margin: '0 auto', padding: isMobile ? '0 12px' : '0 24px' }}>
+                            <FlowProcessCard msgs={messages.slice(flowGroup.start, flowGroup.end + 1)} />
+                          </div>
+                        )
+                      }
                       return (
                         <div style={{ maxWidth: 1000, margin: '0 auto', padding: isMobile ? '0 12px' : '0 24px' }}>
                           <MessageBubble msg={msg} onDelete={() => handleDeleteMessage(msg.id || msg._localId)} />
@@ -4210,7 +4265,9 @@ const handleDeleteSession = (id) => {
                           replyText = result.confirmed ? '确认' : '取消'
                           clarifyResponse = { confirmed: result.confirmed }
                         } else if (result.slot && result.value !== undefined) {
-                          replyText = `${result.slot}=${result.value}`
+                          // 2026-09-05 (#6): 消息文本直接用 value，不把内部 slot 名（如 user_goal=）泄进聊天记录；
+                          // slot 信息保留在结构化 clarify_response 字段中，后端 resume 仍可精确恢复。
+                          replyText = result.value
                           clarifyResponse = { slot: result.slot, value: result.value }
                         }
                         const resumeContext = pendingClarify.clarifyQuestion?.resumeContext || null

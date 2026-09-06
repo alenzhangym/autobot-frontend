@@ -48,9 +48,21 @@ const { Text } = Typography
  * fetched from a different source.
  */
 
+// Canonical fix-task phase order for the linear progress trail.
+// REPLAN events roll back to ANALYZING, so the trail shows the
+// 5 main phases while the timeline (FixTaskStateMachine) records
+// every transition individually.
+export const PHASE_ORDER = [
+  'ANALYZING',
+  'LOCATING',
+  'GENERATING_PATCH',
+  'EXECUTING',
+  'VERIFYING'
+]
+
 // Phase → Timeline dot colour. Matches the Ant Design preset
 // palette and reads well on the dark (#0d0d0d) panel background.
-const PHASE_COLOR = {
+export const PHASE_COLOR = {
   ANALYZING:        'blue',
   LOCATING:         'cyan',
   GENERATING_PATCH: 'purple',
@@ -62,7 +74,7 @@ const PHASE_COLOR = {
 
 // Phase → short Chinese label. Keeps the timeline rows compact
 // even with longer note strings.
-const PHASE_LABEL = {
+export const PHASE_LABEL = {
   ANALYZING:        '分析根因',
   LOCATING:         '定位文件',
   GENERATING_PATCH: '生成补丁',

@@ -8,7 +8,7 @@ import {
 } from '@ant-design/icons'
 import api, { getBackendHost } from '../auth'
 import FixSummaryCard from './FixSummaryCard'
-import FixTaskStateMachine from './FixTaskStateMachine'
+import FixTaskStateMachine, { PHASE_ORDER, PHASE_COLOR, PHASE_LABEL } from './FixTaskStateMachine'
 import { useFixTaskBus, useIssueList } from '../hooks/useFixTaskPoller'
 import { useReactSessionEvents } from '../hooks/useReactSessionEvents'
 
@@ -611,6 +611,7 @@ export default function IssuesSidePanel({ sessionId, workspaceDir, onJumpToFile,
                 issue={issue}
                 busy={busyId === issue.issueId}
                 deleting={deletingId === issue.issueId}
+                task={tasks[issue.issueId]}
                 onJump={() => onJumpToFile && onJumpToFile(issue.filePath, issue.lineNumber)}
                 onViewGitDiff={() => onViewGitDiff && onViewGitDiff(issue.filePath)}
                 onStartFix={() => startFix(issue)}
@@ -902,13 +903,23 @@ function emptyDescription(filter, counts) {
   return '该筛选下没有问题'
 }
 
-function IssueItem({ issue, busy, deleting, onJump, onViewGitDiff, onStartFix, onMarkFixed, onMarkIgnored, onReopen, onDelete, onViewSummary, onViewStateMachine }) {
+function IssueItem({ issue, busy, deleting, task, onJump, onViewGitDiff, onStartFix, onMarkFixed, onMarkIgnored, onReopen, onDelete, onViewSummary, onViewStateMachine }) {
   const status = issue.status || 'open'
   const tag = STATUS_TAG[status] || STATUS_TAG.open
   const isResolved = status === 'fixed' || status === 'ignored'
   const isInProgress = status === 'in_progress'
   const canJump = !!issue.filePath
-  // Show "..." menu only when there's a destructive action available.
+  // Live fix-task progress (from the bus hook's WS events).
+  // `phases` is the chronological phase log; the last entry is
+  // the current phase. We derive the position in the canonical
+  // PHASE_ORDER for the inline progress trail.
+  const phases = (task && Array.isArray(task.phases)) ? task.phases : []
+  const lastPhase = phases.length > 0 ? phases[phases.length - 1] : null
+  const currentPhase = lastPhase
+    ? String(lastPhase.phase || '').toUpperCase() : ''
+  const phaseIdx = PHASE_ORDER.indexOf(currentPhase)
+  const lastNote = (lastPhase && lastPhase.note) ? lastPhase.note : ''
+  // Show "more" menu only when there's a destructive action available.
   // IN_PROGRESS issues are protected — deleting while a fix-task is
   // running could leave the task in a weird state.
   const showMoreMenu = !!onDelete && !isInProgress
@@ -983,6 +994,14 @@ function IssueItem({ issue, busy, deleting, onJump, onViewGitDiff, onStartFix, o
                 修复中…
               </Tag>
             </Tooltip>
+            {currentPhase && (
+              <Tag
+                color={PHASE_COLOR[currentPhase] || 'processing'}
+                style={{ margin: 0, fontWeight: 500 }}
+              >
+                {PHASE_LABEL[currentPhase] || currentPhase}
+              </Tag>
+            )}
             <Button size="small" type="primary" icon={<CheckCircleOutlined />}
               loading={busy} onClick={onMarkFixed}>标记已修复</Button>
             <Button size="small" icon={<StopOutlined />}
@@ -994,6 +1013,61 @@ function IssueItem({ issue, busy, deleting, onJump, onViewGitDiff, onStartFix, o
               </Tooltip>
             )}
           </>
+        )}
+
+        {/* Live fix-task progress trail: shows the 5 canonical
+            phases and where the driver currently is. Data comes
+            from the WS `fix-task.phase` events accumulated in
+            tasks[issueId].phases — no extra polling. */}
+        {isInProgress && phases.length > 0 && (
+          <div style={{ width: '100%', marginTop: 8 }}>
+            <div style={{ display: 'flex', gap: 4 }}>
+              {PHASE_ORDER.map((p, i) => {
+                const done = phaseIdx > i || currentPhase === 'COMPLETED'
+                const active = i === phaseIdx && currentPhase !== 'COMPLETED'
+                const color = active
+                  ? (PHASE_COLOR[p] || '#1677ff')
+                  : done ? '#52c41a' : '#3a3a3a'
+                return (
+                  <div key={p} style={{ flex: 1, textAlign: 'center' }}>
+                    <div
+                      style={{
+                        height: 3,
+                        borderRadius: 2,
+                        background: color,
+                        opacity: (done || active) ? 1 : 0.35
+                      }}
+                    />
+                    <div
+                      style={{
+                        marginTop: 3,
+                        fontSize: 10,
+                        color: (done || active) ? '#bbb' : '#666',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis'
+                      }}
+                    >
+                      {PHASE_LABEL[p] || p}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+            {lastNote && (
+              <div
+                style={{
+                  marginTop: 5,
+                  fontSize: 11,
+                  color: '#888',
+                  wordBreak: 'break-word',
+                  overflowWrap: 'anywhere'
+                }}
+              >
+                {lastNote}
+              </div>
+            )}
+          </div>
         )}
 
         {/* fixed / ignored → 重新打开 + 可选的查看修复结果 / Git Diff / 状态机 */}
