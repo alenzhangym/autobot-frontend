@@ -1203,8 +1203,9 @@ function ApiDonut({ ok, fail }) {
   )
 }
 
-/** 简易 K 线图（SVG，复刻 Python 仪表盘 drawKline）。 */
+/** 简易 K 线图（SVG，复刻 Python 仪表盘 drawKline，鼠标悬停显示该日高低价与成交量）。 */
 function KlineChart({ klines }) {
+  const [hover, setHover] = useState(-1)
   if (!klines || klines.length === 0) {
     return <div style={{ color: '#5b6577', textAlign: 'center', padding: 24 }}>暂无K线数据</div>
   }
@@ -1242,9 +1243,34 @@ function KlineChart({ klines }) {
       elements.push(<text key={`d${i}`} x={x} y={H - 6} fill="#5b6577" fontSize={9} fontFamily="Consolas,monospace" textAnchor="middle">{String(k.date).slice(5)}</text>)
     }
   })
+  if (hover >= 0 && hover < n) {
+    const k = klines[hover]
+    const x = PAD + hover * cw + cw / 2
+    const col = k.close >= k.open ? '#f6465d' : '#0ecb81'
+    const prevClose = hover > 0 ? klines[hover - 1].close : k.open
+    const chg = prevClose ? ((k.close - prevClose) / prevClose * 100) : 0
+    const tw = 182
+    const tx = x + 10 + tw > W ? x - 10 - tw : x + 10
+    elements.push(<line key="cx" x1={x} y1={PAD} x2={x} y2={H - 6} stroke="rgba(255,255,255,.35)" strokeWidth={1} strokeDasharray="3 3" />)
+    elements.push(
+      <g key="tx" transform={`translate(${tx}, ${PAD + 4})`}>
+        <rect x={0} y={0} width={tw} height={90} rx={4} fill="rgba(20,24,35,.92)" stroke={col} strokeOpacity={0.6} />
+        <text x={8} y={14} fill="#e6e9f0" fontSize={10} fontFamily="Consolas,monospace">{k.date}</text>
+        <text x={8} y={29} fill={col} fontSize={10} fontFamily="Consolas,monospace">开 {Number(k.open).toFixed(2)}   收 {Number(k.close).toFixed(2)}</text>
+        <text x={8} y={44} fill={col} fontSize={10} fontFamily="Consolas,monospace">高 {Number(k.high).toFixed(2)}   低 {Number(k.low).toFixed(2)}</text>
+        <text x={8} y={59} fill={col} fontSize={10} fontFamily="Consolas,monospace">涨跌 {chg >= 0 ? '+' : ''}{chg.toFixed(2)}%</text>
+        <text x={8} y={74} fill="#8b95a7" fontSize={10} fontFamily="Consolas,monospace">成交量 {(k.volume || 0).toLocaleString()}</text>
+      </g>
+    )
+  }
+  const onMove = e => {
+    const rect = e.currentTarget.getBoundingClientRect()
+    const px = (e.clientX - rect.left) / rect.width * W - PAD
+    setHover(Math.min(n - 1, Math.max(0, Math.floor(px / cw))))
+  }
   return (
     <div style={{ width: '100%', overflowX: 'auto', marginTop: 6 }}>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto', display: 'block', minWidth: 520 }}>{elements}</svg>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto', display: 'block', minWidth: 520, cursor: 'crosshair' }} onMouseMove={onMove} onMouseLeave={() => setHover(-1)}>{elements}</svg>
     </div>
   )
 }
