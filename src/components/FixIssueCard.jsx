@@ -1,9 +1,10 @@
-import React, { useMemo } from 'react'
+import React, { useMemo, useState, useEffect } from 'react'
 import { Tag, Typography, Space, Spin } from 'antd'
 import {
   CheckCircleFilled, CloseCircleFilled, LoadingOutlined,
   ToolOutlined, FileTextOutlined
 } from '@ant-design/icons'
+import api from '../auth'
 import { MarkdownContent } from '../utils/helpers.jsx'
 import { useFixTaskContext, extractFixTaskKeysFromMessage } from '../context/FixTaskContext.jsx'
 
@@ -19,7 +20,7 @@ const { Text } = Typography
  *   <li>无 WS 状态时按"in-progress 占位"渲染，避免空白</li>
  * </ul>
  */
-export default function FixIssueCard({ msg }) {
+export default function FixIssueCard({ msg, sessionId }) {
   const meta = useMemo(() => {
     if (!msg || !msg.meta) return null
     try { return JSON.parse(msg.meta) } catch (_) { return null }
@@ -35,18 +36,55 @@ export default function FixIssueCard({ msg }) {
     return null
   }, [metaKeys.taskId, metaKeys.issueId, getFixTaskByTaskId, getFixTaskForIssue])
 
-  // 计算显示状态：context > meta > 兜底 in-progress
+  // ── 冷启动对账（HARDENING 2026-09-06, ft-b07ba95a）──────────
+  // 页面刷新后 context（WS）里没有该任务，且后端任务若已丢失
+  // （重启后内存态清空），meta 兜底会永远显示"正在修复 IN_PROGRESS"。
+  // 这里在 context 无状态时对照单任务端点对账一次：
+  //   - 404 → 任务已失效，渲染为 修复失败 + 原因
+  //   - 后端已到终态（completed/failed/designed）→ 直接渲染终态
+  //   - 后端仍在运行（RUNNING）→ 保持 IN_PROGRESS，等 WS 重新同步
+  const [probe, setProbe] = useState(null)   // null | { status, reason }
+  useEffect(() => {
+    if (taskState) { setProbe(null); return }
+    const taskId = metaKeys.taskId
+    if (!taskId || !sessionId) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const r = await api.get(`/fix-tasks/${sessionId}/${taskId}`)
+        const st = r && r.data && r.data.task && r.data.task.status
+        if (!cancelled && st && ['completed', 'failed', 'designed'].includes(String(st).toLowerCase())) {
+          setProbe({ status: String(st).toLowerCase() })
+        }
+      } catch (e) {
+        if (!cancelled && e && e.response && e.response.status === 404) {
+          setProbe({ status: 'failed', reason: '修复任务已失效（后端重启或任务状态丢失），请重新发起修复' })
+        }
+      }
+    })()
+    return () => { cancelled = true }
+  }, [taskState, metaKeys.taskId, sessionId])
+
+  // 计算显示状态：context > probe > meta > 兜底 in-progress
   const status = useMemo(() => {
     if (taskState && taskState.status) return String(taskState.status).toUpperCase()
+    if (probe && probe.status) return String(probe.status).toUpperCase()
     const metaType = meta && meta.type
     if (metaType === 'fix_issue') return 'IN_PROGRESS'
     if (metaType === 'fix_summary') return String(meta.status || 'COMPLETED').toUpperCase()
     return 'IN_PROGRESS' // 兜底
-  }, [taskState, meta])
+  }, [taskState, meta, probe])
+
+  // 失效原因：context 对账 > 卡片冷启动对账
+  const failureReason = (taskState && taskState.failureReason) || (probe && probe.reason) || null
 
   const isInProgress = status === 'IN_PROGRESS' || status === 'RUNNING'
   const isCompleted = status === 'COMPLETED'
   const isFailed = status === 'FAILED'
+  // HARDENING (2026-09-06, ft-5e9a52e1): requirement-clarification /
+  // missing-feature issues terminate with DESIGNED — the chat bubble
+  // carries the "📋 已生成设计方案" body built by buildFixSummaryContent.
+  const isDesigned = status === 'DESIGNED'
   // patches 优先 context；context 没有时退到 meta（兼容老消息）
   const patches = useMemo(() => {
     if (taskState && Array.isArray(taskState.patches) && taskState.patches.length > 0) {
@@ -78,6 +116,10 @@ export default function FixIssueCard({ msg }) {
     icon = <CloseCircleFilled style={{ color: '#ff4d4f' }} />
     label = '修复失败'
     tagColor = 'error'
+  } else if (isDesigned) {
+    icon = <FileTextOutlined style={{ color: '#faad14' }} />
+    label = '已生成设计方案'
+    tagColor = 'gold'
   } else {
     icon = <ToolOutlined style={{ color: '#888' }} />
     label = '修复任务'
@@ -115,6 +157,12 @@ export default function FixIssueCard({ msg }) {
               <code style={{ background: '#1f1f1f', padding: '1px 5px', borderRadius: 3 }}>{f}</code>
             </React.Fragment>
           ))}
+        </div>
+      )}
+      {/* 失效/中断任务：对账纠正为 failed 时给出原因，避免只显示"修复失败"没下文 */}
+      {isFailed && failureReason && (
+        <div style={{ fontSize: 12, color: '#ff7875', margin: '2px 0 6px' }}>
+          {failureReason}
         </div>
       )}
       {/* Body: the message's own content. For the placeholder

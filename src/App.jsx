@@ -3915,7 +3915,7 @@ const handleDeleteSession = (id) => {
                       }
                       return (
                         <div style={{ maxWidth: 1000, margin: '0 auto', padding: isMobile ? '0 12px' : '0 24px' }}>
-                          <MessageBubble msg={msg} onDelete={() => handleDeleteMessage(msg.id || msg._localId)} />
+                          <MessageBubble msg={msg} onDelete={() => handleDeleteMessage(msg.id || msg._localId)} sessionId={sessionId} />
                           {msg.explanation && <ResultExplanationCard explanation={msg.explanation} />}
                           {msg.paramSources && <ParamSourceCard paramSources={msg.paramSources} />}
                           {msg.crossDomainEntities && <CrossDomainEntityCard entities={msg.crossDomainEntities} />}

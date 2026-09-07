@@ -158,21 +158,39 @@ export function useFixTaskBus({ sessionId, enabled = true } = {}) {
     const tick = async () => {
       for (const [iid, t] of taskEntries) {
         if (!t || !t.taskId) continue
+        // 已到终态的任务不再轮询确认
+        const stLower = String(t.status || '').toLowerCase()
+        if (['completed', 'failed', 'designed'].includes(stLower)) continue
+        let r
         try {
-          const r = await api.get(
+          r = await api.get(
             `/api/code-analysis/${sessionId}/fix-task/${t.taskId}/pending-confirmations`,
             { baseURL: getBackendHost() }
-          ).catch(err => ({ data: { confirmations: [] } }))
-          const pending = r && r.data && Array.isArray(r.data.confirmations) ? r.data.confirmations : []
-          setTasks(prev => prev[iid] ? { ...prev, [iid]: { ...prev[iid], pending, lastChecked: Date.now() } } : prev)
-          if (pending.length > 0 && !activeConfirmRef.current) {
-            const c = pending[0]
-            if (!seenConfirmRef.current.has(c.confirmation_id)) {
-              seenConfirmRef.current.add(c.confirmation_id)
-              setActiveConfirm({ ...c, issueId: iid })
-            }
+          )
+        } catch (err) {
+          // HARDENING (2026-09-06, ft-b07ba95a): 后端重启后 FixTaskStore
+          // 内存态丢失任务 → pending-confirmations 返回 404。之前被
+          // 静默吞掉，UI 永远停在"正在修复 IN_PROGRESS"。现在纠正为
+          // failed，并清掉可能残留的确认弹窗。
+          if (err && err.response && err.response.status === 404) {
+            setTasks(prev => prev[iid] ? {
+              ...prev,
+              [iid]: { ...prev[iid], status: 'failed',
+                       failureReason: '修复任务已失效（后端重启或任务状态丢失），请重新发起修复' }
+            } : prev)
+            setActiveConfirm(null)
           }
-        } catch (_) {}
+          continue
+        }
+        const pending = r && r.data && Array.isArray(r.data.confirmations) ? r.data.confirmations : []
+        setTasks(prev => prev[iid] ? { ...prev, [iid]: { ...prev[iid], pending, lastChecked: Date.now() } } : prev)
+        if (pending.length > 0 && !activeConfirmRef.current) {
+          const c = pending[0]
+          if (!seenConfirmRef.current.has(c.confirmation_id)) {
+            seenConfirmRef.current.add(c.confirmation_id)
+            setActiveConfirm({ ...c, issueId: iid })
+          }
+        }
       }
     }
     pollRef.current = setInterval(tick, 3000)

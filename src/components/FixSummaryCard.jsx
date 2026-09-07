@@ -47,6 +47,10 @@ export default function FixSummaryCard({ summary, onClose, compact = false, work
   const diffs = Array.isArray(summary.diffs) ? summary.diffs : []
   const verdict = (v.verdict || '').toUpperCase()
   const isVerified = verdict === 'VERIFIED'
+  // HARDENING (2026-09-06, ft-5e9a52e1): requirement-class issues
+  // (需求澄清/功能缺失) end with verdict DESIGNED — render a design
+  // summary, not a "校验未通过" failure.
+  const isDesigned = verdict === 'DESIGNED'
 
   return (
     <Card
@@ -56,9 +60,19 @@ export default function FixSummaryCard({ summary, onClose, compact = false, work
         <Space>
           {isVerified
             ? <CheckCircleFilled style={{ color: '#52c41a' }} />
-            : <CloseCircleFilled style={{ color: '#ff4d4f' }} />}
-          <span>修复完成 · {isVerified ? '已通过校验' : '校验未通过'}</span>
-          <Tag color={isVerified ? 'success' : 'error'}>{verdict || 'UNKNOWN'}</Tag>
+            : isDesigned
+              ? <FileTextOutlined style={{ color: '#faad14' }} />
+              : <CloseCircleFilled style={{ color: '#ff4d4f' }} />}
+          <span>
+            {isVerified
+              ? '修复完成 · 已通过校验'
+              : isDesigned
+                ? '需求类 issue · 已生成设计方案'
+                : '修复完成 · 校验未通过'}
+          </span>
+          <Tag color={isVerified ? 'success' : (isDesigned ? 'gold' : 'error')}>
+            {verdict || 'UNKNOWN'}
+          </Tag>
           {summary.taskId && (
             <Text type="secondary" style={{ fontSize: 12 }} copyable>
               {summary.taskId}
@@ -74,7 +88,11 @@ export default function FixSummaryCard({ summary, onClose, compact = false, work
       {diffs.length === 0 && (
         <Empty
           image={Empty.PRESENTED_IMAGE_SIMPLE}
-          description="未应用任何补丁（LLM 直接确认通过）"
+          description={
+            isDesigned
+              ? '需求澄清/功能缺失 — 已输出设计方案，无代码改动'
+              : '未应用任何补丁（LLM 直接确认通过）'
+          }
         />
       )}
     </Card>

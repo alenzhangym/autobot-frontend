@@ -459,7 +459,7 @@ function MessageBubble({ msg, onCopy, onRegenerate, onExpand, onDelete, sessionI
               )}
             </div>
           </div>
-          <FixIssueCard msg={msg} />
+          <FixIssueCard msg={msg} sessionId={sessionId} />
         </div>
       </div>
     );

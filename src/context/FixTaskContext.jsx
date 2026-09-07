@@ -1,5 +1,5 @@
-import { createContext, useContext, useState, useCallback, useMemo, useRef } from 'react'
-import { getWsBaseUrl } from '../auth'
+import { createContext, useContext, useState, useCallback, useMemo, useRef, useEffect } from 'react'
+import api, { getWsBaseUrl } from '../auth'
 
 /**
  * S1: FixTaskContext —— WS 是 fix-task 信息的唯一真源。
@@ -32,6 +32,53 @@ export function FixTaskProvider({ sessionId, children }) {
   const [fixTasks, setFixTasks] = useState({})        // taskId -> { status, patches, phases[], summary, issueId }
   const wsRef = useRef(null)
   const reconnectRef = useRef(null)
+  // 镜像 fixTasks 供失效对账轮询用（避免 effect 闭包拿到旧值）
+  const fixTasksRef = useRef(fixTasks)
+  useEffect(() => { fixTasksRef.current = fixTasks }, [fixTasks])
+
+  // ── 失效任务对账（HARDENING 2026-09-06, ft-b07ba95a）─────────
+  // WS 终态事件（fix-task.completed）可能在任务中断时永远不来：
+  // 后端重启后 FixTaskStore（内存态）丢失任务，per-task 只推过
+  // fix-task.phase，于是聊天卡片永远卡在"正在修复 IN_PROGRESS"。
+  // 这里周期性地把未到达终态的任务对照单任务端点对账：
+  //   - 后端已到终态（completed/failed/designed）→ 补发 ingest
+  //   - 后端返回 404（任务已丢失）→ 直接纠正为 failed + 原因
+  useEffect(() => {
+    if (!sessionId) return
+    const iv = setInterval(async () => {
+      const stuck = Object.entries(fixTasksRef.current).filter(([, t]) => {
+        const s = String(t.status || '').toLowerCase()
+        return !['completed', 'failed', 'designed'].includes(s)
+      })
+      if (stuck.length === 0) return
+      for (const [taskId, t] of stuck) {
+        try {
+          const r = await api.get(`/fix-tasks/${sessionId}/${taskId}`)
+          const st = r && r.data && r.data.task && r.data.task.status
+          if (st && ['completed', 'failed', 'designed'].includes(String(st).toLowerCase())) {
+            ingest({
+              type: 'fix-task.completed',
+              taskId,
+              issueId: t.issueId,
+              status: String(st).toLowerCase(),
+              ts: Date.now(),
+            })
+          }
+        } catch (e) {
+          // 仅 404（后端明确"未知任务"）才纠正为 failed；
+          // 401/403/网络错误不能误判为失败。
+          if (e && e.response && e.response.status === 404) {
+            setFixTasks(prev => prev[taskId]
+              ? { ...prev, [taskId]: { ...prev[taskId],
+                  status: 'failed',
+                  failureReason: '修复任务已失效（后端重启或任务状态丢失），请重新发起修复' } }
+              : prev)
+          }
+        }
+      }
+    }, 5000)
+    return () => clearInterval(iv)
+  }, [sessionId, ingest])
 
   // 累积事件：fix-task.phase 按 ts 排，fix-task.completed 是终态
   const ingest = useCallback((msg) => {
