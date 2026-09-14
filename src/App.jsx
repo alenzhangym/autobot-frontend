@@ -82,6 +82,7 @@ import AcademicResearchPage from './AcademicResearchPage'
 import AcademicStatsPage from './AcademicStatsPage'
 import NovelPage from './NovelPage'
 import StockMonitorPage from './StockMonitorPage'
+import AnalystPage from './AnalystPage'
 import TranslationCheckPage from './TranslationCheckPage'
 import LlmManagement from './LlmManagement'
 import { useUserStore } from './store/useUserStore'
@@ -3771,6 +3772,10 @@ const handleDeleteSession = (id) => {
           ) : activeTab === 'stock_monitor' ? (
             <Content style={{ background: '#0a0a0a', overflow: 'auto' }}>
               <StockMonitorPage user={user} />
+            </Content>
+          ) : activeTab === 'stock_analyst' ? (
+            <Content style={{ background: '#0a0a0a', overflow: 'auto' }}>
+              <AnalystPage user={user} />
             </Content>
           ) : activeTab === 'translation_check' ? (
             <Content style={{ background: 'var(--ab-bg)', overflow: 'hidden' }}>

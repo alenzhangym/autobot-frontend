@@ -5,7 +5,7 @@ import {
 } from 'antd'
 import {
   ReloadOutlined, CheckCircleFilled, CloseCircleFilled, CopyOutlined,
-  LineChartOutlined, BellOutlined, FileSearchOutlined, RocketOutlined,
+  LineChartOutlined, BellOutlined, FileSearchOutlined,
   SettingOutlined, PlusOutlined, DeleteOutlined, RobotOutlined, WalletOutlined, SendOutlined
 } from '@ant-design/icons'
 import ReactMarkdown from 'react-markdown'
@@ -48,13 +48,7 @@ export default function StockMonitorPage() {
   const [finLoading, setFinLoading] = useState(false)
   const [finAnalyzing, setFinAnalyzing] = useState('')   // 正在生成财报解读的 code
   const [finReport, setFinReport] = useState(null)       // { title, content }
-  // 2026-09-12: 定制分析师（内置预设角色，如「十倍股筛选分析师」）
-  const [personas, setPersonas] = useState([])
-  const [analystOpen, setAnalystOpen] = useState(false)
-  const [analystPersona, setAnalystPersona] = useState('')
-  const [analystQuery, setAnalystQuery] = useState('')
-  const [analystLoading, setAnalystLoading] = useState(false)
-  const [analystReport, setAnalystReport] = useState('')
+  // 2026-09-14: 定制分析师已迁移到独立页 (AnalystPage, 侧边栏「定制分析师」tab), 此处不再持有分析师状态
   const [pushingFin, setPushingFin] = useState(false)
   // 2026-08-27: 数据源偏好 (fin/quote) 已移至设置弹窗的"股票配置" tab, 此页不再持有状态.
   const [posEdit, setPosEdit] = useState(null)          // { shares, cost }
@@ -144,7 +138,6 @@ export default function StockMonitorPage() {
     loadProfile()
     loadProfit()
     loadPushConfig()
-    loadAnalystPersonas()
   }, [loadAll, loadWatchlist, loadProfile, loadPushConfig])
 
   // 10s 自动刷新倒计时
@@ -483,44 +476,6 @@ export default function StockMonitorPage() {
     }
   }
 
-  // ── 定制分析师 ────────────────────────────────────────────
-  const loadAnalystPersonas = async () => {
-    try {
-      const r = await api.get('/stock-monitor/analyst/personas')
-      const list = r.data || []
-      setPersonas(list)
-      if (list.length) setAnalystPersona((cur) => cur || list[0].id)
-    } catch (e) { /* 忽略：后端未启用或首次加载失败 */ }
-  }
-
-  const openAnalyst = () => {
-    if (!personas.length) loadAnalystPersonas()
-    setAnalystOpen(true)
-  }
-
-  const runAnalyst = async () => {
-    if (!analystPersona) { message.warning('请先选择分析师角色'); return }
-    setAnalystLoading(true)
-    setAnalystReport('')
-    try {
-      const r = await api.post('/stock-monitor/analyst/run', {
-        personaId: analystPersona,
-        query: analystQuery,   // 留空时后端按该角色自带的筛选框架直接执行
-      })
-      if (r.data?.status === 'error') {
-        setAnalystReport('>>> ' + (r.data.text || '分析失败'))
-      } else if (r.data?.text) {
-        setAnalystReport(r.data.text)
-      } else {
-        setAnalystReport('>>> 分析师未返回内容，请重试')
-      }
-    } catch (e) {
-      setAnalystReport('>>> 分析失败: ' + (e.response?.data?.message || e.message))
-    } finally {
-      setAnalystLoading(false)
-    }
-  }
-
   const savePos = async () => {
     if (!selectedCode) return
     setPosSaving(true)
@@ -621,10 +576,7 @@ export default function StockMonitorPage() {
           <Button icon={<SettingOutlined />} onClick={openConfigList}>
             配置监控股票
           </Button>
-          <Button icon={<RocketOutlined />} onClick={openAnalyst}
-            style={{ background: 'rgba(245,179,1,.12)', border: '1px solid #f5b301', color: '#f5b301' }}>
-            分析师
-          </Button>
+          {/* 2026-09-14: 定制分析师已迁移到独立页 (AnalystPage), 此页不再放分析师按钮. */}
           {/* 2026-08-27: 数据源偏好 (财报源/行情源) 已移至设置弹窗的"股票配置" tab, 由 super admin 统一配置, 此处不再展示. */}
         </div>
       </div>
@@ -925,48 +877,6 @@ export default function StockMonitorPage() {
       >
         <div style={{ maxHeight: '72vh', overflowY: 'auto', padding: '12px 16px', fontSize: 14, lineHeight: 1.8 }}>
           {finReport?.content ? <ReactMarkdown>{finReport.content}</ReactMarkdown> : <Empty />}
-        </div>
-      </Modal>
-
-      {/* 2026-09-12: 定制分析师弹窗 —— 选择预设角色，对股票市场做定制化选股/研究，输出 markdown 报告 */}
-      <Modal
-        open={analystOpen} onCancel={() => setAnalystOpen(false)} width={980}
-        title="定制分析师" footer={[
-          <Button key="copy" icon={<CopyOutlined />} disabled={!analystReport} onClick={() => copyText(analystReport)}>复制全文</Button>,
-          <Button key="close" onClick={() => setAnalystOpen(false)}>关闭</Button>,
-        ]}
-        styles={{ body: { padding: 0 } }}
-      >
-        <div style={{ padding: '14px 16px', borderBottom: '1px solid #1e2a3c', display: 'grid', gap: 12 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(160px,220px) 1fr', gap: 12 }}>
-            <div>
-              <div style={{ fontSize: 12, color: '#8b95a7', marginBottom: 6 }}>分析师角色</div>
-              <Select
-                value={analystPersona} onChange={setAnalystPersona}
-                options={personas.map(p => ({ value: p.id, label: p.name }))}
-                placeholder="选择角色" style={{ width: '100%' }}
-              />
-              {personas.find(p => p.id === analystPersona)?.description && (
-                <div style={{ fontSize: 11, color: '#5b6577', marginTop: 6 }}>{personas.find(p => p.id === analystPersona).description}</div>
-              )}
-            </div>
-            <div>
-              <div style={{ fontSize: 12, color: '#8b95a7', marginBottom: 6 }}>补充需求（可选，留空则直接按该角色框架执行）</div>
-              <Input.TextArea
-                value={analystQuery} onChange={e => setAnalystQuery(e.target.value)} autoSize={{ minRows: 1, maxRows: 3 }} rows={1}
-                placeholder="可留空，直接按所选角色框架筛选并输出报告"
-              />
-            </div>
-          </div>
-          <Button type="primary" icon={<RocketOutlined />} loading={analystLoading} onClick={runAnalyst}
-            style={{ background: 'rgba(245,179,1,.9)', borderColor: '#f5b301', color: '#0b0f17', fontWeight: 600, alignSelf: 'flex-start' }}>
-            {analystLoading ? '分析师采集中…' : '开始分析'}
-          </Button>
-        </div>
-        <div style={{ maxHeight: '66vh', overflowY: 'auto', padding: '12px 16px', fontSize: 14, lineHeight: 1.8 }}>
-          {analystLoading ? <Spin><div style={{ padding: 24 }}>分析师正在收集数据并生成报告……</div></Spin>
-            : analystReport ? <ReactMarkdown>{analystReport}</ReactMarkdown>
-            : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="选择角色并开始分析后，此处展示报告" />}
         </div>
       </Modal>
 

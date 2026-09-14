@@ -240,6 +240,7 @@ export default function SessionSidebar({
           // 2026-08-15: 股票监控入口 — 受 hasStockMonitorChannel 网关控制（公司管理页勾选）
           ...(hasStockMonitorChannel ? [
             { key: 'stock_monitor', icon: <StockOutlined />, label: '股票监控' },
+            { key: 'stock_analyst', icon: <BarChartOutlined />, label: '定制分析师' },
           ] : []),
           // 2026-08-08: 翻译核对入口 — 受 hasTranslationCheckChannel 网关控制
           // 公司管理员在"公司管理"页勾选 translation_check channel 后, 该公司所有用户可见此入口
