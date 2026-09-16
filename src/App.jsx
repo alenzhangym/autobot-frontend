@@ -927,6 +927,10 @@ function App() {
   const dequeueClarification = () => (
     pendingResumeRef.current.length > 0 ? pendingResumeRef.current.shift() : null
   )
+  // 2026-09-17: 只读查看队头（无出队副作用），供"是否处于澄清/暂停恢复"判断用。
+  const peekClarification = () => (
+    pendingResumeRef.current.length > 0 ? pendingResumeRef.current[0] : null
+  )
   const msgIdCounter = useRef(Date.now())
   const nextMsgId = () => { msgIdCounter.current += 1; return msgIdCounter.current }
   const [input, setInput] = useState('')
@@ -2700,7 +2704,12 @@ function App() {
     if (attachParts.length > 0) {
       contentToDisplay = attachParts.join('\n') + '\n' + text;
     }
-    setMessages(prev => [...prev, { id: nextMsgId(), role: 'user', content: contentToDisplay }])
+    // 2026-09-17: 澄清/暂停恢复（补充信息）不追加独立 user 气泡 —— 补充信息属于原任务延续,
+    // 经 resumeContext/clarifyResponse 透传, 避免消息通道出现多条记录。
+    const resumePending = peekClarification()
+    if (!resumePending) {
+      setMessages(prev => [...prev, { id: nextMsgId(), role: 'user', content: contentToDisplay }])
+    }
     // S6: 记录最近一条 user query（供 intent 弹层用）
     lastUserQueryRef.current = text
     
