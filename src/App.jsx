@@ -2044,7 +2044,14 @@ function App() {
       try {
         const data = JSON.parse(event.data)
         if (data?.type === 'agent:clarify_question' && data?.clarifyQuestion) {
-          setPendingClarify(prev => prev || { clarifyQuestion: data.clarifyQuestion, sessionId })
+          setPendingClarify(prev => {
+            // G7 (2026-09 收口): 多轮补参 — 同会话内已有弹窗且新澄清带 stillMissing 标记时,
+            // 更新问题继续追问(重弹当前弹窗), 而非忽略; 否则保持原有去重语义(HTTP+WS 双通道同题不重复开).
+            if (prev && data.clarifyQuestion.stillMissing) {
+              return { ...prev, clarifyQuestion: data.clarifyQuestion }
+            }
+            return prev || { clarifyQuestion: data.clarifyQuestion, sessionId }
+          })
         }
       } catch (e) { /* 非本次相关消息，忽略 */ }
     }
@@ -2486,8 +2493,10 @@ function App() {
         const explanation = res.data?.metadata?.explanation
         const paramSources = res.data?.metadata?.paramSources
         const crossDomainEntities = res.data?.metadata?.crossDomainEntities
+        // G9 (2026-09-15): 跨域请求 traceId — 供消息卡片展示与 EventLogPanel 按 trace 过滤关联
+        const traceId = res.data?.metadata?.traceId
         const tableData = res.data?.metadata?.tableData
-        setMessages(prev => [...prev, normalizeMessage({ role: 'assistant', content: res.data.response, explanation, paramSources, crossDomainEntities, tableData })]);
+        setMessages(prev => [...prev, normalizeMessage({ role: 'assistant', content: res.data.response, explanation, paramSources, crossDomainEntities, traceId, tableData })]);
         fetchSessions();
       } else {
         // 防御性: 与 /chat 同样, message 缺失时回退到 response
@@ -2762,11 +2771,13 @@ function App() {
         // §7.6 方案七 (P2): 提取参数来源 + 跨域实体聚合, 供 ParamSourceCard / CrossDomainEntityCard 渲染
         const paramSources = res.data?.metadata?.paramSources
         const crossDomainEntities = res.data?.metadata?.crossDomainEntities
+        // G9 (2026-09-15): 跨域请求 traceId — 供消息卡片展示与 EventLogPanel 按 trace 过滤关联
+        const traceId = res.data?.metadata?.traceId
         // P0-4: 提取已抽取参数, 供前端结构化展示/恢复使用
         const extractedParams = res.data?.metadata?.extractedParams
         // 2026-08: ERP 查询结果含 items 明细列时, 后端透传结构化表格数据供可展开表格渲染
         const tableData = res.data?.metadata?.tableData
-        setMessages(prev => [...prev, normalizeMessage({ id: nextMsgId(), role: 'assistant', content: res.data.response, explanation, paramSources, crossDomainEntities, extractedParams, tableData })])
+        setMessages(prev => [...prev, normalizeMessage({ id: nextMsgId(), role: 'assistant', content: res.data.response, explanation, paramSources, crossDomainEntities, traceId, extractedParams, tableData })])
         fetchSessions()
         // 阶段5: ERP 订单表单 — 收到 reply_context.formSpec 时弹窗
         tryOpenOrderFormModal(res.data)
@@ -3924,6 +3935,13 @@ const handleDeleteSession = (id) => {
                           {msg.explanation && <ResultExplanationCard explanation={msg.explanation} />}
                           {msg.paramSources && <ParamSourceCard paramSources={msg.paramSources} />}
                           {msg.crossDomainEntities && <CrossDomainEntityCard entities={msg.crossDomainEntities} />}
+                          {msg.traceId && (
+                            <div style={{ marginTop: 2 }}>
+                              <Tag color="purple" style={{ fontSize: 11, margin: 0, fontFamily: 'monospace' }}>
+                                跨域 trace: {msg.traceId}
+                              </Tag>
+                            </div>
+                          )}
                         </div>
                       )
                     }}

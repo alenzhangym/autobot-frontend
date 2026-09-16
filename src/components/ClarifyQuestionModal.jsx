@@ -5,7 +5,7 @@ import { useState, useEffect } from 'react'
 const { Text, Paragraph } = Typography
 
 /**
- * ClarifyQuestionModal — 结构化澄清 (§5.5.4).
+ * ClarifyQuestionModal — 结构化澄清 (§5.5.4) + G7 多轮补参 (2026-09 收口).
  *
  * <p>渲染后端 ClarifyQuestion record, 支持三种类型:
  * <ul>
@@ -13,6 +13,9 @@ const { Text, Paragraph } = Typography
  *   <li>AMBIGUITY    — 同名歧义, 显示候选选项列表让用户选择</li>
  *   <li>POLICY_CONFIRMATION — 高风险确认, 显示确认/取消按钮</li>
  * </ul>
+ *
+ * <p>G7 多轮补参: 后端仍缺槽位时返回 {@code stillMissing=true} + {@code missingSlots},
+ * 本组件在同会话内连续重弹(不新开会话), 并展示"还需补充"进度供用户感知.
  *
  * @param {object} clarify - ClarifyQuestion record (后端 JSON 反序列化)
  * @param {function} onResolve - 用户完成澄清后回调, 参数为 {slot, value} 或 {confirmed: true/false}
@@ -24,7 +27,7 @@ export default function ClarifyQuestionModal({ clarify, onResolve, onCancel, loa
   const [selectedOption, setSelectedOption] = useState(null)
 
   useEffect(() => {
-    // 每次澄清问题变化时重置状态
+    // 每次澄清问题变化时重置状态 (G7: 多轮连续追问时新问题到来即重置输入)
     setInputValue('')
     setSelectedOption(null)
   }, [clarify])
@@ -35,7 +38,9 @@ export default function ClarifyQuestionModal({ clarify, onResolve, onCancel, loa
     clarifyType = 'MISSING_SLOT',
     question = '请补充信息',
     options = [],
-    blockingSlot = ''
+    blockingSlot = '',
+    stillMissing = false,
+    missingSlots = []
   } = clarify
 
   const handleConfirm = () => {
@@ -59,7 +64,7 @@ export default function ClarifyQuestionModal({ clarify, onResolve, onCancel, loa
   }
 
   const titleMap = {
-    MISSING_SLOT: '请补充信息',
+    MISSING_SLOT: stillMissing ? '请继续补充信息' : '请补充信息',
     AMBIGUITY: '请选择',
     POLICY_CONFIRMATION: '需要确认'
   }
@@ -77,6 +82,11 @@ export default function ClarifyQuestionModal({ clarify, onResolve, onCancel, loa
         <Space>
           {iconMap[clarifyType]}
           <span>{titleMap[clarifyType]}</span>
+          {stillMissing && (
+            <Tag color="blue" style={{ marginInlineStart: 4 }}>
+              还需 {missingSlots.length} 项
+            </Tag>
+          )}
         </Space>
       }
       onCancel={handleCancel}
@@ -104,6 +114,15 @@ export default function ClarifyQuestionModal({ clarify, onResolve, onCancel, loa
       <Paragraph style={{ marginBottom: 16, fontSize: 14 }}>
         {question}
       </Paragraph>
+
+      {/* G7: 多轮补参进度 — 同会话内仍需补齐的槽位列表 */}
+      {stillMissing && missingSlots.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            还需补充: {missingSlots.join('、')}
+          </Text>
+        </div>
+      )}
 
       {/* MISSING_SLOT: 输入框 */}
       {clarifyType === 'MISSING_SLOT' && (

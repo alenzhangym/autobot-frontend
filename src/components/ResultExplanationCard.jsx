@@ -1,24 +1,22 @@
-import { Card, Tag, Typography, Space, Divider } from 'antd'
+import { Card, Tag, Typography, Space } from 'antd'
 import {
-  InfoCircleOutlined, FilterOutlined, StopOutlined, DatabaseOutlined
+  InfoCircleOutlined, FilterOutlined, StopOutlined, DatabaseOutlined, BarsOutlined
 } from '@ant-design/icons'
 
 const { Text } = Typography
 
 /**
- * ResultExplanationCard — 结构化结果解释卡片 (§9.6 P2-3).
+ * ResultExplanationCard — 结构化结果解释卡片 (§9.6 P2-3 + G9 聚合口径).
  *
  * <p>渲染后端 AgentResult.metadata.explanation:
  * <ul>
  *   <li>appliedConditions — 应用的筛选条件列表</li>
  *   <li>excludedObjects — 排除的对象列表</li>
+ *   <li>aggregation — 聚合口径 (group_by 维度, G9)</li>
  *   <li>dataSource — 数据来源 (ERP/CRM)</li>
  * </ul>
  *
- * <p>取代之前追加到 payload 文本的 "📋 结果说明: ..." 行,
- * 提升为独立可视化卡片, 前端可自行控制排版与交互.
- *
- * @param {object} explanation — 结构化解释 { appliedConditions?, excludedObjects?, dataSource? }
+ * @param {object} explanation — 结构化解释 { appliedConditions?, excludedObjects?, aggregation?, dataSource? }
  */
 export default function ResultExplanationCard({ explanation }) {
   if (!explanation) return null
@@ -26,10 +24,12 @@ export default function ResultExplanationCard({ explanation }) {
   const {
     appliedConditions = [],
     excludedObjects = [],
+    aggregation = [],
     dataSource = null
   } = explanation
 
-  const hasAny = appliedConditions.length > 0 || excludedObjects.length > 0 || dataSource
+  const hasAny = appliedConditions.length > 0 || excludedObjects.length > 0
+    || aggregation.length > 0 || dataSource
 
   if (!hasAny) return null
 
@@ -72,6 +72,24 @@ export default function ResultExplanationCard({ explanation }) {
                 {excludedObjects.map((obj, i) => (
                   <Tag key={i} color="red" style={{ marginBottom: 2, fontSize: 12 }}>
                     {obj}
+                  </Tag>
+                ))}
+              </div>
+            </div>
+          </Space>
+        </div>
+      )}
+
+      {aggregation.length > 0 && (
+        <div style={{ marginBottom: 8 }}>
+          <Space align="start">
+            <BarsOutlined style={{ color: '#fa8c16', marginTop: 2 }} />
+            <div>
+              <Text type="secondary" style={{ fontSize: 12 }}>聚合口径</Text>
+              <div style={{ marginTop: 2 }}>
+                {aggregation.map((agg, i) => (
+                  <Tag key={i} color="orange" style={{ marginBottom: 2, fontSize: 12 }}>
+                    {agg}
                   </Tag>
                 ))}
               </div>
