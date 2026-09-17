@@ -4299,7 +4299,11 @@ const handleDeleteSession = (id) => {
                         } else if (result.slot && result.value !== undefined) {
                           // 2026-09-05 (#6): 消息文本直接用 value，不把内部 slot 名（如 user_goal=）泄进聊天记录；
                           // slot 信息保留在结构化 clarify_response 字段中，后端 resume 仍可精确恢复。
-                          replyText = result.value
+                          // 2026-09-17: 选项式澄清由 Modal 提供 text (单选/多选/自定义的可读拼接串),
+                          // 避免多选 value(数组) 被 React/后端强转为无意义字符串; 无 text 时回退 value。
+                          replyText = (typeof result.text === 'string' && result.text)
+                            ? result.text
+                            : String(result.value ?? '')
                           clarifyResponse = { slot: result.slot, value: result.value }
                         }
                         const resumeContext = pendingClarify.clarifyQuestion?.resumeContext || null

@@ -1,35 +1,45 @@
-import { Modal, Input, Radio, Space, Typography, Tag, Alert, Button } from 'antd'
+import { Modal, Input, Radio, Checkbox, Space, Typography, Tag, Alert, Button } from 'antd'
 import { QuestionCircleOutlined, WarningOutlined } from '@ant-design/icons'
 import { useState, useEffect } from 'react'
 
 const { Text, Paragraph } = Typography
 
 /**
- * ClarifyQuestionModal — 结构化澄清 (§5.5.4) + G7 多轮补参 (2026-09 收口).
+ * ClarifyQuestionModal — 结构化澄清 (§5.5.4) + G7 多轮补参 (2026-09 收口)
+ * + LLM 选项式澄清 (输入Mode: 单选/多选/自定义, 2026-09-17).
  *
- * <p>渲染后端 ClarifyQuestion record, 支持三种类型:
+ * <p>渲染后端 ClarifyQuestion record, 支持四种形态:
  * <ul>
- *   <li>MISSING_SLOT — 缺失必填参数, 显示输入框让用户补充</li>
- *   <li>AMBIGUITY    — 同名歧义, 显示候选选项列表让用户选择</li>
+ *   <li>FREE_TEXT — 缺失必填参数, 显示输入框让用户补充 (旧 MISSING_SLOT)</li>
+ *   <li>SINGLE_SELECT — 单选候选 (Radio; 旧 AMBIGUITY) + 可选"其他/自定义"</li>
+ *   <li>MULTI_SELECT — 多选候选 (Checkbox) + 可选"其他/自定义"</li>
  *   <li>POLICY_CONFIRMATION — 高风险确认, 显示确认/取消按钮</li>
  * </ul>
  *
+ * <p>渲染模式优先级: {@code clarify.inputMode} 显式值优先; 为空时按
+ * {@code clarifyType} 推导 (AMBIGUITY→SINGLE_SELECT, 其余→FREE_TEXT) 以保持旧行为不变。</p>
+ *
  * <p>G7 多轮补参: 后端仍缺槽位时返回 {@code stillMissing=true} + {@code missingSlots},
- * 本组件在同会话内连续重弹(不新开会话), 并展示"还需补充"进度供用户感知.
+ * 本组件在同会话内连续重弹(不新开会话), 并展示"还需补充"进度供用户感知.</p>
  *
  * @param {object} clarify - ClarifyQuestion record (后端 JSON 反序列化)
- * @param {function} onResolve - 用户完成澄清后回调, 参数为 {slot, value} 或 {confirmed: true/false}
+ * @param {function} onResolve - 用户完成澄清后回调, 参数为 {slot, value, text} 或 {confirmed}
+ *         单选/自定义 value 为标量; 多选 value 为数组; text 为用户可读拼接串(供聊天气泡/后端续接)
  * @param {function} onCancel  - 用户关闭弹窗
  * @param {boolean}  loading   - 提交请求进行中
  */
 export default function ClarifyQuestionModal({ clarify, onResolve, onCancel, loading }) {
   const [inputValue, setInputValue] = useState('')
   const [selectedOption, setSelectedOption] = useState(null)
+  const [multiValues, setMultiValues] = useState([])
+  const [customEnabled, setCustomEnabled] = useState(false)
 
   useEffect(() => {
     // 每次澄清问题变化时重置状态 (G7: 多轮连续追问时新问题到来即重置输入)
     setInputValue('')
     setSelectedOption(null)
+    setMultiValues([])
+    setCustomEnabled(false)
   }, [clarify])
 
   if (!clarify) return null
@@ -40,19 +50,46 @@ export default function ClarifyQuestionModal({ clarify, onResolve, onCancel, loa
     options = [],
     blockingSlot = '',
     stillMissing = false,
-    missingSlots = []
+    missingSlots = [],
+    inputMode,
+    allowCustomInput = false
   } = clarify
 
-  const handleConfirm = () => {
-    if (clarifyType === 'MISSING_SLOT') {
-      if (!inputValue.trim()) return
-      onResolve({ slot: blockingSlot, value: inputValue.trim() })
-    } else if (clarifyType === 'AMBIGUITY') {
-      if (selectedOption === null) return
-      onResolve({ slot: blockingSlot, value: selectedOption })
-    } else if (clarifyType === 'POLICY_CONFIRMATION') {
-      onResolve({ confirmed: true })
+  // 有效渲染模式: 显式 inputMode 优先; 缺省按 clarifyType 推导 (保持旧行为)
+  const mode = inputMode || (clarifyType === 'AMBIGUITY' ? 'SINGLE_SELECT' : 'FREE_TEXT')
+  const isSelect = mode === 'SINGLE_SELECT' || mode === 'MULTI_SELECT'
+  const canCustom = !!allowCustomInput && isSelect
+  const hasCustomValue = customEnabled && !!inputValue.trim()
+
+  const labelOf = (v) => {
+    const opt = options.find(o => o.value === v)
+    return opt ? opt.label : String(v)
+  }
+
+  // 组装回传结果 { slot, value, text }: value 单选/自定义为标量, 多选为数组; text 供气泡与后端续接
+  const buildResult = () => {
+    if (mode === 'FREE_TEXT') {
+      const val = inputValue.trim()
+      return { slot: blockingSlot, value: val, text: val }
     }
+    if (mode === 'MULTI_SELECT') {
+      const chosen = [...multiValues]
+      if (hasCustomValue) chosen.push(inputValue.trim())
+      return { slot: blockingSlot, value: chosen, text: chosen.map(labelOf).join('、') }
+    }
+    // SINGLE_SELECT
+    if (hasCustomValue) {
+      return { slot: blockingSlot, value: inputValue.trim(), text: inputValue.trim() }
+    }
+    return { slot: blockingSlot, value: selectedOption, text: labelOf(selectedOption) }
+  }
+
+  const handleConfirm = () => {
+    if (clarifyType === 'POLICY_CONFIRMATION') {
+      onResolve({ confirmed: true })
+      return
+    }
+    onResolve(buildResult())
   }
 
   const handleCancel = () => {
@@ -62,6 +99,15 @@ export default function ClarifyQuestionModal({ clarify, onResolve, onCancel, loa
       onCancel()
     }
   }
+
+  const canSubmit =
+    clarifyType === 'POLICY_CONFIRMATION'
+      ? true
+      : mode === 'FREE_TEXT'
+        ? !!inputValue.trim()
+        : mode === 'MULTI_SELECT'
+          ? multiValues.length > 0 || hasCustomValue
+          : hasCustomValue || selectedOption !== null
 
   const titleMap = {
     MISSING_SLOT: stillMissing ? '请继续补充信息' : '请补充信息',
@@ -99,10 +145,7 @@ export default function ClarifyQuestionModal({ clarify, onResolve, onCancel, loa
           type="primary"
           onClick={handleConfirm}
           loading={loading}
-          disabled={
-            (clarifyType === 'MISSING_SLOT' && !inputValue.trim()) ||
-            (clarifyType === 'AMBIGUITY' && selectedOption === null)
-          }
+          disabled={!canSubmit}
         >
           {clarifyType === 'POLICY_CONFIRMATION' ? '确认执行' : '提交'}
         </Button>
@@ -124,8 +167,8 @@ export default function ClarifyQuestionModal({ clarify, onResolve, onCancel, loa
         </div>
       )}
 
-      {/* MISSING_SLOT: 输入框 */}
-      {clarifyType === 'MISSING_SLOT' && (
+      {/* FREE_TEXT: 输入框 */}
+      {mode === 'FREE_TEXT' && (
         <div>
           <Text type="secondary" style={{ fontSize: 12 }}>
             参数: {blockingSlot}
@@ -141,24 +184,81 @@ export default function ClarifyQuestionModal({ clarify, onResolve, onCancel, loa
         </div>
       )}
 
-      {/* AMBIGUITY: 选项列表 */}
-      {clarifyType === 'AMBIGUITY' && (
-        <Radio.Group
-          value={selectedOption}
-          onChange={e => setSelectedOption(e.target.value)}
-          style={{ width: '100%' }}
-        >
-          <Space direction="vertical" style={{ width: '100%' }}>
-            {options.map((opt, idx) => (
-              <Radio key={idx} value={opt.value} style={{ padding: '4px 0' }}>
-                <Space>
-                  <Text strong>{opt.label}</Text>
-                  {opt.description && <Text type="secondary" style={{ fontSize: 12 }}>({opt.description})</Text>}
-                </Space>
-              </Radio>
-            ))}
-          </Space>
-        </Radio.Group>
+      {/* SINGLE_SELECT: 单选选项列表 */}
+      {mode === 'SINGLE_SELECT' && (
+        <div>
+          <Radio.Group
+            value={selectedOption}
+            onChange={e => setSelectedOption(e.target.value)}
+            style={{ width: '100%' }}
+          >
+            <Space direction="vertical" style={{ width: '100%' }}>
+              {options.map((opt, idx) => (
+                <Radio key={idx} value={opt.value} style={{ padding: '4px 0' }}>
+                  <Space>
+                    <Text strong>{opt.label}</Text>
+                    {opt.description && <Text type="secondary" style={{ fontSize: 12 }}>({opt.description})</Text>}
+                  </Space>
+                </Radio>
+              ))}
+            </Space>
+          </Radio.Group>
+
+          {canCustom && (
+            <div style={{ marginTop: 8 }}>
+              <Checkbox checked={customEnabled} onChange={e => setCustomEnabled(e.target.checked)}>
+                <Text type="secondary" style={{ fontSize: 13 }}>其他 / 自定义输入</Text>
+              </Checkbox>
+              {customEnabled && (
+                <Input
+                  value={inputValue}
+                  onChange={e => setInputValue(e.target.value)}
+                  placeholder="请输入补充信息"
+                  onPressEnter={handleConfirm}
+                  style={{ marginTop: 8 }}
+                />
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* MULTI_SELECT: 多选选项列表 */}
+      {mode === 'MULTI_SELECT' && (
+        <div>
+          <Checkbox.Group
+            value={multiValues}
+            onChange={values => setMultiValues(values)}
+            style={{ width: '100%' }}
+          >
+            <Space direction="vertical" style={{ width: '100%' }}>
+              {options.map((opt, idx) => (
+                <Checkbox key={idx} value={opt.value} style={{ padding: '4px 0' }}>
+                  <Space>
+                    <Text strong>{opt.label}</Text>
+                    {opt.description && <Text type="secondary" style={{ fontSize: 12 }}>({opt.description})</Text>}
+                  </Space>
+                </Checkbox>
+              ))}
+            </Space>
+          </Checkbox.Group>
+
+          {canCustom && (
+            <div style={{ marginTop: 8 }}>
+              <Checkbox checked={customEnabled} onChange={e => setCustomEnabled(e.target.checked)}>
+                <Text type="secondary" style={{ fontSize: 13 }}>其他 / 自定义输入</Text>
+              </Checkbox>
+              {customEnabled && (
+                <Input
+                  value={inputValue}
+                  onChange={e => setInputValue(e.target.value)}
+                  placeholder="请输入补充信息（将附加到已选项）"
+                  style={{ marginTop: 8 }}
+                />
+              )}
+            </div>
+          )}
+        </div>
       )}
 
       {/* POLICY_CONFIRMATION: 确认提示 */}
