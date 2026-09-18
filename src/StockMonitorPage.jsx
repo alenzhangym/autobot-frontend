@@ -20,7 +20,7 @@ const { Text, Title } = Typography
  * 全部经 /api/stock-monitor/* REST 接口读取。功能对齐原 Python 仪表盘：</p>
  * <ul>
  *   <li>概览条：监控标的数量 / 今日提醒 / LLM 分析报告 / 运行状态 / API 成功率</li>
- *   <li>持仓监控表：现价 / 涨跌 / PE / PB / 方向，点击行看 K 线 + 研报</li>
+ *   <li>持仓监控表：现价 / 涨跌 / 持仓 / 成本 / 市值 / 盈利 / PE / PB / 方向，点击行看 K 线 + 研报</li>
  *   <li>个股详情：K 线图 + 持仓编辑 + LLM 详细分析（markdown 渲染）</li>
  *   <li>今日提醒列表 + LLM 分析报告（今日 / 历史）</li>
  *   <li>后端接口调用状态（成功/失败 + 按标签统计 + 调用历史）</li>
@@ -514,19 +514,56 @@ export default function StockMonitorPage() {
     { k: 'API（成功/失败）', v: `${status?.api_ok ?? 0} / ${status?.api_fail ?? 0}`, fail: (status?.api_fail || 0) > 0 },
   ]
 
+  // 2026-09-18: 列排序 —— 每个数据列点击表头即可升/降序；空值（无持仓/无行情）排末尾
+  const sortNum = (a, b, f) => {
+    const va = f(a), vb = f(b)
+    const na = (va === null || va === undefined || isNaN(va)) ? -Infinity : va
+    const nb = (vb === null || vb === undefined || isNaN(vb)) ? -Infinity : vb
+    return na - nb
+  }
+  const sharesOf = (s) => { const p = portfolio[s.code]; return p?.shares > 0 ? p.shares : null }
+  const mktOf = (s) => { const p = portfolio[s.code]; return p?.shares > 0 && s.price ? s.price * p.shares : null }
+  const pnlOf = (s) => { const p = portfolio[s.code]; return p?.shares > 0 && s.price && p.cost ? (s.price - p.cost) * p.shares : null }
+
   const columns = [
-    { title: '名称', key: 'name', render: (_, s) => (
+    { title: '名称', key: 'name', sorter: (a, b) => (a.name || '').localeCompare(b.name || ''), render: (_, s) => (
       <div>
         <Text strong style={{ color: '#e8ecf3' }}>{s.name}</Text>
         {s.alerted && <Tag color="red" style={{ marginLeft: 6 }}>提醒</Tag>}
         <div style={{ color: '#5b6577', fontFamily: 'monospace', fontSize: 12 }}>{s.code}</div>
       </div>
     ) },
-    { title: '现价', key: 'price', align: 'right', render: (_, s) => <span style={{ fontFamily: 'monospace' }}>{fmt(s.price)}</span> },
-    { title: '涨跌', key: 'pct', align: 'right', render: (_, s) => <span style={{ color: pctCls(s.pct), fontFamily: 'monospace' }}>{pctStr(s.pct)}</span> },
-    { title: 'PE', key: 'pe', align: 'right', render: (_, s) => <span style={{ fontFamily: 'monospace' }}>{fmt(s.pe_ttm)}</span> },
-    { title: 'PB', key: 'pb', align: 'right', render: (_, s) => <span style={{ fontFamily: 'monospace' }}>{fmt(s.pb)}</span> },
-    { title: '方向', key: 'action', render: (_, s) => {
+    { title: '现价', key: 'price', align: 'right', sorter: (a, b) => sortNum(a, b, s => s.price), render: (_, s) => <span style={{ fontFamily: 'monospace' }}>{fmt(s.price)}</span> },
+    { title: '涨跌', key: 'pct', align: 'right', sorter: (a, b) => sortNum(a, b, s => s.pct), render: (_, s) => <span style={{ color: pctCls(s.pct), fontFamily: 'monospace' }}>{pctStr(s.pct)}</span> },
+    // 2026-09-18: 持仓/成本/市值/盈利列 —— 让整个页面一览无余
+    { title: '持仓', key: 'shares', align: 'right', sorter: (a, b) => sortNum(a, b, sharesOf), render: (_, s) => {
+      const p = portfolio[s.code]
+      return p?.shares > 0 ? <span style={{ fontFamily: 'monospace' }}>{p.shares}</span> : <span style={{ color: '#5b6577' }}>--</span>
+    } },
+    { title: '成本', key: 'cost', align: 'right', sorter: (a, b) => sortNum(a, b, s => { const p = portfolio[s.code]; return p?.shares > 0 ? p.cost : null }), render: (_, s) => {
+      const p = portfolio[s.code]
+      return p?.shares > 0 ? <span style={{ fontFamily: 'monospace' }}>{Number(p.cost).toFixed(3)}</span> : <span style={{ color: '#5b6577' }}>--</span>
+    } },
+    { title: '市值', key: 'mkt', align: 'right', sorter: (a, b) => sortNum(a, b, mktOf), render: (_, s) => {
+      const p = portfolio[s.code]
+      const v = (p?.shares > 0 && s.price) ? s.price * p.shares : null
+      return v != null ? <span style={{ fontFamily: 'monospace' }}>{Number(v).toFixed(0)}</span> : <span style={{ color: '#5b6577' }}>--</span>
+    } },
+    { title: '盈利', key: 'pnl', align: 'right', sorter: (a, b) => sortNum(a, b, pnlOf), render: (_, s) => {
+      const p = portfolio[s.code]
+      if (!(p?.shares > 0) || !s.price || !p.cost) return <span style={{ color: '#5b6577' }}>--</span>
+      const pnl = (s.price - p.cost) * p.shares
+      const pct = p.cost > 0 ? (s.price - p.cost) / p.cost * 100 : null
+      return (
+        <span style={{ color: pctCls(pnl), fontFamily: 'monospace' }}>
+          {pnl >= 0 ? '+' : ''}{Number(pnl).toFixed(0)}
+          {pct != null && <span style={{ marginLeft: 4, fontSize: 11 }}>({pct >= 0 ? '+' : ''}{Number(pct).toFixed(2)}%)</span>}
+        </span>
+      )
+    } },
+    { title: 'PE', key: 'pe', align: 'right', sorter: (a, b) => sortNum(a, b, s => s.pe_ttm), render: (_, s) => <span style={{ fontFamily: 'monospace' }}>{fmt(s.pe_ttm)}</span> },
+    { title: 'PB', key: 'pb', align: 'right', sorter: (a, b) => sortNum(a, b, s => s.pb), render: (_, s) => <span style={{ fontFamily: 'monospace' }}>{fmt(s.pb)}</span> },
+    { title: '方向', key: 'action', sorter: (a, b) => (a.action || '').localeCompare(b.action || ''), render: (_, s) => {
       const color = { buy: '#f5b301', sell: '#7aa2f7', watch: '#8b95a7' }[s.action] || '#8b95a7'
       const label = { buy: '买入', sell: '卖出', watch: '观望' }[s.action] || s.action
       return <span style={{ color }}>{label}</span>
@@ -618,7 +655,7 @@ export default function StockMonitorPage() {
               )}
               <Table
                 size="small" rowKey="code" dataSource={quotes} columns={columns}
-                pagination={false}
+                pagination={false} showSorterTooltip={false}
                 onRow={(s) => ({
                   onClick: () => selectStock(s.code),
                   style: { cursor: 'pointer', background: s.code === selectedCode ? 'rgba(245,179,1,.08)' : 'transparent' }
