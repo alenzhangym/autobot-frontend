@@ -664,11 +664,11 @@ export default function StockMonitorPage() {
               />
             </div>
 
-            <div style={{ background: 'linear-gradient(180deg,#121a28,#0f1622)', border: '1px solid #1e2a3c', borderRadius: 12, overflow: 'hidden' }}>
+            <div style={{ background: 'linear-gradient(180deg,#121a28,#0f1622)', border: '1px solid #1e2a3c', borderRadius: 12, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
               <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: 2, color: '#f5b301', padding: '12px 16px', borderBottom: '1px solid #1e2a3c', display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ width: 3, height: 14, background: '#f5b301', borderRadius: 2 }} /> 个股详情
               </div>
-              <div style={{ padding: '12px 14px' }}>
+              <div style={{ padding: '12px 14px', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
                 {!selectedCode ? (
                   <div style={{ color: '#5b6577', textAlign: 'center', padding: '24px 0', fontSize: 13 }}>点击左侧股票查看 K 线与分析报告</div>
                 ) : (
@@ -765,16 +765,17 @@ export default function StockMonitorPage() {
                       )}
                     </div>
 
+                    {/* 2026-09-18: 详细股价分析占满剩余空间（flex:1 + 内部滚动） */}
                     {report && (
-                      <>
-                        <div style={{ display: 'flex', gap: 8, marginTop: 10, justifyContent: 'flex-end' }}>
+                      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', marginTop: 10, minHeight: 0 }}>
+                        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                           <Button size="small" icon={<CopyOutlined />} onClick={() => copyText(report)}>复制</Button>
                           <Button size="small" icon={<FileSearchOutlined />} onClick={() => setReportModal({ title: `${selQuote?.name} 详细股价分析`, content: report })}>全屏查看</Button>
                         </div>
-                        <div style={{ marginTop: 10, background: '#0f1622', border: '1px solid #1e2a3c', borderRadius: 8, padding: '12px 14px', maxHeight: 300, overflowY: 'auto', fontSize: 13, lineHeight: 1.7 }}>
+                        <div style={{ flex: 1, minHeight: 0, marginTop: 10, background: '#0f1622', border: '1px solid #1e2a3c', borderRadius: 8, padding: '12px 14px', overflowY: 'auto', fontSize: 13, lineHeight: 1.7 }}>
                           <ReactMarkdown>{report}</ReactMarkdown>
                         </div>
-                      </>
+                      </div>
                     )}
                   </>
                 )}
