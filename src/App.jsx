@@ -21,6 +21,8 @@ import { useReactSessionEvents } from './hooks/useReactSessionEvents'
 import Login from './Login'
 import HomeWrapper from './Home'
 import LogPanel from './LogPanel'
+import CanvasPanel from './components/CanvasPanel'
+import { useCanvasUiActions } from './hooks/useCanvasUiActions'
 import PlanView from './PlanView'
 import MonitorPanel from './components/MonitorPanel'
 import Documents from './Documents'
@@ -971,6 +973,11 @@ function App() {
   const [scheduledTasks, setScheduledTasks] = useState([])
   const [localTerminalOutput, setLocalTerminalOutput] = useState('')
   const [liveLogActive, setLiveLogActive] = useState(false)
+  // ── OpenHands-style Agent Canvas（代理画布）──
+  // P5 开关：VITE_CANVAS_UI_ENABLED，默认开（fail-open），'false' 关闭。
+  const canvasUiEnabled = import.meta.env.VITE_CANVAS_UI_ENABLED !== 'false'
+  const [showCanvas, setShowCanvas] = useState(false)
+  const canvas = useCanvasUiActions({ enabled: canvasUiEnabled })
   const [editingTask, setEditingTask] = useState(null)
   const [editTaskData, setEditTaskData] = useState({})
   const [updateAvailable, setUpdateAvailable] = useState(null)
@@ -1606,6 +1613,16 @@ function App() {
             const statusIcon = status === 'CALLING' ? '⚙️' : status === 'OK' ? '✅' : status === 'FAILED' ? '❌' : '❓'
             const logLine = `${statusIcon} [ReAct #${iteration + 1}] ${tool} → ${mappedAgent} | ${truncated}\n`
             if (typeof appendLiveLog === 'function') appendLiveLog(logLine)
+            // ── OpenHands-style Agent Canvas：把 canvas_ui / 浏览器观测事件路由到画布 ──
+            const tl = String(tool || '').toLowerCase()
+            if (tl.includes('canvas_ui')) {
+              canvas.onCanvasDirective(input)
+              setShowCanvas(true)
+            } else if (/web_fetch|web_search|browser_search|url_query|browse/.test(tl)) {
+              // 浏览器工具调用：记录 URL（free-form input 首行通常是 URL）
+              const firstNonBlank = (input || '').split(/\r?\n/).map((l) => l.trim()).find(Boolean)
+              canvas.onBrowserUrl(firstNonBlank || null, { focus: false, note: `agent 观测 ${tool}` })
+            }
             setMessages(prev => {
               // 找到同 session 的最后一个 react_flow 消息，没有就新建
               const newMsgs = [...prev]
@@ -3705,6 +3722,14 @@ const handleDeleteSession = (id) => {
                       style={{ color: showLogs && liveLogActive ? 'var(--ab-copper)' : 'var(--ab-text-3)' }}
                       disabled={!liveLogActive} />
                   </Tooltip>
+                  {/* ── OpenHands-style Agent Canvas 按钮：有活动时点亮，默认折叠 ── */}
+                  {canvasUiEnabled && (
+                    <Tooltip title={showCanvas ? '收起画布' : '代理画布（运行 / 文件 / 浏览器）'}>
+                      <Button type="text" icon={<ApartmentOutlined />}
+                        onClick={() => setShowCanvas(!showCanvas)}
+                        style={{ color: showCanvas || canvas.state.hasActivity ? 'var(--ab-copper)' : 'var(--ab-text-3)' }} />
+                    </Tooltip>
+                  )}
                 </>
               )}
               <Dropdown menu={{
@@ -4487,6 +4512,16 @@ const handleDeleteSession = (id) => {
             {/* Log Panel */}
             {showLogs && liveLogActive && (
               <LogPanel isOpen={showLogs} onClose={() => setShowLogs(false)} localTerminalOutput={localTerminalOutput} />
+            )}
+            {/* ── OpenHands-style Agent Canvas：折叠抽屉（默认关闭），运行/文件/浏览器 ── */}
+            {canvasUiEnabled && (
+              <CanvasPanel
+                open={showCanvas}
+                onClose={() => setShowCanvas(false)}
+                state={canvas.state}
+                workspaceDir={workspaceDir}
+                localTerminalOutput={localTerminalOutput}
+              />
             )}
           </Layout>
           )}
