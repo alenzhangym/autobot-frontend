@@ -57,7 +57,11 @@ export default function ClarifyQuestionModal({ clarify, onResolve, onCancel, loa
 
   // 有效渲染模式: 显式 inputMode 优先; 缺省按 clarifyType 推导 (保持旧行为)
   const mode = inputMode || (clarifyType === 'AMBIGUITY' ? 'SINGLE_SELECT' : 'FREE_TEXT')
-  const isSelect = mode === 'SINGLE_SELECT' || mode === 'MULTI_SELECT'
+  // 2026-09-20 (合并一步): POLICY_CONFIRMATION 携带 options = HIGH 风险确认 + 选项式选择
+  // (如确认卡片内直接选供应商/客户), 按 SINGLE_SELECT 渲染选项, 确认时同时回传 {confirmed, slot, value, text}.
+  const withPolicyOptions = clarifyType === 'POLICY_CONFIRMATION' && options.length > 0
+  const effMode = withPolicyOptions ? 'SINGLE_SELECT' : mode
+  const isSelect = effMode === 'SINGLE_SELECT' || effMode === 'MULTI_SELECT'
   const canCustom = !!allowCustomInput && isSelect
   const hasCustomValue = customEnabled && !!inputValue.trim()
 
@@ -68,11 +72,11 @@ export default function ClarifyQuestionModal({ clarify, onResolve, onCancel, loa
 
   // 组装回传结果 { slot, value, text }: value 单选/自定义为标量, 多选为数组; text 供气泡与后端续接
   const buildResult = () => {
-    if (mode === 'FREE_TEXT') {
+    if (effMode === 'FREE_TEXT') {
       const val = inputValue.trim()
       return { slot: blockingSlot, value: val, text: val }
     }
-    if (mode === 'MULTI_SELECT') {
+    if (effMode === 'MULTI_SELECT') {
       const chosen = [...multiValues]
       if (hasCustomValue) chosen.push(inputValue.trim())
       return { slot: blockingSlot, value: chosen, text: chosen.map(labelOf).join('、') }
@@ -86,7 +90,7 @@ export default function ClarifyQuestionModal({ clarify, onResolve, onCancel, loa
 
   const handleConfirm = () => {
     if (clarifyType === 'POLICY_CONFIRMATION') {
-      onResolve({ confirmed: true })
+      onResolve(withPolicyOptions ? { confirmed: true, ...buildResult() } : { confirmed: true })
       return
     }
     onResolve(buildResult())
@@ -102,10 +106,10 @@ export default function ClarifyQuestionModal({ clarify, onResolve, onCancel, loa
 
   const canSubmit =
     clarifyType === 'POLICY_CONFIRMATION'
-      ? true
-      : mode === 'FREE_TEXT'
+      ? (withPolicyOptions ? (hasCustomValue || selectedOption !== null) : true)
+      : effMode === 'FREE_TEXT'
         ? !!inputValue.trim()
-        : mode === 'MULTI_SELECT'
+        : effMode === 'MULTI_SELECT'
           ? multiValues.length > 0 || hasCustomValue
           : hasCustomValue || selectedOption !== null
 
@@ -184,8 +188,8 @@ export default function ClarifyQuestionModal({ clarify, onResolve, onCancel, loa
         </div>
       )}
 
-      {/* SINGLE_SELECT: 单选选项列表 */}
-      {mode === 'SINGLE_SELECT' && (
+      {/* SINGLE_SELECT: 单选选项列表 (含 POLICY_CONFIRMATION+options 合并一步: 确认卡片内直接选往来方) */}
+      {(mode === 'SINGLE_SELECT' || withPolicyOptions) && (
         <div>
           <Radio.Group
             value={selectedOption}

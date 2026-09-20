@@ -2091,6 +2091,12 @@ function App() {
   const loadSession = async (id, instantSwitch = true) => {
     if (!id) return
 
+    // 2026-09-20: 会话切换/刷新加载时清空遗留弹窗。
+    // 旧后端(19:42)推送的 3 重复供应商候选弹窗若残留在浏览器 state, 即使后端已
+    // 零推送也会一直盖住界面; 会话加载是幂等的重置点, 与 sendMessage 清理互为双保险。
+    setPendingClarify(null)
+    setPendingPause(null)
+
     const isSameSession = id === sessionId
 
     endLiveLogSession()
@@ -2674,6 +2680,13 @@ function App() {
     // Reset the streaming __CMD__ buffer for the new response
     resetStreamBuffer(sessionId)
 
+    // 2026-09-20: 发送新消息时清理遗留的澄清/确认弹窗。
+    // 旧弹窗若未被解决会一直残留在浏览器 state（如旧代码推的 3 个重复供应商候选），
+    // 会盖住后续流程并让用户误以为系统重复弹出旧内容。弹窗 onResolve/onCancel 在
+    // 触发 sendMessage 之前已先把 state 置 null，此处再清一次是幂等的。
+    setPendingClarify(null)
+    setPendingPause(null)
+
     // ── Block chat if workspace is invalid for code sessions ──
     const currentSession = sessions.find(s => s.id === sessionId)
     const isCodeSess = currentSession?.channel === 'code' || (!currentSession?.channel && currentChannel === 'code')
@@ -2829,10 +2842,13 @@ function App() {
         }
         const preview = pauseCtx?.planPreview || null
         const clarifyQuestion = pauseCtx?.clarifyQuestion || null
+        // 2026-09-20 (合并一步): confirm_wait 暂停时后端预解析往来方候选 → partyQuestion.
+        // 非空时确认卡片直接渲染选项 (供应商/客户), 用户选择 + 确认一次完成.
+        const partyQuestion = pauseCtx?.partyQuestion || null
         // 先把暂停原因作为普通消息展示
         setMessages(prev => [...prev, normalizeMessage({ id: nextMsgId(), role: 'assistant', content: res.data.response || '⚠️ 高风险操作需要确认' })])
         // 弹出结构化确认 UI
-        setPendingPause({ preview, clarifyQuestion, reason: res.data.response, sessionId })
+        setPendingPause({ preview, clarifyQuestion, partyQuestion, reason: res.data.response, sessionId })
       } else if (res.data.status === 'clarify') {
         // Phase 4: 结构化澄清 — 解析 reply_context 中的 clarifyQuestion
         let clarifyCtx = null
@@ -4370,8 +4386,39 @@ const handleDeleteSession = (id) => {
                 {/* Phase 4: HIGH 风险确认弹窗 — 执行前预览 + 确认/取消 */}
                 {pendingPause && (
                   <>
-                    {/* §5.6.2 PlanPreviewCard: 有 preview 时渲染结构化预览, 无 preview 时降级到 ClarifyQuestionModal */}
-                    {pendingPause.preview ? (
+                    {/* 2026-09-20 (合并一步): confirm_wait 暂停携带 partyQuestion 时 —
+                        HIGH 风险确认卡片内直接选供应商/客户 (候选 + 新建 + 自定义), 选择并确认一次完成,
+                        clarifyResponse 同时携带 {confirmed, slot, value, text}, 后端守卫据此收敛直达建单. */}
+                    {pendingPause.partyQuestion ? (
+                      <ClarifyQuestionModal
+                        clarify={{
+                          ...pendingPause.partyQuestion,
+                          clarifyType: 'POLICY_CONFIRMATION',
+                          question: `${pendingPause.reason ? pendingPause.reason + '\n\n' : ''}${pendingPause.partyQuestion.question || ''}`
+                        }}
+                        loading={clarifyLoading}
+                        onResolve={async (result) => {
+                          setClarifyLoading(true)
+                          try {
+                            const replyText = result.confirmed ? '确认' : '取消'
+                            // P0-4: 结构化恢复协议 — 携带 resumeContext + clarifyResponse
+                            const resumeContext = pendingPause.clarifyQuestion?.resumeContext || null
+                            const clarifyResponse = !result.confirmed
+                              ? { confirmed: false }
+                              : (result.slot
+                                ? { confirmed: true, slot: result.slot, value: result.value, text: result.text }
+                                : { confirmed: true })
+                            setPendingPause(null)
+                            enqueueClarification(resumeContext, clarifyResponse)
+                            setInput(replyText)
+                            setTimeout(() => { sendMessage(replyText) }, 0)
+                          } finally {
+                            setClarifyLoading(false)
+                          }
+                        }}
+                        onCancel={() => setPendingPause(null)}
+                      />
+                    ) : pendingPause.preview ? (
                       <PlanPreviewCard
                         preview={pendingPause.preview}
                         loading={clarifyLoading}
