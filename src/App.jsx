@@ -2769,7 +2769,10 @@ function App() {
         payload.image_base64 = selectedImages[0].base64;
       }
       if (uploadedDocuments.length > 0) {
-        payload.document_ids = uploadedDocuments.map(d => d.id);
+        const companyDocs = uploadedDocuments.filter(d => d.scope !== 'session');
+        const sessionDocs = uploadedDocuments.filter(d => d.scope === 'session');
+        if (companyDocs.length > 0) payload.document_ids = companyDocs.map(d => d.id);
+        if (sessionDocs.length > 0) payload.session_files = sessionDocs.map(d => d.id);
       }
       // Include channel for new sessions (first message determines the channel)
       const session = sessions.find(s => s.id === sessionId);
@@ -3268,20 +3271,34 @@ function App() {
       const formData = new FormData()
       formData.append('file', file)
 
+      // ERP/CRM 会话内附件 → 仅会话可见(scope=session，不入知识库/公司文档)；其余走公司级上传。
+      const sess = sessions.find(s => s.id === sessionId);
+      const chNow = sess?.channel || currentChannel;
+      const isSessionScope = chNow === 'erp' || chNow === 'crm';
+      const uploadUrl = isSessionScope
+        ? `/documents/upload?scope=session&session_id=${encodeURIComponent(sessionId || '')}`
+        : `/documents/upload`;
+
       // Give user immediate feedback that document is uploading
       const msgId = Date.now();
       setMessages(prev => [...prev, { id: msgId, role: 'user', content: `[Uploading Document: ${file.name}...]` }]);
       setIsLoading(true);
 
       try {
-        const res = await api.post('/documents/upload', formData, {
+        const res = await api.post(uploadUrl, formData, {
           headers: {
             'Content-Type': 'multipart/form-data'
           },
           baseURL: getBackendHost().startsWith('http') ? getBackendHost() : `http://${getBackendHost()}`
         })
         if (res.data.status === 'success') {
-          const docId = res.data.document.id;
+          if (isSessionScope) {
+            // 仅会话可见：不回显知识库提示、不轮询解析进度
+            const sid = res.data.sessionFileId;
+            setUploadedDocuments(prev => [...prev, { id: sid, name: file.name, scope: 'session' }]);
+            setMessages(prev => prev.map(msg => msg.id === msgId ? { ...msg, content: `[Document attached: ${file.name}]` } : msg));
+          } else {
+            const docId = res.data.document.id;
           setUploadedDocuments(prev => [...prev, { id: docId, name: file.name }]);
           message.success(`${file.name} uploaded successfully and is being parsed.`);
 
@@ -3310,7 +3327,7 @@ function App() {
               if (checkCount > 60) clearInterval(intervalId); // timeout after 3 mins
             } catch (e) {}
           }, 3000);
-
+          }
         } else {
           message.error(`Upload failed: ${res.data.message}`)
           setMessages(prev => prev.filter(msg => msg.id !== msgId));

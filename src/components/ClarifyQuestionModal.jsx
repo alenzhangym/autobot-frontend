@@ -167,8 +167,8 @@ export default function ClarifyQuestionModal({ clarify, onResolve, onCancel, loa
         </div>
       )}
 
-      {/* FREE_TEXT: 输入框 */}
-      {mode === 'FREE_TEXT' && (
+      {/* FREE_TEXT: 输入框 (HIGH 风险确认不计入, 仅保留确认/取消按钮) */}
+      {mode === 'FREE_TEXT' && clarifyType !== 'POLICY_CONFIRMATION' && (
         <div>
           <Text type="secondary" style={{ fontSize: 12 }}>
             参数: {blockingSlot}
