@@ -2810,6 +2810,15 @@ function App() {
         if (companyDocs.length > 0) payload.document_ids = companyDocs.map(d => d.id);
         if (sessionDocs.length > 0) payload.session_files = sessionDocs.map(d => d.id);
       }
+      // 2026-09-21 (DocExtract 类型透传): 用户选中的 ERP 快速指令类型 key（如 PURCHASE_ORDER /
+      // SALES_ORDER / INBOUND_ORDER / OUTBOUND_ORDER）作为权威声明传给后端，后端据此走
+      // DocExtractReActAgent 按该单据类型定制抽取 schema，而非仅靠文本正则猜测类型。
+      if (selectedQuickAction && (
+        selectedQuickAction.key === 'PURCHASE_ORDER' || selectedQuickAction.key === 'SALES_ORDER'
+        || selectedQuickAction.key === 'INBOUND_ORDER' || selectedQuickAction.key === 'OUTBOUND_ORDER'
+      )) {
+        payload.quick_action_type = selectedQuickAction.key;
+      }
       // Include channel for new sessions (first message determines the channel)
       const session = sessions.find(s => s.id === sessionId);
       if (session && session.channel) {
