@@ -957,6 +957,8 @@ function App() {
   const [pendingPause, setPendingPause] = useState(null)   // {preview, reason, sessionId}
   const [pendingClarify, setPendingClarify] = useState(null) // {clarifyQuestion, sessionId}
   const [clarifyLoading, setClarifyLoading] = useState(false)
+  // P2-B: 会话活动目标快照 {goalText, version, status, ...}（showGoal 读取, 会话无活动目标时为 null）
+  const [activeGoal, setActiveGoal] = useState(null)
   const [isResumingCodeSession, setIsResumingCodeSession] = useState(false)
   const [graphDrawerOpen, setGraphDrawerOpen] = useState(false) // P7-6: 会话内图知识库 Drawer
   // 代码预览 Drawer（点击"定位代码" / "Git Diff" 打开）: { open, filePath, line, tab }
@@ -2097,6 +2099,9 @@ function App() {
     setPendingClarify(null)
     setPendingPause(null)
 
+    // P2-B: 会话切换/加载即刷新活动目标展示（独立于消息历史, 缓存命中同样生效）。
+    refreshGoal(id)
+
     const isSameSession = id === sessionId
 
     endLiveLogSession()
@@ -2272,6 +2277,24 @@ function App() {
     } catch (e) {
       setMessages([{ role: 'error', content: 'Failed to load session history' }])
     } finally { setIsLoading(false) }
+  }
+
+  // P2-B: 会话目标展示 — 读 showGoal 快照。fail-open: 任何异常/无活动目标 → activeGoal=null, 不打扰流程。
+  const refreshGoal = async (id) => {
+    if (!id) { setActiveGoal(null); return }
+    try {
+      const res = await api.get(`/react/session/${id}/goal`)
+      const g = res.data && res.data.goal
+      setActiveGoal(g && g.goalText && g.status === 'ACTIVE' ? g : null)
+    } catch (e) {
+      setActiveGoal(null)
+    }
+  }
+
+  // P2-B: 清除当前会话目标（DELETE goal）, 随后刷新展示。
+  const clearSessionGoal = async () => {
+    try { await api.delete(`/react/session/${sessionId}/goal`) } catch (e) {}
+    refreshGoal(sessionId)
   }
 
   const SessionSkeleton = () => (
@@ -4013,20 +4036,37 @@ const handleDeleteSession = (id) => {
                       )
                     }}
                     components={{
-                      Header: () => isParsingHistory && !isLoading ? (
-                        <div style={{ maxWidth: 1000, margin: '0 auto', padding: isMobile ? '0 12px' : '0 24px' }}>
-                          <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
-                            <Avatar icon={<RobotOutlined />} size={32} style={{ background: '#1677ff', flexShrink: 0 }} />
-                            <div>
-                              <Text style={{ color: '#888', fontSize: 12, display: 'block', marginBottom: 6 }}>AutoBot</Text>
-                              <Space style={{ color: '#888' }}>
-                                <LoadingOutlined spin />
-                                <Text style={{ color: '#888', fontSize: 13 }}>Parsing session history...</Text>
-                              </Space>
-                            </div>
+                      Header: () => {
+                        // 2026-09-21: P2-B 会话目标展示 — activeGoal 存在时在列表顶部展示目标条(可清除).
+                        // 目标条独立于历史解析指示, 两者可共存; 全部为 fail-open, 不阻塞消息流.
+                        const showParsing = isParsingHistory && !isLoading
+                        const showGoal = !!activeGoal
+                        if (!showParsing && !showGoal) return null
+                        return (
+                          <div style={{ maxWidth: 1000, margin: '0 auto', padding: isMobile ? '0 12px' : '0 24px' }}>
+                            {showGoal && (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', marginBottom: 20, background: '#fffaf0', border: '1px solid #f0dfc3', borderRadius: 10 }}>
+                                <span style={{ color: '#a0743a', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap' }}>当前目标</span>
+                                <span style={{ color: '#5d5342', fontSize: 13, flex: 1, lineHeight: '18px', wordBreak: 'break-word' }}>{activeGoal.goalText}</span>
+                                <Tag color="orange" style={{ fontSize: 11, margin: 0 }}>v{activeGoal.version}</Tag>
+                                <Button size="small" type="link" onClick={clearSessionGoal} style={{ fontSize: 12, padding: 0, whiteSpace: 'nowrap' }}>清除目标</Button>
+                              </div>
+                            )}
+                            {showParsing && (
+                              <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
+                                <Avatar icon={<RobotOutlined />} size={32} style={{ background: '#1677ff', flexShrink: 0 }} />
+                                <div>
+                                  <Text style={{ color: '#888', fontSize: 12, display: 'block', marginBottom: 6 }}>AutoBot</Text>
+                                  <Space style={{ color: '#888' }}>
+                                    <LoadingOutlined spin />
+                                    <Text style={{ color: '#888', fontSize: 13 }}>Parsing session history...</Text>
+                                  </Space>
+                                </div>
+                              </div>
+                            )}
                           </div>
-                        </div>
-                      ) : null,
+                        )
+                      },
                       Footer: () => {
                         // 2026-09-01: 附加 ReactSession 实时状态徽标（经 /ws/react/{sessionId} 推送）
                         const running = isLoading && messages.length > 0;
