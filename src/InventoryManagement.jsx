@@ -32,6 +32,8 @@ export default function InventoryManagement({ user, companies = [] }) {
   const [loading, setLoading] = useState(false)
   const [keyword, setKeyword] = useState('')
   const [lowStockOnly, setLowStockOnly] = useState(false)
+  const [missingCostOnly, setMissingCostOnly] = useState(false)
+  const [missingCostCount, setMissingCostCount] = useState(0)
   const [showEditModal, setShowEditModal] = useState(false)
   const [editing, setEditing] = useState(null)
   const [form] = Form.useForm()
@@ -47,6 +49,7 @@ export default function InventoryManagement({ user, companies = [] }) {
   const [colWidths, setColWidths] = useState({
     partType: 80, userPartModel: 180, manufacturer: 110,
     supplierName: 130, supplierModel: 130, currentStock: 90, shippedQty: 90,
+    purchaseAvgPrice: 120, inboundAvgPrice: 120, avgPrice: 130,
     minStockAlert: 80, location: 100, action: 100,
   })
 
@@ -66,7 +69,7 @@ export default function InventoryManagement({ user, companies = [] }) {
     if (!canEdit) return
     setLoading(true)
     try {
-      const params = { page, size: pageSize, keyword: keyword || undefined, lowStockOnly }
+      const params = { page, size: pageSize, keyword: keyword || undefined, lowStockOnly, missingCostOnly }
       if (isSuperAdmin && effectiveCompanyId) params.companyId = effectiveCompanyId
       const res = await api.get('/erp/inventory', { params })
       setRows(res.data.data || [])
@@ -79,7 +82,16 @@ export default function InventoryManagement({ user, companies = [] }) {
       }
       setRows([])
     } finally { setLoading(false) }
-  }, [page, pageSize, keyword, lowStockOnly, effectiveCompanyId, isSuperAdmin, canEdit])
+    // 成本待录入清单数量(独立请求, 失败不影响主列表)
+    try {
+      const countParams = { page: 1, size: 1, missingCostOnly: true }
+      if (isSuperAdmin && effectiveCompanyId) countParams.companyId = effectiveCompanyId
+      const res = await api.get('/erp/inventory', { params: countParams })
+      setMissingCostCount(res.data.count || 0)
+    } catch (e) {
+      setMissingCostCount(0)
+    }
+  }, [page, pageSize, keyword, lowStockOnly, missingCostOnly, effectiveCompanyId, isSuperAdmin, canEdit])
 
   useEffect(() => { fetchInventory() }, [fetchInventory])
 
@@ -90,6 +102,9 @@ export default function InventoryManagement({ user, companies = [] }) {
       minStockAlert: row.minStockAlert ?? 0,
       location: row.location || '',
       supplierName: row.supplierName || '',
+      avgPrice: Number(row.avgPrice) || 0,
+      inboundAvgPrice: Number(row.inboundAvgPrice ?? row.inbound_avg_price) || 0,
+      purchaseAvgPrice: Number(row.purchaseAvgPrice ?? row.purchase_avg_price) || 0,
     })
     setShowEditModal(true)
   }
@@ -143,6 +158,9 @@ export default function InventoryManagement({ user, companies = [] }) {
     formCreate.setFieldsValue({
       currentStock: 0,
       minStockAlert: 0,
+      avgPrice: 0,
+      inboundAvgPrice: 0,
+      purchaseAvgPrice: 0,
     })
     setSelectedPartInfo(null)
     setPartOptions([])
@@ -173,6 +191,9 @@ export default function InventoryManagement({ user, companies = [] }) {
         partId: selectedPartInfo.partId,
         currentStock: values.currentStock || 0,
         minStockAlert: values.minStockAlert || 0,
+        avgPrice: values.avgPrice || 0,
+        inboundAvgPrice: values.inboundAvgPrice || 0,
+        purchaseAvgPrice: values.purchaseAvgPrice || 0,
         supplierName: values.supplierName || selectedPartInfo.manufacturer,
         supplierModel: values.supplierModel || selectedPartInfo.userPartModel,
         location: values.location || '',
@@ -285,6 +306,37 @@ export default function InventoryManagement({ user, companies = [] }) {
     } finally { setRecalcLoading(false) }
   }
 
+  /**
+   * 均价单元格: 存储值(手工覆盖)>0 时展示覆盖值并标「手工」，否则展示订单侧实时计算值并标「自动」.
+   */
+  const renderAvgCell = (stored, calc, autoTip, emptyTip) => {
+    if (stored > 0) {
+      return (
+        <Tooltip title="手工覆盖值（利润成本以此值为准）">
+          <span>
+            <span style={{ color: '#52c41a', fontWeight: 600 }}>¥{stored.toFixed(4)}</span>
+            <Tag color="gold" style={{ marginLeft: 6, marginRight: 0 }}>手工</Tag>
+          </span>
+        </Tooltip>
+      )
+    }
+    if (calc > 0) {
+      return (
+        <Tooltip title={`自动计算：${autoTip}`}>
+          <span>
+            <span style={{ color: '#1677ff' }}>¥{calc.toFixed(4)}</span>
+            <Tag color="blue" style={{ marginLeft: 6, marginRight: 0 }}>自动</Tag>
+          </span>
+        </Tooltip>
+      )
+    }
+    return (
+      <Tooltip title={emptyTip}>
+        <Tag color="red" style={{ marginRight: 0 }}>无</Tag>
+      </Tooltip>
+    )
+  }
+
   const columns = [
     { title: '品类', dataIndex: 'partType', key: 'partType', width: colWidths.partType,
       render: v => v ? <Tag color="blue">{v}</Tag> : '-' },
@@ -309,7 +361,8 @@ export default function InventoryManagement({ user, companies = [] }) {
       },
       sorter: (a, b) => (a.currentStock || 0) - (b.currentStock || 0),
     },
-    { title: '已出库', dataIndex: 'shippedQty', key: 'shippedQty', width: colWidths.shippedQty,
+    {
+      title: '已出库', dataIndex: 'shippedQty', key: 'shippedQty', width: colWidths.shippedQty,
       align: 'right',
       render: (v) => (
         <span style={{ color: '#1677ff', fontWeight: 500 }}>
@@ -317,6 +370,45 @@ export default function InventoryManagement({ user, companies = [] }) {
         </span>
       ),
       sorter: (a, b) => (a.shippedQty || 0) - (b.shippedQty || 0),
+    },
+    {
+      title: '采购单均价', dataIndex: 'purchaseAvgPrice', key: 'purchaseAvgPrice', width: colWidths.purchaseAvgPrice,
+      align: 'right',
+      render: (v, r) => renderAvgCell(Number(v) || 0, Number(r.purchaseAvgPriceCalc ?? r.purchase_avg_price_calc) || 0,
+        '采购单明细加权估价均价', '成本三级链最后一档；请在「修改」中录入覆盖值'),
+      sorter: (a, b) => (Number(a.purchaseAvgPrice) || Number(a.purchaseAvgPriceCalc) || 0)
+        - (Number(b.purchaseAvgPrice) || Number(b.purchaseAvgPriceCalc) || 0),
+    },
+    {
+      title: '入库单均价', dataIndex: 'inboundAvgPrice', key: 'inboundAvgPrice', width: colWidths.inboundAvgPrice,
+      align: 'right',
+      render: (v, r) => renderAvgCell(Number(v) || 0, Number(r.inboundAvgPriceCalc ?? r.inbound_avg_price_calc) || 0,
+        '已入库单加权平均采购价', '该物料无有效入库成本记录；请在「修改」中录入覆盖值'),
+      sorter: (a, b) => (Number(a.inboundAvgPrice) || Number(a.inboundAvgPriceCalc) || 0)
+        - (Number(b.inboundAvgPrice) || Number(b.inboundAvgPriceCalc) || 0),
+    },
+    {
+      title: '库存定义均价', dataIndex: 'avgPrice', key: 'avgPrice', width: colWidths.avgPrice,
+      align: 'right',
+      render: (v) => {
+        const n = Number(v) || 0
+        if (n > 0) {
+          return (
+            <Tooltip title="库存管理页手工录入的成本单价（成本三级链第二档）">
+              <span>
+                <span style={{ color: '#52c41a', fontWeight: 600 }}>¥{n.toFixed(4)}</span>
+                <Tag color="gold" style={{ marginLeft: 6, marginRight: 0 }}>手工</Tag>
+              </span>
+            </Tooltip>
+          )
+        }
+        return (
+          <Tooltip title="未录入库存定义均价，成本将回退到入库单均价或采购单均价；三者皆无时按 0 计算">
+            <Tag color="default" style={{ marginRight: 0 }}>未录入</Tag>
+          </Tooltip>
+        )
+      },
+      sorter: (a, b) => (Number(a.avgPrice) || 0) - (Number(b.avgPrice) || 0),
     },
     { title: '预警值', dataIndex: 'minStockAlert', key: 'minStockAlert', width: colWidths.minStockAlert,
       align: 'right', render: v => v || '-' },
@@ -398,11 +490,20 @@ export default function InventoryManagement({ user, companies = [] }) {
               <Space size={8} align="center">
                 <span style={{ color: '#888' }}>仅低库存</span>
                 <Switch checked={lowStockOnly} onChange={v => { setLowStockOnly(v); setPage(1); }} />
+                <span style={{ color: '#888', marginLeft: 8 }}>仅看未录成本</span>
+                <Switch checked={missingCostOnly} onChange={v => { setMissingCostOnly(v); setPage(1); }} />
                 <Button type="primary" icon={<SearchOutlined />} onClick={() => { setPage(1); fetchInventory() }}>搜索</Button>
               </Space>
             </Col>
           </Row>
         </Card>
+
+        {missingCostCount > 0 && !missingCostOnly && (
+          <div style={{ marginBottom: 16, padding: 10, background: '#1f1a0a', border: '1px solid #4d3a0a', borderRadius: 4, color: '#faad14', fontSize: 12 }}>
+              ⚠️ 有 {missingCostCount} 个物料的三类均价（入库单/库存定义/采购单）均无可用值，利润计算中这些物料的成本按 0 计（毛利虚高）。
+              <Button type="link" size="small" onClick={() => { setMissingCostOnly(true); setPage(1); }}>查看并录入</Button>
+            </div>
+          )}
 
         <Table
           dataSource={rows}
@@ -410,7 +511,7 @@ export default function InventoryManagement({ user, companies = [] }) {
           rowKey="inventoryId"
           loading={loading}
           components={components}
-          scroll={{ x: 1100 }}
+          scroll={{ x: 1550 }}
           size="small"
           pagination={{
             current: page, pageSize, total, showSizeChanger: true,
@@ -436,6 +537,21 @@ export default function InventoryManagement({ user, companies = [] }) {
             <Form.Item name="currentStock" label="当前库存" rules={[{ required: true, message: '请输入当前库存' }]}>
               <InputNumber style={{ width: '100%' }} min={0} step={1} />
             </Form.Item>
+            <Form.Item name="inboundAvgPrice" label="入库单均价（手工覆盖）"
+              tooltip="0 表示不覆盖，利润成本按该物料已入库单加权平均采购价自动计算；填值后以本值为准（成本三级链第 1 档）">
+              <InputNumber style={{ width: '100%' }} min={0} step={0.1} precision={4} placeholder="0 表示自动" />
+            </Form.Item>
+            <Form.Item name="avgPrice" label="库存定义均价（手工录入）"
+              tooltip="成本三级链第 2 档：无有效入库均价时使用此处录入的成本单价">
+              <InputNumber style={{ width: '100%' }} min={0} step={0.1} precision={4} placeholder="0 表示未录入" />
+            </Form.Item>
+            <Form.Item name="purchaseAvgPrice" label="采购单均价（手工覆盖）"
+              tooltip="0 表示不覆盖，回退到该物料采购单明细加权估价均价；填值后以本值为准（成本三级链第 3 档，最后兜底）">
+              <InputNumber style={{ width: '100%' }} min={0} step={0.1} precision={4} placeholder="0 表示自动" />
+            </Form.Item>
+            <div style={{ color: '#888', fontSize: 12, marginBottom: 12 }}>
+              成本口径：入库单均价 → 库存定义均价 → 采购单均价 → 0。列表中的「自动」值来自订单实时计算，手工覆盖后利润成本以覆盖值为准。
+            </div>
             <Form.Item name="minStockAlert" label="预警值" tooltip="低于此值会显示告警图标">
               <InputNumber style={{ width: '100%' }} min={0} step={1} />
             </Form.Item>
@@ -499,6 +615,10 @@ export default function InventoryManagement({ user, companies = [] }) {
             </Form.Item>
             <Form.Item name="minStockAlert" label="预警值" tooltip="低于此值会显示告警图标">
               <InputNumber style={{ width: '100%' }} min={0} step={1} />
+            </Form.Item>
+            <Form.Item name="avgPrice" label="库存定义均价（手工录入）"
+              tooltip="成本三级链第 2 档：无有效入库均价时使用此处录入的成本单价">
+              <InputNumber style={{ width: '100%' }} min={0} step={0.1} precision={4} placeholder="0 表示稍后录入" />
             </Form.Item>
             <Row gutter={12}>
               <Col span={12}>

@@ -96,12 +96,15 @@ export default function ClarifyQuestionModal({ clarify, onResolve, onCancel, loa
     onResolve(buildResult())
   }
 
-  const handleCancel = () => {
-    if (clarifyType === 'POLICY_CONFIRMATION') {
-      onResolve({ confirmed: false })
-    } else {
+  // 2026-09-23 (防误触): 高风险确认只有"取消操作"按钮显式触发取消;
+  // 弹窗右上角 X / ESC 键走 handleCancel(false) → 保持弹窗打开, 不取消, 防止手滑取消整单.
+  const handleCancel = (explicit = false) => {
+    if (clarifyType !== 'POLICY_CONFIRMATION') {
       onCancel()
+      return
     }
+    if (explicit) onResolve({ confirmed: false })
+    // X/ESC → 忽略, 不清除/不取消 (HIGH 风险必须显式二选一)
   }
 
   const canSubmit =
@@ -140,8 +143,9 @@ export default function ClarifyQuestionModal({ clarify, onResolve, onCancel, loa
         </Space>
       }
       onCancel={handleCancel}
+      keyboard={clarifyType !== 'POLICY_CONFIRMATION'}
       footer={[
-        <Button key="cancel" onClick={handleCancel} disabled={loading}>
+        <Button key="cancel" onClick={() => handleCancel(true)} disabled={loading}>
           {clarifyType === 'POLICY_CONFIRMATION' ? '取消操作' : '稍后再说'}
         </Button>,
         <Button

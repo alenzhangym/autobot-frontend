@@ -227,7 +227,7 @@ export default function ProfitAnalysis({ user, companies = [] }) {
                 </Col>
               </Row>
               <div style={{ marginTop: 12, color: '#888', fontSize: 12 }}>
-                预期毛利 = 预期销售 − 预期采购；实际毛利 = 真实出库收入 − 真实入库花费；已实现毛利 = 真实出库收入 − 出库数量×加权平均采购价(含税优先)。
+                预期毛利 = 预期销售 − 预期采购；实际毛利 = 真实出库收入 − 真实入库花费；已实现毛利 = 真实出库收入 − 出库数量×成本单价（成本三级链：有效入库单均价 → 库存定义均价 → 有效采购单均价，皆无记 0；两类「有效」均价优先采用库存管理页手工覆盖值）。
               </div>
             </Card>
 
@@ -240,7 +240,7 @@ export default function ProfitAnalysis({ user, companies = [] }) {
                 </Col>
                 <Col xs={12} md={6}>
                   <StatCard title="库存成本价值" value={overview.inventoryCostValue || 0} prefix={<AccountBookOutlined />} color="#fa8c16"
-                    sub="库存 × 加权平均采购价" />
+                    sub="库存 × 成本单价(入库均价 → 库存定义均价 → 采购单均价)" />
                 </Col>
                 <Col xs={12} md={6}>
                   <StatCard title="库存销售价值" value={overview.inventorySalesValue || 0} prefix={<DollarOutlined />} color="#52c41a"

@@ -65,6 +65,7 @@ import OrderFormModal from './components/OrderFormModal'
 import ErpQuickActions from './components/ErpQuickActions'
 import CrmQuickActions from './components/CrmQuickActions'
 import PlanPreviewCard from './components/PlanPreviewCard'
+import PartyConfirmWithPreview from './components/PartyConfirmWithPreview'
 import ClarifyQuestionModal from './components/ClarifyQuestionModal'
 import ResultExplanationCard from './components/ResultExplanationCard'
 import ParamSourceCard from './components/ParamSourceCard'
@@ -4439,62 +4440,42 @@ const handleDeleteSession = (id) => {
                         HIGH 风险确认卡片内直接选供应商/客户 (候选 + 新建 + 自定义), 选择并确认一次完成,
                         clarifyResponse 同时携带 {confirmed, slot, value, text}, 后端守卫据此收敛直达建单. */}
                     {pendingPause.partyQuestion ? (
-                      <ClarifyQuestionModal
-                        clarify={{
-                          ...pendingPause.partyQuestion,
-                          clarifyType: 'POLICY_CONFIRMATION',
-                          question: `${pendingPause.reason ? pendingPause.reason + '\n\n' : ''}${pendingPause.partyQuestion.question || ''}`
-                        }}
+                      // 2026-09-23: partyQuestion (选供应商/客户) 与 preview (明细表格) 合并一步 —
+                      // 此前 partyQuestion 分支直接渲染 ClarifyQuestionModal, 明细表格被丢弃;
+                      // 改为 Modal 内同时渲染 PlanPreviewCard(明细+参数+补充) 与选项区(候选/新建/自定义),
+                      // 确认时同时回传 {confirmed, slot, value, text} 供后端守卫收敛直达建单.
+                      <PartyConfirmWithPreview
+                        key={pendingPause.sessionId + '-party'}
+                        partyQuestion={pendingPause.partyQuestion}
+                        reason={pendingPause.reason}
+                        preview={pendingPause.preview}
+                        resumeContext={pendingPause.clarifyQuestion?.resumeContext || null}
                         loading={clarifyLoading}
-                        onResolve={async (result) => {
-                          setClarifyLoading(true)
-                          try {
-                            const replyText = result.confirmed ? '确认' : '取消'
-                            // P0-4: 结构化恢复协议 — 携带 resumeContext + clarifyResponse
-                            const resumeContext = pendingPause.clarifyQuestion?.resumeContext || null
-                            const clarifyResponse = !result.confirmed
-                              ? { confirmed: false }
-                              : (result.slot
-                                ? { confirmed: true, slot: result.slot, value: result.value, text: result.text }
-                                : { confirmed: true })
-                            setPendingPause(null)
-                            enqueueClarification(resumeContext, clarifyResponse)
-                            setInput(replyText)
-                            setTimeout(() => { sendMessage(replyText) }, 0)
-                          } finally {
-                            setClarifyLoading(false)
-                          }
+                        onConfirmReply={async (replyText, clarifyResponse) => {
+                          setPendingPause(null)
+                          enqueueClarification(pendingPause.clarifyQuestion?.resumeContext || null, clarifyResponse)
+                          setInput(replyText)
+                          setTimeout(() => { sendMessage(replyText) }, 0)
                         }}
-                        onCancel={() => setPendingPause(null)}
+                        onCancelReply={async () => {
+                          setPendingPause(null)
+                          enqueueClarification(pendingPause.clarifyQuestion?.resumeContext || null, { confirmed: false })
+                          setInput('取消')
+                          setTimeout(() => { sendMessage('取消') }, 0)
+                        }}
                       />
                     ) : pendingPause.preview ? (
-                      <PlanPreviewCard
-                        preview={pendingPause.preview}
-                        loading={clarifyLoading}
-                        onConfirm={async (editedParams) => {
-                          setClarifyLoading(true)
-                          try {
-                            // §9.2 若用户修改了参数, 以 "确认编辑 {json}" 格式回传后端
-                            const hasEdits = editedParams && Object.keys(editedParams).length > 0
-                            const replyText = hasEdits
-                              ? `确认编辑 ${JSON.stringify(editedParams)}`
-                              : '确认'
-                            // P0-4: 结构化恢复协议 — 携带 resumeContext + clarifyResponse
-                            const resumeContext = pendingPause.clarifyQuestion?.resumeContext || null
-                            const clarifyResponse = { confirmed: true, editedParams: hasEdits ? editedParams : null }
-                            setPendingPause(null)
-                            enqueueClarification(resumeContext, clarifyResponse)
-                            setInput(hasEdits ? '确认' : replyText)
-                            setTimeout(() => { sendMessage(replyText) }, 0)
-                          } finally {
-                            setClarifyLoading(false)
-                          }
-                        }}
+                      // 2026-09-23: PlanPreviewCard 原样渲染会落在右侧窄面板里, 列表看不到;
+                      // 改为居中 Modal 包裹 (宽 720, body 可滚动), PlanPreviewCard 自带确认/取消按钮.
+                      <Modal
+                        open
+                        title={pendingPause.preview.title || '执行前确认'}
+                        width={720}
+                        centered
                         onCancel={async () => {
                           setClarifyLoading(true)
                           try {
                             const replyText = '取消'
-                            // P0-4: 结构化恢复协议
                             const resumeContext = pendingPause.clarifyQuestion?.resumeContext || null
                             const clarifyResponse = { confirmed: false }
                             setPendingPause(null)
@@ -4505,7 +4486,45 @@ const handleDeleteSession = (id) => {
                             setClarifyLoading(false)
                           }
                         }}
-                      />
+                        footer={null}
+                        styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}
+                      >
+                        <PlanPreviewCard
+                          preview={pendingPause.preview}
+                          loading={clarifyLoading}
+                          onConfirm={async (editedParams) => {
+                            setClarifyLoading(true)
+                            try {
+                              const hasEdits = editedParams && Object.keys(editedParams).length > 0
+                              const replyText = hasEdits
+                                ? `确认编辑 ${JSON.stringify(editedParams)}`
+                                : '确认'
+                              const resumeContext = pendingPause.clarifyQuestion?.resumeContext || null
+                              const clarifyResponse = { confirmed: true, editedParams: hasEdits ? editedParams : null }
+                              setPendingPause(null)
+                              enqueueClarification(resumeContext, clarifyResponse)
+                              setInput(hasEdits ? '确认' : replyText)
+                              setTimeout(() => { sendMessage(replyText) }, 0)
+                            } finally {
+                              setClarifyLoading(false)
+                            }
+                          }}
+                          onCancel={async () => {
+                            setClarifyLoading(true)
+                            try {
+                              const replyText = '取消'
+                              const resumeContext = pendingPause.clarifyQuestion?.resumeContext || null
+                              const clarifyResponse = { confirmed: false }
+                              setPendingPause(null)
+                              enqueueClarification(resumeContext, clarifyResponse)
+                              setInput(replyText)
+                              setTimeout(() => { sendMessage(replyText) }, 0)
+                            } finally {
+                              setClarifyLoading(false)
+                            }
+                          }}
+                        />
+                      </Modal>
                     ) : (
                       <ClarifyQuestionModal
                         clarify={pendingPause.clarifyQuestion || {
