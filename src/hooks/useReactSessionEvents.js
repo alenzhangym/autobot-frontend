@@ -45,6 +45,8 @@ export function useReactSessionEvents(
     onStreamingChunk,
     onParallelDispatch,
     onBatchResult,
+    onProgress,
+    onChatResult,
     onError,
     onClose,
   } = {}
@@ -61,6 +63,8 @@ export function useReactSessionEvents(
     onStreamingChunk,
     onParallelDispatch,
     onBatchResult,
+    onProgress,
+    onChatResult,
     onError,
     onClose,
   })
@@ -77,6 +81,8 @@ export function useReactSessionEvents(
       onStreamingChunk,
       onParallelDispatch,
       onBatchResult,
+      onProgress,
+      onChatResult,
       onError,
       onClose,
     }
@@ -90,6 +96,8 @@ export function useReactSessionEvents(
     onStreamingChunk,
     onParallelDispatch,
     onBatchResult,
+    onProgress,
+    onChatResult,
     onError,
     onClose,
   ])
@@ -206,6 +214,18 @@ export function useReactSessionEvents(
                   msg.totalResultLength,
                   msg.completedCount
                 )
+              }
+              break
+
+            case 'react.progress':
+              if (callbacksRef.current.onProgress) {
+                callbacksRef.current.onProgress(sid, msg.stage, msg.text)
+              }
+              break
+
+            case 'react.chat.result':
+              if (callbacksRef.current.onChatResult) {
+                callbacksRef.current.onChatResult(sid, msg.request_id, msg.result)
               }
               break
 

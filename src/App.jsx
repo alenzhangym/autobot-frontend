@@ -940,6 +940,12 @@ function App() {
   const [sessionId, setSessionId] = useState('')
   // 2026-09-01: ReactSession 实时状态（经 /ws/react/{sessionId} 推送），用于主聊天状态徽标。
   const [reactSessionState, setReactSessionState] = useState('')
+  // 2026-09-25 感知延迟优化: /chat 等待期间经 react.progress 事件显示"正在理解/计划/执行…"
+  const [chatProgress, setChatProgress] = useState('')
+  // 2026-09-25 异步 ack: /ws/react/{sessionId} 订阅就绪标记 + /chat/async 挂起请求表
+  // request_id → { resolve, timer }；结果经 react.chat.result 事件回表 resolve。
+  const reactWsReadyRef = useRef(false)
+  const pendingChatResultsRef = useRef(new Map())
   // P4: 自动上下文投影开关 — 默认开启，用户可在 header 中关闭
   const [contextProjectionEnabled, setContextProjectionEnabled] = useState(true)
   // A 方案：code 会话不再需要 'plan'/'build' 二选 toggle；'auto' 表示由后端自动推断。
@@ -2041,7 +2047,25 @@ function App() {
   // 实时反映会话状态（RUNNING/WAITING_CONFIRMATION/...），并在会话创建/终结时刷新会话列表。
   useReactSessionEvents(sessionId, {
     enabled: !!sessionId && activeTab === 'chat',
+    onSubscribed: () => { reactWsReadyRef.current = true },
+    onClose: () => {
+      reactWsReadyRef.current = false
+      // WS 断开后 /chat/async 结果无法回传 — 立即让挂起请求收到错误, 不等 300s 超时。
+      for (const [rid, entry] of pendingChatResultsRef.current) {
+        clearTimeout(entry.timer)
+        entry.resolve({ status: 'error', message: '实时连接中断，未收到处理结果，请重试' })
+        pendingChatResultsRef.current.delete(rid)
+      }
+    },
+    onChatResult: (_sid, requestId, result) => {
+      const entry = pendingChatResultsRef.current.get(requestId)
+      if (!entry) return
+      pendingChatResultsRef.current.delete(requestId)
+      clearTimeout(entry.timer)
+      entry.resolve(result)
+    },
     onStateChanged: (_sid, _prev, current) => setReactSessionState(current || ''),
+    onProgress: (_sid, _stage, text) => setChatProgress(text || ''),
     onSessionCreated: (_sid) => { setReactSessionState(''); fetchSessions() },
     onSessionTerminated: (_sid, terminalState) => {
       setReactSessionState(terminalState || '')
@@ -2697,6 +2721,40 @@ function App() {
     }
   }
 
+  /**
+   * 2026-09-25 异步 ack: ERP/cross 通道且 react WS 就绪时走 /chat/async —
+   * 秒回 accepted，真正结果经 react.chat.result 事件回传（300s 超时兜底）。
+   * 任何不满足条件/后端 rejected/旧后端 404 的场景都回落同步 /chat，
+   * 保持「异步失败 → 回落原始」约束。返回值与 api.post('/chat') 形状一致。
+   */
+  const postChatPayload = async (payload) => {
+    const ch = payload.channel
+    if ((ch !== 'erp' && ch !== 'cross') || !reactWsReadyRef.current) {
+      return await api.post('/chat', payload)
+    }
+    const requestId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : `rq-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    let ack
+    try {
+      ack = await api.post('/chat/async', { ...payload, request_id: requestId })
+    } catch (e) {
+      if (e.response?.status === 401) throw e
+      return await api.post('/chat', payload)
+    }
+    if (ack.data?.status !== 'accepted') {
+      return await api.post('/chat', payload)
+    }
+    const data = await new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        pendingChatResultsRef.current.delete(requestId)
+        resolve({ status: 'error', message: '处理结果等待超时（连接可能中断），请重试' })
+      }, 300000)
+      pendingChatResultsRef.current.set(requestId, { resolve, timer })
+    })
+    return { data }
+  }
+
   const sendMessage = async (presetText) => {
     let text = typeof presetText === 'string' ? presetText : input;
     if ((!text.trim() && selectedImages.length === 0 && uploadedDocuments.length === 0) || isLoading) return
@@ -2724,6 +2782,7 @@ function App() {
     setInput('')
     endLiveLogSession()
     setIsLoading(true)
+    setChatProgress('')
 
     // 1. Check if token is expired
     try {
@@ -2835,7 +2894,7 @@ function App() {
       if (probeResult) {
         payload.client_info = getClientInfo(probeResult);
       }
-      const res = await api.post('/chat', payload)
+      const res = await postChatPayload(payload)
       // S6: 后端在 plan / 直接 response 携带 intent —— 弹纠正浮层
       //     触发条件：用户非确认型 query + 分类结果不是 CONVERSATIONAL
       //     code 任务静默 (isCodeSess=true) —— 后端自行处理 intent 推断, 不弹浮层
@@ -4097,7 +4156,7 @@ const handleDeleteSession = (id) => {
                                 {running && (
                                   <Space style={{ color: '#888' }}>
                                     <LoadingOutlined spin />
-                                    <Text style={{ color: '#888', fontSize: 13 }}>Thinking...</Text>
+                                    <Text style={{ color: '#888', fontSize: 13 }}>{chatProgress || 'Thinking...'}</Text>
                                   </Space>
                                 )}
                               </div>
