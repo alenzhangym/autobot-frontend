@@ -131,8 +131,19 @@ const { TextArea } = Input
 // AWAITING_COMMANDS 中间态 / 未完成标记）。逐条渲染会形成多个占位大卡片。
 // 这里把"连续的中间消息"收敛为单个 FlowProcessCard：组内只渲染最后一条，
 // 其余隐藏，减少显示空间占用。
+// 后端统一 ReAct 通道在关键节点会各落一条"纯状态短语"消息（计划已生成 / 确认已接收），
+// 各占一个气泡会割裂阅读。这里识别这类短语，归入流程分组收敛为单行状态轨迹。
+// 集合刻意保守：只匹配精确短语（trim 后全等），带任何正文/摘要的内容都算真实消息。
+const STATUS_ONLY_PHRASES = new Set(['confirmed', '计划已生成', '✅ 操作已完成'])
+const isStatusOnlyAssistantMsg = (m) => {
+  if (!m || m.role !== 'assistant') return false
+  const content = typeof m.content === 'string' ? m.content.trim() : ''
+  return STATUS_ONLY_PHRASES.has(content)
+}
+
 const isFlowIntermediateMsg = (m) => {
   if (!m || m.role !== 'assistant') return false
+  if (isStatusOnlyAssistantMsg(m)) return true
   const content = typeof m.content === 'string' ? m.content : ''
   if (content.includes('__CMD__{')) return true
   const cmd = m.__cmd
@@ -2443,7 +2454,11 @@ function App() {
     } catch (e) {
       parseErrors.push({ field: 'displayContent', error: 'exception: ' + e.message })
     }
-    return { ...msg, __cmd: { state, analysisResult, displayContent, hasCommands: msg.content.includes('__CMD__{'), _parseErrors: parseErrors.length > 0 ? parseErrors : undefined } }
+    // U1: getLastParseError() 是模块级共享游标 — 本条消息不含任何 __CMD__/状态标记时,
+    // 上一条消息遗留的错误会污染徽标 (截图实证: "计划已生成"/"confirmed" 各挂 parse issues)。
+    const hasOwnMarkers = msg.content.includes('__CMD__{') || !!stateJson || !!analysisResult
+    const ownErrors = hasOwnMarkers ? parseErrors : []
+    return { ...msg, __cmd: { state, analysisResult, displayContent, hasCommands: msg.content.includes('__CMD__{'), _parseErrors: ownErrors.length > 0 ? ownErrors : undefined } }
   }
 
   const syncWorkspaceTreeSilently = async (dirPath, reason = 'auto') => {
@@ -4082,9 +4097,26 @@ const handleDeleteSession = (id) => {
                       const flowGroup = resolveFlowGroup(messages, index)
                       if (flowGroup) {
                         if (index !== flowGroup.end) return null
+                        const groupMsgs = messages.slice(flowGroup.start, flowGroup.end + 1)
+                        // U1: 整组都是纯状态短语 → 单行紧凑状态轨迹, 不再占用大卡片/独立气泡
+                        if (groupMsgs.every(isStatusOnlyAssistantMsg)) {
+                          const seen = []
+                          for (const m of groupMsgs) {
+                            const t = (m.content || '').trim() === 'confirmed' ? '已确认执行' : (m.content || '').trim()
+                            if (seen[seen.length - 1] !== t) seen.push(t)
+                          }
+                          return (
+                            <div style={{ maxWidth: 1000, margin: '0 auto', padding: isMobile ? '0 12px' : '0 24px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '2px 0 16px 42px', color: '#6b6b6b', fontSize: 12 }}>
+                                <RobotOutlined style={{ fontSize: 12 }} />
+                                <span>{seen.join(' → ')}</span>
+                              </div>
+                            </div>
+                          )
+                        }
                         return (
                           <div style={{ maxWidth: 1000, margin: '0 auto', padding: isMobile ? '0 12px' : '0 24px' }}>
-                            <FlowProcessCard msgs={messages.slice(flowGroup.start, flowGroup.end + 1)} />
+                            <FlowProcessCard msgs={groupMsgs} />
                           </div>
                         )
                       }
