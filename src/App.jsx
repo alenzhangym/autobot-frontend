@@ -2426,10 +2426,10 @@ function App() {
   const normalizeMessage = (msg) => {
     if (msg.role !== 'assistant' || typeof msg.content !== 'string') return msg
     if (msg.__cmd) return msg
-    let state = null, analysisResult = null, displayContent = null
+    let state = null, stateJson = null, analysisResult = null, displayContent = null
     const parseErrors = []
     try {
-      const stateJson = extractTrailingStateJson(msg.content)
+      stateJson = extractTrailingStateJson(msg.content)
       if (stateJson) {
         try {
           state = JSON.parse(stateJson)
