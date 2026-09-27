@@ -1,8 +1,29 @@
-import { Modal, Input, Radio, Checkbox, Space, Typography, Tag, Alert, Button } from 'antd'
-import { QuestionCircleOutlined, WarningOutlined } from '@ant-design/icons'
-import { useState, useEffect } from 'react'
+import { Modal, Input, Radio, Checkbox, Space, Typography, Tag, Alert, Button, Divider } from 'antd'
+import { QuestionCircleOutlined, WarningOutlined, FormOutlined } from '@ant-design/icons'
+import { useEffect, useMemo, useState } from 'react'
+import DiffViewer from './DiffViewer'
+import { MarkdownContent } from '../utils/helpers.jsx'
 
 const { Text, Paragraph } = Typography
+const { TextArea } = Input
+
+/**
+ * 把确认卡文本按 ```diff 围栏切成 [普通 markdown 段, diff 段, ...]，
+ * 让"方案说明"走 MarkdownContent、"逐文件改动"走 DiffViewer（F15）。
+ */
+function splitDiffSegments(text) {
+  const out = []
+  const re = /```(?:diff|diff-git)?\n?([\s\S]*?)```/g
+  let last = 0
+  let m
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) out.push({ kind: 'md', text: text.slice(last, m.index) })
+    out.push({ kind: 'diff', text: m[1].replace(/\n$/, '') })
+    last = re.lastIndex
+  }
+  if (last < text.length) out.push({ kind: 'md', text: text.slice(last) })
+  return out
+}
 
 /**
  * ClarifyQuestionModal — 结构化澄清 (§5.5.4) + G7 多轮补参 (2026-09 收口)
@@ -33,6 +54,9 @@ export default function ClarifyQuestionModal({ clarify, onResolve, onCancel, loa
   const [selectedOption, setSelectedOption] = useState(null)
   const [multiValues, setMultiValues] = useState([])
   const [customEnabled, setCustomEnabled] = useState(false)
+  // F15: 确认卡的「修改意见 → 重新出方案」回路状态
+  const [reviseOpen, setReviseOpen] = useState(false)
+  const [feedbackText, setFeedbackText] = useState('')
 
   useEffect(() => {
     // 每次澄清问题变化时重置状态 (G7: 多轮连续追问时新问题到来即重置输入)
@@ -40,6 +64,8 @@ export default function ClarifyQuestionModal({ clarify, onResolve, onCancel, loa
     setSelectedOption(null)
     setMultiValues([])
     setCustomEnabled(false)
+    setReviseOpen(false)
+    setFeedbackText('')
   }, [clarify])
 
   if (!clarify) return null
@@ -52,8 +78,17 @@ export default function ClarifyQuestionModal({ clarify, onResolve, onCancel, loa
     stillMissing = false,
     missingSlots = [],
     inputMode,
-    allowCustomInput = false
+    allowCustomInput = false,
+    allowRevise = false
   } = clarify
+
+  // F15: 高风险确认卡文本含 ```diff 段 → 切段渲染 (方案说明 markdown + 逐文件 diff)
+  const isPolicy = clarifyType === 'POLICY_CONFIRMATION'
+  const segments = useMemo(
+    () => (isPolicy ? splitDiffSegments(question || '') : null),
+    [isPolicy, question]
+  )
+  const hasDiff = !!(segments && segments.some(s => s.kind === 'diff'))
 
   // 有效渲染模式: 显式 inputMode 优先; 缺省按 clarifyType 推导 (保持旧行为)
   const mode = inputMode || (clarifyType === 'AMBIGUITY' ? 'SINGLE_SELECT' : 'FREE_TEXT')
@@ -116,6 +151,14 @@ export default function ClarifyQuestionModal({ clarify, onResolve, onCancel, loa
           ? multiValues.length > 0 || hasCustomValue
           : hasCustomValue || selectedOption !== null
 
+  // F15: 提交修改意见 → 后端带探索上下文重出方案 (不落盘)。载荷必须带 verdict,
+  // 否则 {confirmed:false} 会被 resume 的取消判定吃掉。
+  const handleRevise = () => {
+    const fb = feedbackText.trim()
+    if (!fb) return
+    onResolve({ confirmed: false, verdict: 'revise', feedback: fb, text: `修改意见，${fb}` })
+  }
+
   const titleMap = {
     MISSING_SLOT: stillMissing ? '请继续补充信息' : '请补充信息',
     AMBIGUITY: '请选择',
@@ -126,6 +169,29 @@ export default function ClarifyQuestionModal({ clarify, onResolve, onCancel, loa
     MISSING_SLOT: <QuestionCircleOutlined style={{ color: '#1677ff' }} />,
     AMBIGUITY: <QuestionCircleOutlined style={{ color: '#fa8c16' }} />,
     POLICY_CONFIRMATION: <WarningOutlined style={{ color: '#ff4d4f' }} />
+  }
+
+  const footerButtons = [
+    <Button key="cancel" onClick={() => handleCancel(true)} disabled={loading}>
+      {clarifyType === 'POLICY_CONFIRMATION' ? '取消操作' : '稍后再说'}
+    </Button>,
+    <Button
+      key="ok"
+      type="primary"
+      onClick={handleConfirm}
+      loading={loading}
+      disabled={!canSubmit}
+    >
+      {clarifyType === 'POLICY_CONFIRMATION' ? '确认执行' : '提交'}
+    </Button>
+  ]
+  if (isPolicy && allowRevise) {
+    footerButtons.unshift(
+      <Button key="revise" icon={<FormOutlined />} disabled={loading}
+        onClick={() => setReviseOpen(v => !v)}>
+        提交修改意见
+      </Button>
+    )
   }
 
   return (
@@ -144,27 +210,24 @@ export default function ClarifyQuestionModal({ clarify, onResolve, onCancel, loa
       }
       onCancel={handleCancel}
       keyboard={clarifyType !== 'POLICY_CONFIRMATION'}
-      footer={[
-        <Button key="cancel" onClick={() => handleCancel(true)} disabled={loading}>
-          {clarifyType === 'POLICY_CONFIRMATION' ? '取消操作' : '稍后再说'}
-        </Button>,
-        <Button
-          key="ok"
-          type="primary"
-          onClick={handleConfirm}
-          loading={loading}
-          disabled={!canSubmit}
-        >
-          {clarifyType === 'POLICY_CONFIRMATION' ? '确认执行' : '提交'}
-        </Button>
-      ]}
-      width={480}
+      footer={footerButtons}
+      width={hasDiff ? 860 : 480}
       maskClosable={false}
     >
-      {/* 问题文本 */}
-      <Paragraph style={{ marginBottom: 16, fontSize: 14 }}>
-        {question}
-      </Paragraph>
+      {/* 问题文本 — F15: 含 ```diff 的方案卡按段渲染 (方案说明 markdown + 逐文件 diff)；
+          其余形态(含旧的高风险确认文案)保持纯文本 Paragraph 不变 (零回归) */}
+      {isPolicy && hasDiff && segments ? (
+        <div style={{ marginBottom: 16, maxHeight: '58vh', overflow: 'auto' }}>
+          {segments.map((seg, i) => seg.kind === 'diff'
+            ? <div key={i} style={{ margin: '8px 0' }}><DiffViewer diff={seg.text} maxHeight={260} /></div>
+            : <div key={i}>{seg.text.trim() ? <MarkdownContent content={seg.text.trim()} /> : null}</div>
+          )}
+        </div>
+      ) : (
+        <Paragraph style={{ marginBottom: 16, fontSize: 14 }}>
+          {question}
+        </Paragraph>
+      )}
 
       {/* G7: 多轮补参进度 — 同会话内仍需补齐的槽位列表 */}
       {stillMissing && missingSlots.length > 0 && (
@@ -275,9 +338,34 @@ export default function ClarifyQuestionModal({ clarify, onResolve, onCancel, loa
           type="warning"
           showIcon
           icon={<WarningOutlined />}
-          message="此操作为高风险或不可逆操作, 请确认后执行."
+          message={isPolicy && allowRevise
+            ? '确认后才写入文件；对方案有异议可点「提交修改意见」重新出方案（不会落盘）。'
+            : '此操作为高风险或不可逆操作, 请确认后执行.'}
           style={{ marginBottom: 8 }}
         />
+      )}
+
+      {/* F15: 修改意见回路 — 只在后端 allowRevise=true 时提供 (开关关时不显示, 免输入不被受理的意见) */}
+      {isPolicy && allowRevise && reviseOpen && (
+        <div style={{ marginTop: 8 }}>
+          <Divider style={{ margin: '8px 0' }} orientation="left" plain>
+            <Text type="secondary" style={{ fontSize: 12 }}>对方案的修改意见</Text>
+          </Divider>
+          <TextArea
+            rows={3}
+            value={feedbackText}
+            onChange={e => setFeedbackText(e.target.value)}
+            placeholder="例如：先只改后端 Service，前端这轮不动；或 第 2 个文件的包路径不对"
+            autoFocus
+          />
+          <Space style={{ marginTop: 8 }}>
+            <Button type="primary" ghost onClick={handleRevise}
+              disabled={loading || !feedbackText.trim()}>
+              按意见重新出方案
+            </Button>
+            <Button onClick={() => setReviseOpen(false)} disabled={loading}>收起</Button>
+          </Space>
+        </div>
       )}
     </Modal>
   )

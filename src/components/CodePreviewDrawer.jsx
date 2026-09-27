@@ -3,6 +3,7 @@ import { Drawer, Tabs, Spin, Tag, Typography, Space, Button, Tooltip, Segmented,
 import { FileTextOutlined, DiffOutlined, CopyOutlined, ReloadOutlined, CodeOutlined } from '@ant-design/icons'
 import axios from 'axios'
 import { getLocalAgentBaseUrl } from '../auth'
+import DiffViewer from './DiffViewer'
 
 const { Text } = Typography
 
@@ -237,38 +238,3 @@ export default function CodePreviewDrawer({
   )
 }
 
-/**
- * 渲染 unified diff：`diff --git` / 文件头 灰显, `@@` 青色,
- * `-` 红底, `+` 绿底, 其余上下文默认色。
- */
-function DiffViewer({ diff }) {
-  const rows = useMemo(() => diff.split('\n'), [diff])
-  return (
-    <div style={{ flex: 1, overflow: 'auto', fontFamily: 'ui-monospace, SFMono-Regular, monospace', fontSize: 12, lineHeight: 1.6, padding: '8px 0' }}>
-      {rows.map((l, i) => {
-        let kind = 'context'
-        let bg = 'transparent'
-        let color = '#bbb'
-        if (/^diff --git|^index |^--- |^\+\+\+ /.test(l)) {
-          kind = 'meta'; color = '#8a8a8a'; bg = 'transparent'
-        } else if (/^@@ /.test(l)) {
-          kind = 'hunk'; color = '#5ac8fa'; bg = 'rgba(90,200,250,0.08)'
-        } else if (l.startsWith('+')) {
-          kind = 'added'; color = '#52c41a'; bg = 'rgba(82,196,26,0.10)'
-        } else if (l.startsWith('-')) {
-          kind = 'removed'; color = '#ff4d4f'; bg = 'rgba(255,77,79,0.10)'
-        }
-        return (
-          <div key={i} style={{ display: 'flex', background: bg }}>
-            <span style={{ width: 28, flexShrink: 0, textAlign: 'right', paddingRight: 8, color: '#555', userSelect: 'none' }}>
-              {l.startsWith('+') ? '+' : l.startsWith('-') ? '-' : ' '}
-            </span>
-            <span style={{ color, whiteSpace: 'pre-wrap', wordBreak: 'break-all', flex: 1, paddingRight: 12 }}>
-              {l || '\u00a0'}
-            </span>
-          </div>
-        )
-      })}
-    </div>
-  )
-}

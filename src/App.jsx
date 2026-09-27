@@ -4601,11 +4601,18 @@ const handleDeleteSession = (id) => {
                         onResolve={async (result) => {
                           setClarifyLoading(true)
                           try {
-                            const replyText = result.confirmed ? '确认' : '取消'
+                            // F15: revise 回路 — 修改意见作为消息文本发送, 结构化 verdict 让后端
+                            // 走"带探索上下文重出方案"分支 (既不落盘也不取消)
+                            const isRevise = result.verdict === 'revise'
+                            const replyText = isRevise
+                              ? `修改意见，${result.feedback || result.text || ''}`
+                              : (result.confirmed ? '确认' : '取消')
                             const pauseSessionId = pendingPause.sessionId
                             // P0-4: 结构化恢复协议
                             const resumeContext = pendingPause.clarifyQuestion?.resumeContext || null
-                            const clarifyResponse = { confirmed: !!result.confirmed }
+                            const clarifyResponse = isRevise
+                              ? { confirmed: false, verdict: 'revise', feedback: result.feedback || result.text }
+                              : { confirmed: !!result.confirmed }
                             setPendingPause(null)
                             enqueueClarification(resumeContext, clarifyResponse)
                             setInput(replyText)
