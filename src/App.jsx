@@ -959,6 +959,8 @@ function App() {
   // 保留 codeMode 状态变量是为未来可能的"高级用户强制锁定"留口子（UI 已不再暴露）。
   const [codeMode, setCodeMode] = useState('auto')  // 'auto' (默认) | 'plan' (强制只分析) | 'build' (强制实施)
   const [isLoading, setIsLoading] = useState(false)
+  // [F18-4] 取消在途任务: 已发出取消请求、等后端收尾 (防重复点击, 也给用户明确反馈)
+  const [isCancelling, setIsCancelling] = useState(false)
   const [workspaceDir, setWorkspaceDir] = useState('')
   const [showWsPicker, setShowWsPicker] = useState(false)
   const [wsPickerChannel, setWsPickerChannel] = useState(null)
@@ -2733,6 +2735,35 @@ function App() {
   }
 
   /**
+   * [F18-4] 任务开始后取消。后端 POST /react/session/{id}/cancel 做三件事:
+   * 置会话取消标志、abort 在途模型请求 (关 socket → 推理端侧随即 abort, 不再占队列/显存)、
+   * 释放执行锁。
+   *
+   * 前端不自己"假装结束": 在途的 /chat 请求或 react.chat.result 事件仍会各自收尾
+   * (isLoading 由 sendMessage 的 finally 复位), 这里只切到"取消中"提示, 避免用户
+   * 以为点了没反应又连点几次。
+   */
+  const cancelRunningTask = async () => {
+    if (!sessionId || isCancelling) return
+    setIsCancelling(true)
+    try {
+      const res = await api.post(`/react/session/${encodeURIComponent(sessionId)}/cancel`)
+      const aborted = res.data?.aborted_llm_calls ?? 0
+      setChatProgress(aborted > 0
+        ? `已取消，中止 ${aborted} 个在途模型请求，等待收尾…`
+        : '已发送取消请求，等待当前步骤收尾…')
+      message.info(aborted > 0 ? `已取消（中止 ${aborted} 个在途模型请求）` : '已发送取消请求')
+    } catch (e) {
+      setIsCancelling(false)
+      if (e.response?.status === 404) {
+        message.error('后端不支持取消（缺少 /api/react/session/{id}/cancel），请更新后端')
+      } else {
+        message.error(`取消失败: ${e.response?.data?.message || e.message}`)
+      }
+    }
+  }
+
+  /**
    * 2026-09-25 异步 ack: ERP/cross 通道且 react WS 就绪时走 /chat/async —
    * 秒回 accepted，真正结果经 react.chat.result 事件回传（300s 超时兜底）。
    * 任何不满足条件/后端 rejected/旧后端 404 的场景都回落同步 /chat，
@@ -2793,6 +2824,7 @@ function App() {
     setInput('')
     endLiveLogSession()
     setIsLoading(true)
+    setIsCancelling(false)
     setChatProgress('')
 
     // 1. Check if token is expired
@@ -3021,6 +3053,7 @@ function App() {
       setMessages(prev => [...prev, { role: 'error', content: `Network Error: ${err.message}` }])
     } finally {
       setIsLoading(false);
+      setIsCancelling(false);
       setSelectedImages([]);
     }
   }
@@ -4163,6 +4196,12 @@ const handleDeleteSession = (id) => {
                                   <Space style={{ color: '#888' }}>
                                     <LoadingOutlined spin />
                                     <Text style={{ color: '#888', fontSize: 13 }}>{chatProgress || 'Thinking...'}</Text>
+                                    {/* [F18-4] 取消入口 (与输入框右侧的停止按钮同一动作) */}
+                                    <Button type="link" size="small" danger disabled={isCancelling}
+                                      onClick={cancelRunningTask}
+                                      style={{ fontSize: 12, padding: '0 4px', height: 20 }}>
+                                      {isCancelling ? '取消中…' : '取消'}
+                                    </Button>
                                   </Space>
                                 )}
                               </div>
@@ -4415,6 +4454,17 @@ const handleDeleteSession = (id) => {
 
                       <Space style={{ paddingBottom: 2 }}>
                         {(() => {
+                          // [F18-4] 运行中优先给"取消": 任务开始后也能停 —— 后端会置取消标志
+                          // 并 abort 在途模型请求, 而不是让它在推理端队列里跑完。
+                          if (isLoading) {
+                            return (
+                              <Tooltip title={isCancelling ? '取消中…' : '取消当前任务'}>
+                                <Button shape="circle" size="small" danger
+                                  icon={isCancelling ? <LoadingOutlined spin /> : <StopOutlined />}
+                                  onClick={cancelRunningTask} disabled={isCancelling} />
+                              </Tooltip>
+                            )
+                          }
                           const hasInput = input.trim() || selectedImages.length > 0 || uploadedDocuments.length > 0 || selectedQuickAction
                           if (hasInput) {
                             return (
