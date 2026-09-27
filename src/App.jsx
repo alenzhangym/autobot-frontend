@@ -59,7 +59,6 @@ import { executeAgentCommands, appendStreamToken, tryStreamDispatch, resetStream
 import MessageBubble from './components/MessageBubble'
 import FlowProcessCard from './components/FlowProcessCard'
 import EventLogPanel from './components/EventLogPanel'
-import IssuesSidePanel from './components/IssuesSidePanel'
 import InteractivePanel from './components/InteractivePanel'
 import OrderFormModal from './components/OrderFormModal'
 import ErpQuickActions from './components/ErpQuickActions'
@@ -80,7 +79,6 @@ import LlmModuleConfigTab from './components/LlmModuleConfigTab'
 import CodeGraphExplorer from './components/CodeGraphExplorer'
 import CodePreviewDrawer from './components/CodePreviewDrawer'
 import IntentCorrectionFloater from './components/IntentCorrectionFloater'
-import ReVerifyProgressToast from './components/ReVerifyProgressToast'
 import AcademicResearchPage from './AcademicResearchPage'
 import AcademicStatsPage from './AcademicStatsPage'
 import NovelPage from './NovelPage'
@@ -927,8 +925,6 @@ function App() {
   const [messages, setMessages] = useState([])
   // S6: 意图纠正浮层状态
   const [intentFloater, setIntentFloater] = useState({ open: false, query: '', predicted: '' })
-  // 路线 B: re-verify 模式右下角 toast 开关 (命中"是否修复"语义 + 提交成功后置 true)
-  const [reVerifyToastEnabled, setReVerifyToastEnabled] = useState(false)
   const lastUserQueryRef = useRef('')
   // P0-4 + P3: 结构化恢复协议 — clarify/pause 恢复时携带 resumeContext + clarifyResponse。
   // P3 (2026-09-01): 由单对象改为先入先出队列，支持多个待处理澄清按到达顺序依次消费。
@@ -2930,14 +2926,6 @@ function App() {
         fetchSessions()
         // 阶段5: ERP 订单表单 — 收到 reply_context.formSpec 时弹窗
         tryOpenOrderFormModal(res.data)
-        // Agent-driven issue ops: 后端可能在本轮 chat 中执行了 <ISSUE_OP .../>
-        // (例如用户说"删除 issue 12, 13" / "把 22 标为已修复"), IssueStore 已被修改.
-        // 通知右栏立即刷新一次, 避免等 5s 自适应轮询.
-        if (typeof window !== 'undefined' && window.dispatchEvent) {
-          window.dispatchEvent(new CustomEvent('agent-issue-ops-applied', {
-            detail: { sessionId, source: 'chat' }
-          }))
-        }
       } else if (res.data.status === 'pause') {
         // Phase 4: HIGH 风险写操作暂停 — 解析 reply_context 中的 planPreview + clarifyQuestion
         let pauseCtx = null
@@ -3013,12 +3001,6 @@ function App() {
               return newMsgs
             })
             fetchSessions()
-            // plan execute 也可能产出 <ISSUE_OP .../> (e.g. "把 plan 里的 issue 全标为 in_progress")
-            if (typeof window !== 'undefined' && window.dispatchEvent) {
-              window.dispatchEvent(new CustomEvent('agent-issue-ops-applied', {
-                detail: { sessionId, source: 'plan-execute' }
-              }))
-            }
           } else {
             setMessages(prev => [...prev, { role: 'error', content: `Error: ${execRes.data.message}` }])
           }
@@ -3052,12 +3034,10 @@ function App() {
   //   3. 刷新 session 列表
   // 这样:
   //   - 聊天 UI 能看到完整的分析结论 (issue 列表 + 修复状态)
-  //   - plan 状态切到 executed, 右栏 IssuesSidePanel 会跟着收尾
-  //   - 避免"前端一轮停止"+ useIssueList 永久轮询
+  //   - plan 状态切到 executed
+  //   - 避免"前端一轮停止"
   //
-  // 路线 B: payload 现在是整条 /intent/correct 响应 (r.data),
-  // 含 re_verify 标志 (后端 isReVerifyQuestion 判定) + replay_result 子对象。
-  // 命中 re_verify=true 时挂起 ReVerifyProgressToast 轮询 progress。
+  // F14: re-verify toast 随 issues 面板下线 (payload.re_verify 标志不再消费)。
   const handleIntentCorrectResult = useCallback((payload) => {
     if (!payload) return
     // 1. 注入 replay_result.response 到聊天流 (方案 A 主体)
@@ -3084,12 +3064,6 @@ function App() {
         })
         fetchSessions()
       }
-    }
-    // 2. 路线 B: re-verify 模式 → 挂右下角 Toast 轮询 progress
-    // 注: 即便 replay 没产生 finalResponse (例如 isCodeIntent(corrected)=false 时不重放),
-    // 只要 re_verify=true 也要显示 toast, 让用户知道"系统在跑"。
-    if (payload.re_verify === true && sessionId) {
-      setReVerifyToastEnabled(true)
     }
   }, [normalizeMessage, fetchSessions, sessionId])
 
@@ -4647,66 +4621,6 @@ const handleDeleteSession = (id) => {
                     )}
                   </>
                 )}
-                {(sessions.find(s => s.id === sessionId)?.channel === 'code' || (!sessions.find(s => s.id === sessionId)?.channel && currentChannel === 'code')) && (
-                  <IssuesSidePanel
-                    sessionId={sessionId}
-                    workspaceDir={workspaceDir}
-                    onJumpToFile={(filePath, line) => {
-                      // 提示位置 + 打开代码文件（右侧滑出 Drawer 展示并定位到行）
-                      message.info(
-                        line ? `${filePath}:${line}` : (filePath || 'No file path'),
-                        2
-                      )
-                      openCodePreview(filePath, line, 'file')
-                    }}
-                    onViewGitDiff={(filePath) => {
-                      // 修复后查看真实 git diff（右侧滑出 Drawer 的 Git Diff 页）
-                      openCodePreview(filePath, 0, 'diff', '修复后的改动')
-                    }}
-                    onInjectAssistantMessage={(content) => {
-                      // Inject a synthetic assistant message containing
-                      // __CMD__ into the chat flow so the auto-execution
-                      // useEffect picks it up and continues the multi-round
-                      // __CMD__ → [COMMAND_RESULTS] interaction.
-                      const id = `fix-cmd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-                      setMessages(prev => [...prev, {
-                        id,
-                        role: 'assistant',
-                        content,
-                        createdAt: new Date().toISOString(),
-                        _isComplete: false
-                      }])
-                  }}
-                  onFixIssueMessageUpdated={() => {
-                    // The IssuesSidePanel just (a) inserted a
-                    // brand-new placeholder message row via
-                    // `createFixIssueMessage` (startFix just
-                    // returned successfully) OR (b) updated the
-                    // same row in place via
-                    // `updateFixIssueMessage` (driver reached
-                    // COMPLETED/FAILED). Either way the chat
-                    // history on the server has changed. The
-                    // chat UI does not poll messages on its own.
-                    // Re-fetch the session history so the user
-                    // sees the new / updated row.
-                    //
-                    // IMPORTANT: the cached history for this
-                    // session is stale (it predates the change),
-                    // so we MUST drop the cache entry before
-                    // calling loadSession — otherwise the
-                    // `if (cached) return` short-circuit in
-                    // loadSession will re-mount the old array
-                    // and the placeholder row never appears in
-                    // the chat flow. `instantSwitch=false`
-                    // preserves scroll position and avoids a
-                    // full-screen loading flash.
-                    if (sessionId) {
-                      sessionCacheRef.current.delete(sessionId)
-                      loadSession(sessionId, false)
-                    }
-                  }}
-                  />
-                )}
                 </>
               )
               return isMobile ? (
@@ -4715,7 +4629,7 @@ const handleDeleteSession = (id) => {
                   open={mobilePanelOpen}
                   onClose={() => setMobilePanelOpen(false)}
                   width="85%"
-                  title="Issues & Interactive"
+                  title="Interactive"
                   styles={{ body: { padding: 0, background: '#0a0a0a', overflowY: 'auto' }, header: { background: 'var(--ab-bg-1)', borderBottom: '1px solid var(--ab-line)' } }}
                 >
                   {rightPanelInner}
@@ -4761,20 +4675,7 @@ const handleDeleteSession = (id) => {
         onClose={() => setIntentFloater({ open: false, query: '', predicted: '', sessionId: '' })}
       />
 
-      {/* 路线 B: re-verify 模式进度 toast —— re_verify=true 时挂出, 轮询 progress */}
-      <ReVerifyProgressToast
-        sessionId={sessionId}
-        enabled={reVerifyToastEnabled}
-        onDone={(final) => {
-          // 收到 running=false 的最终 snapshot → 关闭 toast
-          // 此时后端已把核实结果写进 IssueStore, 右栏 issues 需要刷新
-          setReVerifyToastEnabled(false)
-          // 通知右栏 IssuesSidePanel 立即拉一次新数据 (避免等 5s 自动轮询)
-          if (typeof window !== 'undefined' && window.dispatchEvent) {
-            window.dispatchEvent(new CustomEvent('reverify-finished', { detail: final }))
-          }
-        }}
-      />
+      {/* F14: re-verify 进度 toast 与 issues 面板一并下线 */}
 
       {/* ── Workspace Directory Picker for Code Sessions ── */}
       <Modal

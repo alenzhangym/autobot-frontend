@@ -828,38 +828,10 @@ async function executeSingleCommand(cmd, workspaceDir, onLog, sessionId) {
       }
     }
     case 'issues': {
-      // S9: 拉取本会话已记录的 OPEN 状态 issue，按 severity 降序，取前 30 条，
-      // 渲染成 markdown 表格作为命令结果返回。后端把表格落到 cache service，
-      // 跨轮次由 buildReadContext 渲染为"【已知 Issue 列表】"段喂给 LLM。
-      try {
-        const targetSessionId = cmd.sessionId || sessionId
-        if (!targetSessionId) {
-          onLog?.('[AgentCMD] issues failed: no sessionId in cmd or call site\n')
-          return 'Error: cmd-issues requires sessionId'
-        }
-        const res = await api.get(`/code-analysis/${encodeURIComponent(targetSessionId)}/issues`)
-        const issues = (res.data?.issues || []).filter(i => (i.status || 'open') === 'open')
-        const rank = { HIGH: 0, MEDIUM: 1, LOW: 2 }
-        issues.sort((a, b) => (rank[a.severity] ?? 9) - (rank[b.severity] ?? 9))
-        const top = issues.slice(0, 30)
-        onLog?.(`[AgentCMD] issues ok ${top.length} open (of ${issues.length}) for session=${targetSessionId}\n`)
-        if (top.length === 0) {
-          return 'No open issues recorded for this session.'
-        }
-        const escape = (s) => String(s ?? '').replace(/\|/g, '\\|').replace(/\n/g, ' ').slice(0, 200)
-        const rows = top.map(i =>
-          `| ${escape(i.severity)} | ${escape(i.category)} | ${escape(i.filePath || '-')}${i.lineNumber ? ':' + i.lineNumber : ''} | ${escape(i.description)} |`
-        )
-        return [
-          '| severity | category | file:line | description |',
-          '| --- | --- | --- | --- |',
-          ...rows
-        ].join('\n')
-      } catch (e) {
-        const detail = e.response?.data?.error || e.message
-        onLog?.(`[AgentCMD] issues failed: ${detail}\n`)
-        return `Error fetching issues: ${detail}`
-      }
+      // F14: tracked-issue 面板/REST 已下线, 后端不再下发 cmd-issues;
+      // 防御性兜底 (旧会话残留 __CMD__ 命中时给明确文案而非报错)。
+      onLog?.('[AgentCMD] issues skipped: issue pipeline removed\n')
+      return 'Issue tracking pipeline has been retired; no issue list is available.'
     }
     case 'tree_sync': {
       try {

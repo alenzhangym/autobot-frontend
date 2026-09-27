@@ -8,7 +8,6 @@ import { RobotOutlined, UserOutlined, CopyOutlined, CheckOutlined, CloseOutlined
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { extractDataStoreIds, isValidDataStoreResponse, fetchMissingDataFromServer, injectDataStoreData, decodeHtmlEntities, cleanScriptSrc, wrapUiHtml, isHtmlContent, MarkdownContent, extractTrailingStateJson, stripAgentMarkers, extractAnalysisState, tryParseAnalysisResult, decodeStateStringList } from '../utils/helpers.jsx';
 import { formatAnalysisPhase, CodeAnalysisProgress } from '../hooks/useAnalysisProgress.jsx';
-import FixIssueCard from './FixIssueCard';
 import ReActStepper from './ReActStepper';
 
 const PRIORITY_COLOR = {
@@ -429,41 +428,7 @@ function MessageBubble({ msg, onCopy, onRegenerate, onExpand, onDelete, sessionI
     );
   }
 
-  // Fix-issue inline card. The backend inserts a placeholder
-  // message with meta.type="fix_issue" when the user clicks
-  // "开始修复" and overwrites the same row (meta.type=
-  // "fix_summary") once the driver reaches COMPLETED/FAILED.
-  // Render as a dedicated card so the placeholder ("正在修
-  // 复…") and the terminal verdict (file list + diff) look
-  // continuous as the row updates, instead of the user
-  // seeing two unrelated text blobs.
-  if (msg && typeof msg.meta === 'string'
-      && (msg.meta.includes('"fix_issue"') || msg.meta.includes('"fix_summary"'))) {
-    return (
-      <div data-msg-id={msg.id} data-msg-role={msg.role}
-        data-msg-meta-fix={msg.meta.includes('"fix_issue"') ? 'fix_issue' : 'fix_summary'}
-        style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
-        <Avatar icon={<RobotOutlined />} size={32} style={{ background: '#1677ff', flexShrink: 0 }} />
-        <div style={{ flex: 1, maxWidth: 'calc(100% - 50px)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-            <span style={{ color: '#888', fontSize: 12 }}>AutoBot</span>
-            {formatMessageTime(msg) && (
-              <span style={{ color: '#555', fontSize: 11 }}>{formatMessageTime(msg)}</span>
-            )}
-            <Tag color="purple" style={{ fontSize: 10 }}>Fix</Tag>
-            <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
-              {onDelete && msg.id && (
-                <Tooltip title="Delete">
-                  <Button type="text" icon={<DeleteOutlined />} size="small" onClick={onDelete} style={{ color: '#666' }} />
-                </Tooltip>
-              )}
-            </div>
-          </div>
-          <FixIssueCard msg={msg} sessionId={sessionId} />
-        </div>
-      </div>
-    );
-  }
+  // F14: fix_issue/fix_summary 内联卡随 issues 面板一并下线 (后端不再产出该类消息)
 
   if (uiContent) {
     const iframeDoc = injectedHtml || uiContent;
