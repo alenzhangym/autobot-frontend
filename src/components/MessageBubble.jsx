@@ -3,12 +3,14 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Light as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { Avatar, Button, Tooltip, Space, Tag, Collapse, Table } from 'antd';
+import { Avatar, Button, Tooltip, Space, Tag, Collapse, Table, Typography } from 'antd';
 import { RobotOutlined, UserOutlined, CopyOutlined, CheckOutlined, CloseOutlined, ReloadOutlined, ExpandAltOutlined, LoadingOutlined, ClockCircleOutlined, ApartmentOutlined, LinkOutlined, BranchesOutlined, NodeIndexOutlined, ShareAltOutlined, DeleteOutlined, AppstoreOutlined, ExclamationCircleOutlined, BulbOutlined } from '@ant-design/icons';
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { extractDataStoreIds, isValidDataStoreResponse, fetchMissingDataFromServer, injectDataStoreData, decodeHtmlEntities, cleanScriptSrc, wrapUiHtml, isHtmlContent, MarkdownContent, extractTrailingStateJson, stripAgentMarkers, extractAnalysisState, tryParseAnalysisResult, decodeStateStringList } from '../utils/helpers.jsx';
 import { formatAnalysisPhase, CodeAnalysisProgress } from '../hooks/useAnalysisProgress.jsx';
 import ReActStepper from './ReActStepper';
+
+const { Text } = Typography;
 
 const PRIORITY_COLOR = {
   P0: { color: '#ff4d4f', bg: 'rgba(255,77,79,0.10)' },
