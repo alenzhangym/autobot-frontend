@@ -1095,6 +1095,13 @@ async function executeSingleCommand(cmd, workspaceDir, onLog, sessionId) {
     case 'skill':
       // skill 文档由服务端 SkillService 就地加载, 前端无需拦截.
       return '(skill 文档由服务端加载)'
+    case 'plan_continue': {
+      // [F39⑥] 服务端"分析收口 → 写规划"之间的回合边界: 这条指令不需要本机做任何事,
+      // 立刻 ack 让后端在下一个 HTTP 往返里继续规划。刻意不加入 readActions/READ_ACTIONS,
+      // 以免被流式预派发; 后端每条指令都带唯一 id, 不会命中 streamedCmdResults 的 id 缓存。
+      onLog?.(`[AgentCMD] plan_continue ack id=${cmd.id || ''}\n`)
+      return '{"ack":true,"note":"已确认，请继续生成写方案"}'
+    }
     default:
       return `Unknown command: ${cmd.action}`
   }
