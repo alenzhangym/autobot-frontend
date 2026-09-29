@@ -959,6 +959,10 @@ function App() {
   // 保留 codeMode 状态变量是为未来可能的"高级用户强制锁定"留口子（UI 已不再暴露）。
   const [codeMode, setCodeMode] = useState('auto')  // 'auto' (默认) | 'plan' (强制只分析) | 'build' (强制实施)
   const [isLoading, setIsLoading] = useState(false)
+  // [F32⑤] 卡住看门狗: 后端在途期间长时间没有任何新消息/进度 → 提示用户并提供自救入口。
+  //   实证 (2026-09-29): 后端响应迟到 4m40s, 前端早已断开 → 命令从未执行 → 后端永久停在
+  //   "awaiting frontend command execution", 界面只剩一个转圈, 用户无从下手。
+  const [turnStuck, setTurnStuck] = useState(false)
   // [F18-4] 取消在途任务: 已发出取消请求、等后端收尾 (防重复点击, 也给用户明确反馈)
   const [isCancelling, setIsCancelling] = useState(false)
   const [workspaceDir, setWorkspaceDir] = useState('')
@@ -3210,6 +3214,85 @@ function App() {
     })
   }, [messages, workspaceDir])
 
+  // ── [F32⑤] 卡住看门狗 ──────────────────────────────────────────────
+  // 后端在途期间，只要消息列表 / 进度文案 / 会话状态有变化就视为"仍在推进"；
+  // 静默超过 STUCK_SILENT_MS 仍在 loading → 判定卡住并给自救入口。
+  const STUCK_SILENT_MS = 150_000
+  const turnActivityRef = useRef(Date.now())
+  useEffect(() => {
+    if (isLoading) {
+      turnActivityRef.current = Date.now()
+      setTurnStuck(false)
+      return
+    }
+    setTurnStuck(false)
+  }, [isLoading, messages.length, chatProgress, reactSessionState])
+
+  useEffect(() => {
+    if (!isLoading) return
+    const timer = setInterval(() => {
+      if (Date.now() - turnActivityRef.current >= STUCK_SILENT_MS) setTurnStuck(true)
+    }, 5_000)
+    return () => clearInterval(timer)
+  }, [isLoading])
+
+  /**
+   * [F32⑤] 重新执行最后一条 assistant 消息里的待执行命令（绕过自动执行的去重表）。
+   * 用于"响应迟到/命令没被消费"后的人工补救 —— 后端正在等 COMMAND_RESULTS 时，重发即可续上。
+   */
+  const rerunPendingCommands = async () => {
+    let target = null
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i]
+      if (m.role === 'assistant' && typeof m.content === 'string' && m.content.includes('__CMD__{') && m.id) {
+        target = m
+        break
+      }
+      if (m.role === 'user') break
+    }
+    if (!target) {
+      message.info('没有找到待执行命令')
+      return
+    }
+    const wsDir = workspaceDir || getDefaultWorkspaceDir()
+    startLiveLogSession(true)
+    try {
+      const results = await executeAgentCommands(target.content, wsDir, (line) => appendLiveLog(line), sessionId)
+      if (!results) {
+        message.warning('命令没有产出结果（可能已执行过或工作区不可用）')
+        return
+      }
+      const key = `${sessionId}:${target.id}:${target.content}`
+      processedCmdMsgs.current.delete(key)
+      processingCmdMsgs.current.delete(key)
+      await sendCommandResultsSilently(results, target.id)
+      setTurnStuck(false)
+      turnActivityRef.current = Date.now()
+      message.success('已重新提交命令执行结果')
+    } catch (e) {
+      message.error('重新执行命令失败: ' + (e?.message || e))
+    }
+  }
+
+  /** [F32⑤] 重试本轮：重发最后一条用户消息（后端已放弃/中断时用它重新起一轮）。 */
+  const retryLastTurn = () => {
+    let lastUser = ''
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i]
+      if (m.role === 'user' && typeof m.content === 'string' && m.content.trim()) {
+        lastUser = m.content
+        break
+      }
+    }
+    if (!lastUser) {
+      message.info('没有可重试的用户消息')
+      return
+    }
+    setTurnStuck(false)
+    turnActivityRef.current = Date.now()
+    sendMessage(lastUser)
+  }
+
   useEffect(() => {
     if (!liveLogActive) return
     const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null
@@ -4193,7 +4276,7 @@ const handleDeleteSession = (id) => {
                                   {reactSessionState && <Tag color={color} style={{ marginLeft: 8, fontSize: 11 }}>{label}</Tag>}
                                 </Text>
                                 {running && (
-                                  <Space style={{ color: '#888' }}>
+                                  <Space style={{ color: '#888' }} wrap>
                                     <LoadingOutlined spin />
                                     <Text style={{ color: '#888', fontSize: 13 }}>{chatProgress || 'Thinking...'}</Text>
                                     {/* [F18-4] 取消入口 (与输入框右侧的停止按钮同一动作) */}
@@ -4203,6 +4286,19 @@ const handleDeleteSession = (id) => {
                                       {isCancelling ? '取消中…' : '取消'}
                                     </Button>
                                   </Space>
+                                )}
+                                {running && turnStuck && (
+                                  <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 4,
+                                    background: '#2a2216', border: '1px solid #4a3a1e' }}>
+                                    <Text style={{ color: '#d8a657', fontSize: 12, display: 'block' }}>
+                                      已 2 分半没有新进展 —— 后端可能已中断，或正在等本机执行命令（响应迟到时命令会漏执行）。
+                                    </Text>
+                                    <Space style={{ marginTop: 6 }} wrap>
+                                      <Button size="small" onClick={rerunPendingCommands}>重新执行待办命令</Button>
+                                      <Button size="small" onClick={retryLastTurn}>重试本轮</Button>
+                                      <Button size="small" type="link" onClick={() => setTurnStuck(false)}>忽略</Button>
+                                    </Space>
+                                  </div>
                                 )}
                               </div>
                             </div>
