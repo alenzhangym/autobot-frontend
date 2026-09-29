@@ -953,6 +953,9 @@ function App() {
   // request_id → { resolve, timer }；结果经 react.chat.result 事件回表 resolve。
   const reactWsReadyRef = useRef(false)
   const pendingChatResultsRef = useRef(new Map())
+  // [F39④] 本轮是否收到过后端进度 (react.progress)。声明在 WS 回调之前: onProgress 要写它。
+  const progressFlowingRef = useRef(false)
+  const turnStartRef = useRef(Date.now())
   // P4: 自动上下文投影开关 — 默认开启，用户可在 header 中关闭
   const [contextProjectionEnabled, setContextProjectionEnabled] = useState(true)
   // A 方案：code 会话不再需要 'plan'/'build' 二选 toggle；'auto' 表示由后端自动推断。
@@ -2078,7 +2081,12 @@ function App() {
       entry.resolve(result)
     },
     onStateChanged: (_sid, _prev, current) => setReactSessionState(current || ''),
-    onProgress: (_sid, _stage, text) => setChatProgress(text || ''),
+    onProgress: (_sid, _stage, text) => {
+      // [F39④] 后端报过进度 = 这一轮还活着。看门狗据此换判据 (见下方 STUCK_*),
+      //   否则一个"慢但在推进"的 12 分钟回合会被判成卡住, 而它给的自救按钮只会造成重复工作。
+      progressFlowingRef.current = true
+      setChatProgress(text || '')
+    },
     onSessionCreated: (_sid) => { setReactSessionState(''); fetchSessions() },
     onSessionTerminated: (_sid, terminalState) => {
       setReactSessionState(terminalState || '')
@@ -3216,8 +3224,13 @@ function App() {
 
   // ── [F32⑤] 卡住看门狗 ──────────────────────────────────────────────
   // 后端在途期间，只要消息列表 / 进度文案 / 会话状态有变化就视为"仍在推进"；
-  // 静默超过 STUCK_SILENT_MS 仍在 loading → 判定卡住并给自救入口。
+  // 静默超过阈值仍在 loading → 判定卡住并给自救入口。
+  // [F39④] 阈值分两档: 后端本轮**报过进度**(react.progress)时, 静默只是"慢"—— 一个回灌请求
+  //   可以合法地串行跑完分析收口 + 写计划探索若干轮 + 重修 (2026-09-29 实测 12.5 分钟)。
+  //   这时弹"重跑命令/重试本轮"是有害的: 服务端还在算, 重复提交只会造成第二次同样的工作与半写现场。
+  //   一档给自救入口, 一档只如实告知"还在推进 + 最新一步是什么"。
   const STUCK_SILENT_MS = 150_000
+  const STUCK_SILENT_WITH_PROGRESS_MS = 420_000
   const turnActivityRef = useRef(Date.now())
   useEffect(() => {
     if (isLoading) {
@@ -3228,10 +3241,19 @@ function App() {
     setTurnStuck(false)
   }, [isLoading, messages.length, chatProgress, reactSessionState])
 
+  // 每一轮重新开始计量: 本轮有没有报过进度、以及这一轮的起点 (面板里要显示"已等多久")
+  useEffect(() => {
+    if (!isLoading) return
+    progressFlowingRef.current = false
+    turnStartRef.current = Date.now()
+  }, [isLoading])
+
   useEffect(() => {
     if (!isLoading) return
     const timer = setInterval(() => {
-      if (Date.now() - turnActivityRef.current >= STUCK_SILENT_MS) setTurnStuck(true)
+      const limit = progressFlowingRef.current
+        ? STUCK_SILENT_WITH_PROGRESS_MS : STUCK_SILENT_MS
+      if (Date.now() - turnActivityRef.current >= limit) setTurnStuck(true)
     }, 5_000)
     return () => clearInterval(timer)
   }, [isLoading])
@@ -4287,11 +4309,24 @@ const handleDeleteSession = (id) => {
                                     </Button>
                                   </Space>
                                 )}
-                                {running && turnStuck && (
+                                {running && turnStuck && progressFlowingRef.current && (
+                                  // [F39④] 后端报过进度 → 只如实告知"还在推进 + 最新一步", 不给重复提交的入口
+                                  <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 4,
+                                    background: '#161d24', border: '1px solid #1e3241' }}>
+                                    <Text style={{ color: '#6da8c9', fontSize: 12, display: 'block' }}>
+                                      已等 {Math.max(1, Math.round((Date.now() - turnStartRef.current) / 60000))} 分钟没有回话，但后端仍在报进度
+                                      （最新：{chatProgress || '进行中'}）。这一轮还在跑，重发只会重复已完成的读取与写入。
+                                    </Text>
+                                    <Space style={{ marginTop: 6 }} wrap>
+                                      <Button size="small" type="link" onClick={() => setTurnStuck(false)}>知道了</Button>
+                                    </Space>
+                                  </div>
+                                )}
+                                {running && turnStuck && !progressFlowingRef.current && (
                                   <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 4,
                                     background: '#2a2216', border: '1px solid #4a3a1e' }}>
                                     <Text style={{ color: '#d8a657', fontSize: 12, display: 'block' }}>
-                                      已 2 分半没有新进展 —— 后端可能已中断，或正在等本机执行命令（响应迟到时命令会漏执行）。
+                                      已 2 分半没有新进展，也没收到任何进度 —— 后端可能已中断，或正在等本机执行命令（响应迟到时命令会漏执行）。
                                     </Text>
                                     <Space style={{ marginTop: 6 }} wrap>
                                       <Button size="small" onClick={rerunPendingCommands}>重新执行待办命令</Button>
