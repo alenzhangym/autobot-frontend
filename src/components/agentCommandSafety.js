@@ -277,6 +277,48 @@ export const EXPLICIT_SAFE_SHAPES = [
 ]
 
 /**
+ * F47·C4: 这条命令行的**动词**是不是"装东西"？是 → 返回一句给人看的理由，
+ * `shouldRequireConfirmation` 据此必弹确认。
+ *
+ * <p>为什么要在前端再判一遍：过去"install 必确认"这个承诺完全吊在后端
+ * 记得写 `requires_confirmation=true` 上。F47 之后 `__CMD__` 的 JSON 由模型自己写，
+ * 漏一个字段就静默变成"免确认" —— 而装依赖/装工具链改的是环境，git 撤不掉。
+ * 与上面 envcheck 那组同一立场：前端这一遍是纯防御性复核，不看后端怎么标。</p>
+ *
+ * <p>只认**动词明着是装**的形态（`npm ci` / `pip install` / `winget install` …）；
+ * 判不准即返回 null，交给后面的 forbidden/pattern 扫描兜，而不是把每条 npm 命令
+ * 都拦下来确认一轮 —— 确认疲劳会让用户闭着眼睛点"允许"。</p>
+ */
+export function installShapeReason(command, args) {
+  const top = String(command || '').trim().toLowerCase().replace(/\.cmd$/, '').replace(/^\.?\//, '')
+  const argv = (Array.isArray(args) ? args : []).map(String)
+  const verbIdx = argv.findIndex(a => /^(ci|install|add|get|link|go-offline)$/i.test(a.trim()))
+  if (verbIdx < 0) {
+    // mvn 的 goal 是塞在单个 token 里的 (mvn -B "dependency:go-offline")
+    return argv.some(a => /dependency:go-offline/i.test(a))
+      ? '预下载 Maven 依赖 (dependency:go-offline): 写 ~/.m2、出网, git 撤不掉'
+      : null
+  }
+  const verb = argv[verbIdx].trim().toLowerCase()
+  if (verb === 'go-offline') return '预下载依赖: 写本机缓存、出网, git 撤不掉'
+  const PKG_MANAGERS = ['npm', 'pnpm', 'yarn', 'bun']
+  const PY = ['pip', 'pip3', 'uv', 'poetry', 'pipenv']
+  const SYS = ['winget', 'choco', 'scoop', 'brew', 'apt', 'apt-get', 'dnf', 'yum', 'pacman', 'port', 'sdk']
+  const LANG = ['cargo', 'go']
+  const buildish = ['mvn', 'mvnw', 'gradle', 'gradlew']
+  if (PKG_MANAGERS.includes(top)) return `安装依赖 (${top} ${verb}): 改 node_modules/lockfile、出网, git 撤不掉`
+  if (PY.includes(top)) return `安装依赖 (${top} ${verb}): 改本机 Python 环境、出网, git 撤不掉`
+  if ((top === 'python' || top === 'python3' || top === 'py')
+      && argv[0] === '-m' && (argv[1] === 'pip' || argv[1] === 'uv')) {
+    return '安装依赖 (python -m pip install): 改本机 Python 环境、出网, git 撤不掉'
+  }
+  if (SYS.includes(top)) return `安装工具链 (${top} ${verb}): 改的是这台机器而非仓库, git 撤不掉`
+  if (LANG.includes(top)) return `安装 (${top} ${verb}): 改本机依赖缓存、出网, git 撤不掉`
+  if (buildish.includes(top) && verb === 'install') return '构建并安装产物 (mvn/gradle install): 写本机仓库缓存, git 撤不掉'
+  return null
+}
+
+/**
  * Why install / mkdir / cp are NOT in {@link EXPLICIT_SAFE_SHAPES}.
  *
  * This whitelist means "run with NO confirmation". Deliberately:
@@ -372,6 +414,17 @@ export function shouldRequireConfirmation(cmd, options = {}) {
       }
     }
   }
+
+  // 0c) F47·C4 install shapes — **always** prompt, even if the backend forgot
+  // the flag. Rationale for keeping installs out of EXPLICIT_SAFE_SHAPES is
+  // stated above: install mutates the environment and hits the network, and
+  // git cannot undo it. That guarantee used to rest entirely on the backend
+  // emitting `requires_confirmation=true`; now the LLM writes the __CMD__
+  // body itself, so a forgotten/omitted flag must not silently become
+  // "no confirmation". Defense-in-depth, same posture as the env-check
+  // shapes above (which re-validate argv even when the flag is flipped).
+  const installReason = installShapeReason(command, args)
+  if (installReason) return installReason
 
   // 1) Backend signal
   if (cmd.requires_confirmation === true) {

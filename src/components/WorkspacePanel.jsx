@@ -483,7 +483,7 @@ export function buildCommandResultsMeta(sessionId, extra) {
 // executeAgentCommands path reuses them to avoid double execution.
 
 /** Shared set of read-only action types (same as in executeAgentCommands). */
-const READ_ACTIONS = new Set(['read', 'scan', 'tree_sync', 'ls', 'diff', 'search'])
+const READ_ACTIONS = new Set(['read', 'scan', 'tree_sync', 'ls', 'diff', 'search', 'env_probe'])
 
 /** Shared cache: commandId → result string. Populated by the stream dispatcher. */
 export const streamedCmdResults = new Map()
@@ -688,7 +688,7 @@ export async function executeAgentCommands(text, workspaceDir, onLog, sessionId)
   // Read-only commands (read, scan, tree_sync, ls) can execute in parallel.
   // Mutating commands (write, run, delete, restore_bak, delete_bak) run
   // sequentially after reads complete to preserve ordering.
-  const readActions = new Set(['read', 'scan', 'tree_sync', 'ls', 'diff', 'search'])
+  const readActions = new Set(['read', 'scan', 'tree_sync', 'ls', 'diff', 'search', 'env_probe'])
   const readCmds = commands.filter(c => readActions.has(c.action))
   const mutCmds = commands.filter(c => !readActions.has(c.action))
 
@@ -1101,6 +1101,143 @@ async function executeSingleCommand(cmd, workspaceDir, onLog, sessionId) {
         return `Error removing backup ${cmd.path}: ${detail}`
       }
     }
+    case 'env_probe': {
+      // F47① 反向通道环境探测: 事实全部在**文件所在的那台主机**上现取。
+      // 这是跨机部署下唯一够得到用户机器的路径 —— 后端 LocalAgentClient 打的是它自己的
+      // localhost:3000, 服务端部署时探到的是后端那台机器的环境, 与用户工作区无关。
+      // 只读: 除 sidecar 的 --version 子进程外不起进程、不写文件。
+      const tools = (Array.isArray(cmd.tools) ? cmd.tools : [])
+        .map(t => String(t).trim()).filter(Boolean).slice(0, 8)
+      const dirs = (Array.isArray(cmd.dirs) ? cmd.dirs : [])
+        .map(d => String(d).trim()).filter(Boolean).slice(0, 12)
+      const rootRel = String(cmd.module_root || cmd.moduleRoot || '')
+        .replace(/[\\/]+$/, '')
+      const baseDir = (!rootRel || rootRel === '.' || rootRel === './')
+        ? workspaceDir
+        : resolveCommandPath(workspaceDir, rootRel)
+      const out = { probe: 'env_probe', platform: '未探测', arch: '', tools: [], dirs: [], degraded: [] }
+      if (rootRel && rootRel !== '.' && rootRel !== './') out.module_root = rootRel
+      if (tools.length) {
+        try {
+          const res = await localApi.post('/api/local/workspace/probe', { tools })
+          out.platform = res.data?.platform || '未探测'
+          out.arch = res.data?.arch || ''
+          for (const t of res.data?.tools || []) {
+            out.tools.push(t.found
+              ? { name: t.key, version: String(t.version || '').slice(0, 40) }
+              : { name: t.key, found: false })
+          }
+        } catch (e) {
+          const detail = e.response?.data?.error || e.message
+          onLog?.(`[AgentCMD] env_probe tools failed: ${detail}\n`)
+          out.degraded.push(`tools: ${detail}`)
+        }
+      }
+      // 依赖目录 (node_modules / .venv / venv) 走 validate —— 它只认**目录**, 所以字段刻意叫
+      // dirs 而不是 paths: 拿它探文件会得到"路径不是有效目录", 那是个假阴性。
+      for (const d of dirs) {
+        try {
+          const res = await localApi.post('/api/local/workspace/validate', {
+            path: resolveCommandPath(baseDir, d)
+          })
+          out.dirs.push({ rel: d, present: res.data?.valid === true })
+        } catch (e) {
+          // 探测失败 ≠ 目录不存在 —— 写 null 让后端渲染成"未探测"
+          const detail = e.response?.data?.error || e.message
+          onLog?.(`[AgentCMD] env_probe dir failed ${d}: ${detail}\n`)
+          out.dirs.push({ rel: d, present: null, error: detail })
+        }
+      }
+      if (!tools.length && !dirs.length) {
+        out.degraded.push('tools 与 dirs 都为空: 什么都没探(请至少给一个)')
+      }
+      onLog?.(`[AgentCMD] env_probe ok tools=${tools.length} dirs=${dirs.length} platform=${out.platform}\n`)
+      return JSON.stringify(out)
+    }
+    case 'proc_start': {
+      // F47·C3 运行项目: 起**长命**进程 (dev server / 起服务后验端口)。
+      // 刻意不复用 action=run —— /workspace/run 是 execFile + 硬超时 (上限 600s), dev server
+      // 会被自己的超时杀掉, 杀掉之后什么都没剩下。这里走 sidecar 的后台任务面, 进程活在任务表里
+      // 可查 (proc_status) 可停 (proc_stop)。
+      // 权限不自建第二套: 先让 commandAnalyzer 判 —— 它说 ask 就弹确认, 用户点头才带 confirmed 重试;
+      // 它说 deny 就是 deny, 不重试 (sidecar 才是这条命令能不能跑的权威)。
+      const command = String(cmd.command || '').trim()
+      if (!command) return '{"proc":"error","error":"proc_start 需要 command"}'
+      const body = {
+        command,
+        cwd: cmd.cwd ? resolveCommandPath(workspaceDir, cmd.cwd) : workspaceDir,
+        background: true,
+        timeoutMs: Math.min(600_000, Math.max(1000, (Number(cmd.timeout_seconds) || 600) * 1000)),
+      }
+      const askReason = '起进程会在你的机器上常驻一个进程, 且不受 git 撤销影响。'
+      let res
+      try {
+        res = await localApi.post('/api/local/bash', body)
+      } catch (e) {
+        const detail = e.response?.data?.error || e.message
+        onLog?.(`[AgentCMD] proc_start denied/failed: ${detail}\n`)
+        return `{"proc":"error","error":${JSON.stringify(detail)}}`
+      }
+      if (res.data?.status === 'needs_confirmation') {
+        const pseudo = { ...cmd, action: 'run', command, args: [] }
+        const approved = await confirmRunCommand(pseudo, askReason, onLog)
+        if (!approved) {
+          onLog?.(`[AgentCMD] proc_start REJECTED by user\n`)
+          return '{"proc":"rejected","error":"用户拒绝起这个进程"}'
+        }
+        res = await localApi.post('/api/local/bash', { ...body, confirmed: true })
+      }
+      const taskId = res.data?.taskId || ''
+      onLog?.(`[AgentCMD] proc_start ok task=${taskId} status=${res.data?.status}\n`)
+      return JSON.stringify({
+        proc: 'started', task_id: taskId, status: res.data?.status || 'unknown',
+        command, cwd: body.cwd,
+        note: '进程活着不等于跑对了 —— 用 proc_status 看 stdout 与端口',
+      })
+    }
+    case 'proc_status': {
+      // 只读回看: 有 task_id 看单条, 没有就列本机当前所有后台任务 (模型据此避免起第二个 dev server)。
+      // ⚠ sidecar 的 task 快照里带着整个 **env 对象** (里面有 token) —— 这里必须逐字段挑着回传,
+      //   绝不能把 t 整体塞进 JSON: 回传原文是要进模型上下文的。
+      const id = String(cmd.task_id || '').trim()
+      try {
+        if (id) {
+          const res = await localApi.get(`/api/local/bash/tasks/${encodeURIComponent(id)}`)
+          const t = res.data?.task
+          if (!t) return '{"proc":"status","task_id":' + JSON.stringify(id) + ',"status":"未找到"}'
+          const upSec = t.startedAt ? Math.max(0, Math.round((Date.now() - t.startedAt) / 1000)) : null
+          return JSON.stringify({
+            proc: 'status', task_id: id, status: t.status, command: t.command, cwd: t.cwd,
+            uptime_sec: upSec, exit_code: typeof t.exitCode === 'number' ? t.exitCode : null,
+            duration_ms: typeof t.durationMs === 'number' ? t.durationMs : null,
+            stdout_tail: tailLines(t.stdout, 40),
+            stderr_tail: tailLines(t.stderr, 20),
+          })
+        }
+        const res = await localApi.get('/api/local/bash/tasks')
+        const tasks = (res.data?.tasks || []).map(t => ({
+          task_id: t.id, status: t.status, command: String(t.command || '').slice(0, 120), cwd: t.cwd,
+        }))
+        return JSON.stringify({ proc: 'list', count: tasks.length, tasks })
+      } catch (e) {
+        const detail = e.response?.data?.error || e.message
+        onLog?.(`[AgentCMD] proc_status failed: ${detail}\n`)
+        // 取不到 ≠ 没在跑: 写"未探测"语义, 不许模型据此宣布进程已死
+        return `{"proc":"status","status":"未探测","error":${JSON.stringify(detail)}}`
+      }
+    }
+    case 'proc_stop': {
+      const id = String(cmd.task_id || '').trim()
+      if (!id) return '{"proc":"error","error":"proc_stop 需要 task_id"}'
+      try {
+        const res = await localApi.delete(`/api/local/bash/tasks/${encodeURIComponent(id)}`)
+        onLog?.(`[AgentCMD] proc_stop task=${id} killed=${res.data?.killed}\n`)
+        return JSON.stringify({ proc: 'stopped', task_id: id, killed: res.data?.killed === true })
+      } catch (e) {
+        const detail = e.response?.data?.error || e.message
+        return `{"proc":"error","task_id":${JSON.stringify(id)},"error":${JSON.stringify(detail)}}`
+      }
+    }
     case 'graph':
     case 'graph_search':
     case 'graph_callchain':
@@ -1214,6 +1351,14 @@ function confirmRunCommand(cmd, reason, onLog) {
       onCancel: () => finish(false),
     })
   })
+}
+
+/** 取尾部 n 行 (后台任务的 stdout 可以涨到 MB 级, 头部往往是 npm install 的进度条)。 */
+function tailLines(text, n) {
+  const s = typeof text === 'string' ? text : String(text || '')
+  if (!s) return ''
+  const lines = s.split('\n')
+  return lines.slice(Math.max(0, lines.length - (n || 40))).join('\n')
 }
 
 function formatRunOutput(output, exitCode, timedOut) {
