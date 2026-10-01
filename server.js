@@ -11,6 +11,7 @@ import http from 'http';
 import https from 'https';
 import dotenv from 'dotenv';
 import { runInSandbox } from './src/runtime/sandboxExecutor.js';
+import { searchWorkspace } from './src/runtime/workspaceSearch.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1133,9 +1134,33 @@ app.post('/api/local/workspace/scan', (req, res) => {
     }
 });
 
+// ── 本地工作区搜索 (F37② 搜索发现通道) ────────────────────────────────
+// 与 scan/read 同族: 后端在工作区**不在本机**时(它看不到磁盘)通过这里让本地代理搜。
+// 对应 agent 输出的两条指令:
+//   __FIND__:<glob>            → { mode: 'glob', pattern }
+//   __GREP__:<正则>[|<glob>]   → { mode: 'grep', pattern, globs: [glob] }
+// **只回路径**(grep 只回 path:line, 绝不回内容行), 命中数/文件数/深度/单文件大小全部有界。
+// 非法正则回 400(后端据此回一条"换写法"的提示), 不做静默改写。
+app.post('/api/local/workspace/search', (req, res) => {
+    const { path: rootPath, mode = 'glob', pattern = '', globs = [], maxResults } = req.body || {};
+    if (!rootPath) return res.status(400).json({ error: 'path is required' });
+    if (!fs.existsSync(rootPath)) return res.status(500).json({ error: 'path not found: ' + rootPath });
+    try {
+        const found = searchWorkspace(rootPath, { mode, pattern, globs, maxResults });
+        console.log(`[Local Agent] search ${found.mode}: pattern=${JSON.stringify(found.pattern)}`
+            + ` paths=${found.paths.length} hits=${found.hits.length} files=${found.files_scanned}`
+            + `${found.truncated ? ' (truncated)' : ''}`);
+        res.json(found);
+    } catch (e) {
+        if (e instanceof SyntaxError) {
+            return res.status(400).json({ error: 'invalid regex (JS RegExp): ' + e.message });
+        }
+        res.status(500).json({ error: e.message });
+    }
+});
+
 app.post('/api/local/workspace/tree', (req, res) => {
     const { path: rootPath, maxDepth = 12, maxEntries = 30000, extensions, excludeDirs } = req.body;
-    if (!rootPath) return res.status(400).json({ error: 'path is required' });
 
     try {
         const scanned = scanWorkspaceEntries(rootPath, {

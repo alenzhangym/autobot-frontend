@@ -483,7 +483,7 @@ export function buildCommandResultsMeta(sessionId, extra) {
 // executeAgentCommands path reuses them to avoid double execution.
 
 /** Shared set of read-only action types (same as in executeAgentCommands). */
-const READ_ACTIONS = new Set(['read', 'scan', 'tree_sync', 'ls', 'diff'])
+const READ_ACTIONS = new Set(['read', 'scan', 'tree_sync', 'ls', 'diff', 'search'])
 
 /** Shared cache: commandId → result string. Populated by the stream dispatcher. */
 export const streamedCmdResults = new Map()
@@ -688,7 +688,7 @@ export async function executeAgentCommands(text, workspaceDir, onLog, sessionId)
   // Read-only commands (read, scan, tree_sync, ls) can execute in parallel.
   // Mutating commands (write, run, delete, restore_bak, delete_bak) run
   // sequentially after reads complete to preserve ordering.
-  const readActions = new Set(['read', 'scan', 'tree_sync', 'ls', 'diff'])
+  const readActions = new Set(['read', 'scan', 'tree_sync', 'ls', 'diff', 'search'])
   const readCmds = commands.filter(c => readActions.has(c.action))
   const mutCmds = commands.filter(c => !readActions.has(c.action))
 
@@ -825,6 +825,33 @@ async function executeSingleCommand(cmd, workspaceDir, onLog, sessionId) {
         const path = resolveCommandPath(workspaceDir, cmd.path || workspaceDir)
         onLog?.(`[AgentCMD] scan failed ${path}: ${detail}\n`)
         return `Error scanning ${path}: ${detail}`
+      }
+    }
+    case 'search': {
+      // [F37②] 搜索发现通道 —— 只回路径不回内容 (与 scan 同族, 但由 glob/正则驱动)。
+      // 后端在工作区可见时自己就地搜; 这一支是"后端把搜索下发给本地代理"的同族入口。
+      try {
+        const path = resolveCommandPath(workspaceDir, cmd.path || workspaceDir)
+        const res = await localApi.post('/api/local/workspace/search', {
+          path,
+          mode: cmd.mode === 'grep' ? 'grep' : 'glob',
+          pattern: cmd.pattern || '',
+          globs: Array.isArray(cmd.globs) ? cmd.globs : (cmd.globs ? [cmd.globs] : []),
+          maxResults: cmd.maxResults || 50,
+        })
+        const paths = res.data.paths || []
+        const hits = res.data.hits || []
+        onLog?.(`[AgentCMD] search(${res.data.mode}) ok ${paths.length} path(s)`
+          + `${hits.length ? `, ${hits.length} hit line(s)` : ''} from ${path}\n`)
+        if (hits.length) {
+          // 只把 path:line 交回后端 —— 内容由随后的 read 提供
+          return hits.map(h => `${h.path}:${h.line}`).join('\n')
+        }
+        return paths.join('\n')
+      } catch (e) {
+        const detail = e.response?.data?.error || e.message
+        onLog?.(`[AgentCMD] search failed ${cmd.path || workspaceDir}: ${detail}\n`)
+        return `Error searching ${cmd.path || workspaceDir}: ${detail}`
       }
     }
     case 'issues': {
