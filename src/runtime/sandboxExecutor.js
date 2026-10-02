@@ -21,6 +21,7 @@
 //     容器内可用的可执行名（node/python/git 等）。
 // ─────────────────────────────────────────────────────────────────────────────
 import { execFile } from 'child_process'
+import { resolveLauncher } from './winLauncher.js'
 
 const DOCKER_BIN = process.env.AUTOBOT_SANDBOX_DOCKER_BIN || 'docker'
 const DEFAULT_MAX_BUFFER = 2 * 1024 * 1024
@@ -43,10 +44,21 @@ export function runInSandbox(opts, sandbox) {
  * 本地直连执行（默认路径, 与既有 server.js 行为一致）。
  */
 export function runLocal({ command, args = [], cwd, timeoutMs = 60_000, maxBuffer = DEFAULT_MAX_BUFFER }) {
+  // [L1] Windows 上 .cmd/.bat shim（npm/pnpm/yarn/mvnw…）经 execFile(shell:false) 必抛 EINVAL，
+  //   裸名抛 ENOENT；这里统一过一次启动器解析。幂等：上游若已解析成 cmd.exe，再解析仍是 direct。
+  const L = resolveLauncher(command, { cwd })
+  if (L.mode === 'refuse') {
+    return Promise.resolve({ output: '[拒绝执行] ' + L.reason, exitCode: 126, timedOut: false })
+  }
+  if (L.notFound) {
+    return Promise.resolve({ output: L.reason, exitCode: 127, timedOut: false })
+  }
+  const file = L.file
+  const argv = [...L.args, ...args]
   return new Promise((resolve, reject) => {
     let child
     try {
-      child = execFile(command, args, {
+      child = execFile(file, argv, {
         cwd: cwd || process.cwd(),
         timeout: timeoutMs,
         maxBuffer,

@@ -1,6 +1,6 @@
 import express from 'express';
 import cors from 'cors';
-import { exec, execSync, execFile, execFileSync } from 'child_process';
+import { exec, execSync, execFile } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import open from 'open';
@@ -12,6 +12,9 @@ import https from 'https';
 import dotenv from 'dotenv';
 import { runInSandbox } from './src/runtime/sandboxExecutor.js';
 import { searchWorkspace } from './src/runtime/workspaceSearch.js';
+import { resolveLauncher } from './src/runtime/winLauncher.js';
+// [L4] cwd 越界守卫（判据/三态/理由见模块顶部注释）：run 与 /api/local/bash 共用同一份实现。
+import { cwdGuard } from './src/runtime/cwdGuard.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1098,7 +1101,13 @@ app.post('/api/local/workspace/git_diff', (req, res) => {
         }
 
         console.log(`[Local Agent] git_diff: git ${gitArgs.join(' ')} (repo=${repoRoot})`);
-        execFile('git', gitArgs, {
+        // [L1] git 在 Windows 上通常是 .exe，但也存在 .cmd 包装（Git for Windows 的部分安装形态）。
+        //   统一经 resolveLauncher，避免"能跑的机器能跑、不能跑的机器无声失败"这种分叉。
+        const gitLauncher = resolveLauncher('git', { cwd: repoRoot });
+        if (gitLauncher.mode === 'refuse' || gitLauncher.notFound) {
+            return res.json({ diff: '', repoRoot, exit_code: 127, stderr: String(gitLauncher.reason || 'git 不可用') });
+        }
+        execFile(gitLauncher.file, [...gitLauncher.args, ...gitArgs], {
             cwd: repoRoot,
             timeout: 30_000,
             maxBuffer: 8 * 1024 * 1024,
@@ -1263,31 +1272,83 @@ app.post('/api/local/workspace/save', (req, res) => {
 });
 
 // ── Toolchain probe ────────────────────────────────────────────────
+//
+// [L2] 三态：`found:true`（探到了版本）/ `found:false`（where.exe 明确说没有）/
+//   `found:null`（判不了：含 shell 元字符被拒、where 跑不起来、起得来但 --version 不认、
+//   超时、EINVAL/EPERM）。
+//   为什么必须三态：这条端点的输出会进模型的"这台机器有什么"事实表；把"判不了"写成"没有"
+//   会让上游去买一个已经装好的东西（F47 文档里"本机实测 mvn found:false"就是这么来的假阴性，
+//   同一时刻后端自己把 mvn 跑起来了）。取不到 ≠ 没有。
 
-app.post('/api/local/workspace/probe', (req, res) => {
+/** Windows 上裸命令/`.cmd` shim 的实测与三条纪律见 src/runtime/winLauncher.js 顶部。 */
+function probeOneTool(name, budgetMs) {
+    return new Promise((resolve) => {
+        const L = resolveLauncher(name);
+        if (L.mode === 'refuse') return resolve({ key: name, found: null, reason: L.reason });
+        if (L.notFound) return resolve({ key: name, found: false, reason: L.reason });
+
+        const budget = Math.max(800, Math.min(5000, Number(budgetMs) || 5000));
+        const variants = [['--version'], ['version']];
+        let idx = 0;
+        let settled = false;
+        const done = (r) => { if (!settled) { settled = true; resolve(r); } };
+
+        const attempt = () => {
+            if (idx >= variants.length) {
+                return done({
+                    key: name, found: null,
+                    reason: `命令已解析（${L.resolved || name}）但两种版本写法都起不来（判不了）`,
+                });
+            }
+            const argv = [...L.args, ...variants[idx++]];
+            let finished = false;
+            const finish = (r) => { if (!finished) { finished = true; done(r); } };
+            const via = L.mode === 'cmd' ? 'cmd' : 'direct';
+            try {
+                const child = execFile(L.file, argv, {
+                    timeout: budget, encoding: 'utf-8', windowsHide: true, maxBuffer: 256 * 1024,
+                }, (error, stdout, stderr) => {
+                    const text = String(stdout || '').trim();
+                    if (text) {
+                        return finish({
+                            key: name, found: true, via,
+                            version: text.split(/\r?\n/)[0].trim().slice(0, 80),
+                        });
+                    }
+                    // 有 stderr / 数字退出码 = 命令**真的跑起来了**（只是不认这个参数）→ 换写法再试
+                    const numericExit = error && typeof error.code === 'number';
+                    if ((stderr && String(stderr).trim()) || numericExit) return attempt();
+                    const isTimeout = !!(error && (error.killed || error.signal === 'SIGTERM'));
+                    const code = error && error.code ? String(error.code) : 'unknown';
+                    finish({
+                        key: name, found: null, via,
+                        reason: isTimeout ? '探测超时（判不了）' : `无法执行: ${code}（判不了）`,
+                    });
+                });
+                // 双写防护：execFile 的 spawn 失败会同时触发回调与 'error'（run 端点曾因此打死进程）
+                child.on('error', (err) => {
+                    const code = err && err.code ? String(err.code) : 'unknown';
+                    finish({ key: name, found: null, via, reason: `无法执行: ${code}（判不了）` });
+                });
+            } catch (e) {
+                const code = e && e.code ? String(e.code) : 'unknown';
+                finish({ key: name, found: null, via, reason: `spawn 拒绝: ${code}（判不了）` });
+            }
+        };
+        attempt();
+    });
+}
+
+app.post('/api/local/workspace/probe', async (req, res) => {
     const { tools = [] } = req.body || {};
     if (!Array.isArray(tools)) return res.status(400).json({ error: 'tools must be an array' });
-    const isWin = os.platform() === 'win32';
-    const results = tools.map(tool => {
-        const name = String(tool).trim();
-        if (!name) return { key: name, found: false };
-        const tryVersion = (bin, args) => {
-            try {
-                const stdout = execFileSync(bin, args, { timeout: 5000, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] });
-                const version = (stdout || '').split('\n')[0].trim();
-                return { key: name, found: true, version };
-            } catch { return null; }
-        };
-        let result = tryVersion(name, ['--version']) || tryVersion(name, ['version']);
-        // On Windows, try extension variants for script commands (mvnw → mvnw.cmd, etc.)
-        if (!result && isWin && !name.includes('.')) {
-            for (const ext of ['.cmd', '.bat', '.exe']) {
-                result = tryVersion(name + ext, ['--version']) || tryVersion(name + ext, ['version']);
-                if (result) break;
-            }
-        }
-        return result || { key: name, found: false };
-    });
+    const names = tools.map((t) => String(t).trim()).filter(Boolean).slice(0, 16);
+    // 并发 + 总预算：每个工具都是一次 --version 子进程（mvn 冷启动 1-3s），串行 8 个最坏 24s+。
+    // 预算内回不来的写 found:null，绝不写 false。
+    const TOTAL_BUDGET_MS = 12_000;
+    const startedAt = Date.now();
+    const results = await Promise.all(names.map((name) =>
+        probeOneTool(name, TOTAL_BUDGET_MS - (Date.now() - startedAt))));
     res.json({ platform: os.platform(), arch: os.arch(), tools: results });
 });
 
@@ -1466,6 +1527,7 @@ app.post('/api/local/workspace/run', (req, res) => {
         command,
         args = [],
         cwd,
+        workspace_root,
         code,
         extension,
         timeoutSeconds = DEFAULT_RUN_TIMEOUT_SECONDS,
@@ -1478,6 +1540,12 @@ app.post('/api/local/workspace/run', (req, res) => {
 
     const timeout = Math.max(1, Math.min(MAX_RUN_TIMEOUT_SECONDS, Number(timeoutSeconds) || DEFAULT_RUN_TIMEOUT_SECONDS));
     const resolvedCwd = cwd ? path.resolve(cwd) : process.cwd();
+
+    // [L4] 越界 cwd 先判掉：这条命令真会在那个目录跑起来，不能只靠"目录存在"当安全凭据。
+    const cwdOut = cwdGuard(resolvedCwd, workspace_root);
+    if (cwdOut) {
+        return res.json({ output: '[拒绝执行] ' + cwdOut, exit_code: 126, timed_out: false, duration_ms: 0 });
+    }
 
     // 目录不存在时 execFile 只会报 `spawn <cmd> ENOENT` —— 那句话把"命令没装"和"你给的目录不对"
     // 混成一条, 调用方（模型）看不出该改哪一个。这里先判掉, 并仍按 200 + output 回：
@@ -1513,18 +1581,25 @@ app.post('/api/local/workspace/run', (req, res) => {
 
     console.log(`[Local Agent] run: ${command} ${effectiveArgs.map((a) => /\s/.test(a) ? `"${a}"` : a).join(' ')} (cwd=${resolvedCwd}, timeout=${timeout}s)`);
 
-    // On Windows, resolve script commands without extension to their .cmd/.bat variant.
-    // execFile with shell:false cannot execute bare batch files directly.
-    let resolvedCommand = command;
-    if (os.platform() === 'win32' && !path.extname(command)) {
-        for (const ext of ['.cmd', '.bat', '.exe']) {
-            const candidate = path.join(resolvedCwd, command + ext);
-            if (fs.existsSync(candidate)) {
-                resolvedCommand = command + ext;
-                break;
-            }
-        }
+    // [L1] Windows: 裸命令 / `.cmd` shim 统一经 resolveLauncher 转成"真的能 spawn 的形态"。
+    //   旧逻辑只在 resolvedCwd **内**找 .cmd/.bat —— PATH 上的 mvn/npm/pnpm/yarn（全是 .cmd shim）
+    //   一个都找不到，仍旧走 execFile(shell:false) → ENOENT/EINVAL，每一条装依赖/起进程都必然 [exit=1]。
+    //   实测与三条设计纪律见 src/runtime/winLauncher.js 顶部。
+    const launcher = resolveLauncher(command, { cwd: resolvedCwd });
+    if (launcher.mode === 'refuse') {
+        cleanupTemp();
+        return res.json({ output: '[拒绝执行] ' + launcher.reason, exit_code: 126, timed_out: false, duration_ms: 0 });
     }
+    if (launcher.notFound) {
+        cleanupTemp();
+        return res.json({ output: launcher.reason, exit_code: 127, timed_out: false, duration_ms: 0 });
+    }
+    if (launcher.mode === 'cmd') {
+        console.log(`[Local Agent] launcher: ${command} → ${launcher.file} ${launcher.args.join(' ')}`
+            + ` (resolved=${launcher.resolved || 'PATH'}, cwd=${resolvedCwd})`);
+    }
+    const launchFile = launcher.file;
+    const launchArgs = [...launcher.args, ...effectiveArgs];
 
     // Special-case: skip npm test if there's no "test" script (saves the
     // user a useless failed build).
@@ -1570,8 +1645,8 @@ app.post('/api/local/workspace/run', (req, res) => {
         // P2-7: 沙箱 OS 级强制（可选, 默认关闭）— 命令在预创建容器内执行。
         // 走 sandboxExecutor 统一入口, 本地/容器双路径由开关分发; 默认关闭时行为与现状一致。
         runInSandbox({
-            command: resolvedCommand,
-            args: effectiveArgs,
+            command: launchFile,
+            args: launchArgs,
             cwd: resolvedCwd,
             timeoutMs: timeout * 1000,
             hostTempFile: tempFile,
@@ -1582,7 +1657,7 @@ app.post('/api/local/workspace/run', (req, res) => {
                 finishRun('sandbox run failed: ' + err.message, 1, false);
             });
     } else {
-        const child = execFile(resolvedCommand, effectiveArgs, {
+        const child = execFile(launchFile, launchArgs, {
             cwd: resolvedCwd,
             timeout: timeout * 1000,
             maxBuffer: MAX_RUN_OUTPUT_BYTES,
@@ -1649,6 +1724,7 @@ app.post('/api/local/bash', async (req, res) => {
         shellId,
         command,
         cwd,
+        workspace_root,
         env,
         timeoutMs = 60_000,
         // Phase 2 (C-7): the frontend's permission dialog sets this to
@@ -1672,6 +1748,13 @@ app.post('/api/local/bash', async (req, res) => {
     }
     if (typeof timeoutMs !== 'number' || timeoutMs < 1000 || timeoutMs > 600_000) {
         return res.status(400).json({ status: 'error', error: 'timeoutMs must be 1000..600000' });
+    }
+
+    // [L4] cwd 越界守卫（判据与理由见 /workspace/run 上方的 cwdGuard 注释）。
+    //   proc_start（F47·C3）走的就是这条端点 —— 一个**常驻**进程在越界目录起来，比一次性的 run 更难收拾。
+    const bashCwdOut = cwdGuard(typeof cwd === 'string' && cwd ? cwd : process.cwd(), workspace_root);
+    if (bashCwdOut) {
+        return res.status(403).json({ status: 'denied', reason: bashCwdOut });
     }
 
     // Phase 2 (C-5+C-7): run the AST-style analyzer. It evaluates each
