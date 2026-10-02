@@ -4,6 +4,7 @@ import { FolderOpenOutlined, FileOutlined, ReloadOutlined, SaveOutlined, EditOut
 import api, { getBackendHost, getLocalAgentBaseUrl } from '../auth'
 import axios from 'axios'
 import { shouldRequireConfirmation, formatCommandSummary, addTrustedPattern, patternFromCommand } from './agentCommandSafety'
+import { unsupportedActionPayload } from '../utils/unsupportedAction'
 import { extractTrailingStateJson, extractImplStateBlock } from '../utils/helpers.jsx'
 import WorkspaceTopologySearch from './WorkspaceTopologySearch'
 
@@ -1269,7 +1270,10 @@ async function executeSingleCommand(cmd, workspaceDir, onLog, sessionId) {
       return '{"ack":true,"note":"已确认，请继续生成写方案"}'
     }
     default:
-      return `Unknown command: ${cmd.action}`
+      // [F47 修复轮] 走到这里 = 这个包里没有该动作的 case（后端新加的动作 + 浏览器加载旧包）。
+      // 回结构化标记而不是自由文本：后端据此一步收场，不会把"前端不认识"当成"环境还没探明白"
+      // 再空转一档复探（2026-10-02 一轮为此烧掉 4 次往返，一个环境事实都没拿到）。
+      return unsupportedActionPayload(cmd.action)
   }
 }
 

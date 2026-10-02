@@ -1479,6 +1479,18 @@ app.post('/api/local/workspace/run', (req, res) => {
     const timeout = Math.max(1, Math.min(MAX_RUN_TIMEOUT_SECONDS, Number(timeoutSeconds) || DEFAULT_RUN_TIMEOUT_SECONDS));
     const resolvedCwd = cwd ? path.resolve(cwd) : process.cwd();
 
+    // 目录不存在时 execFile 只会报 `spawn <cmd> ENOENT` —— 那句话把"命令没装"和"你给的目录不对"
+    // 混成一条, 调用方（模型）看不出该改哪一个。这里先判掉, 并仍按 200 + output 回：
+    // 非 2xx 会被前端 axios 吞成 "Request failed with status code 400", 原因就丢了。
+    if (!fs.existsSync(resolvedCwd) || !fs.statSync(resolvedCwd).isDirectory()) {
+        return res.json({
+            output: 'cwd 不存在或不是目录: ' + resolvedCwd + '（工作区相对目录要先按工作区解析成绝对路径）',
+            exit_code: 1,
+            timed_out: false,
+            duration_ms: 0,
+        });
+    }
+
     // If the backend wants to run an inline code blob (the legacy Python /
     // Node / Java case), write it to a temp file inside the cwd and pass
     // the path in args. We deliberately do NOT shell-eval the code.
@@ -1534,9 +1546,15 @@ app.post('/api/local/workspace/run', (req, res) => {
     }
 
     const startedAt = Date.now();
+    // 一个请求只许写一次响应：execFile 遇到 spawn 失败（cwd 不存在 / 命令找不到）时，回调和
+    // child.on('error') 都会跑，两处各 res.json() 会抛 ERR_HTTP_HEADERS_SENT —— 未捕获 = 整个
+    // sidecar 进程死掉（2026-10-02 实测：一条 npm ci 打错目录就把用户机代理弄死了一晚上）。
+    let responded = false;
 
     function finishRun(combined, exitCode, timedOut) {
         cleanupTemp();
+        if (responded) return;
+        responded = true;
         const elapsed = Date.now() - startedAt;
         // Keep tail of stdout+stderr
         const tail = trimToTail(combined, tailLines);
@@ -1560,8 +1578,8 @@ app.post('/api/local/workspace/run', (req, res) => {
         }, SANDBOX)
             .then((r) => finishRun(r.output, r.exitCode, r.timedOut))
             .catch((err) => {
-                cleanupTemp();
-                res.status(500).json({ error: 'sandbox run failed: ' + err.message });
+                // 沙箱失败也是一条"有退出码的输出"，不要另写一次响应（同上：双写会打死进程）
+                finishRun('sandbox run failed: ' + err.message, 1, false);
             });
     } else {
         const child = execFile(resolvedCommand, effectiveArgs, {
@@ -1573,12 +1591,14 @@ app.post('/api/local/workspace/run', (req, res) => {
         }, (error, stdout, stderr) => {
             const timedOut = error && (error.killed || error.signal === 'SIGTERM') && error.code === null;
             const exitCode = error && typeof error.code === 'number' ? error.code : (error ? 1 : 0);
-            finishRun((stdout || '') + (stderr || ''), exitCode, timedOut);
+            const spawnFail = error && !stdout && !stderr && typeof error.code !== 'number';
+            // spawn 失败时 stdout/stderr 全空，只回 exit=1 等于让调用方无从下手 —— 把原因写进输出
+            const text = spawnFail ? String(error.message || error) : (stdout || '') + (stderr || '');
+            finishRun(text, exitCode, timedOut);
         });
 
         child.on('error', (err) => {
-            cleanupTemp();
-            res.status(500).json({ error: err.message });
+            finishRun(String((err && err.message) || err), 1, false);
         });
     }
 

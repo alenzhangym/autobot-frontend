@@ -5,6 +5,7 @@ import { spawn } from 'child_process';
 import { EventEmitter } from 'events';
 import os from 'os';
 import { parseAllCmdBlocks } from '../utils/cmdBlocks.js'; // S2: 共享解析器
+import { unsupportedActionPayload } from '../utils/unsupportedAction.js';
 
 /**
  * AnalysisClient drives the autobot backend's chat endpoint to perform a
@@ -208,7 +209,8 @@ export class AnalysisClient extends EventEmitter {
         case 'skill':
           return '(skill 文档由服务端加载)';
         default:
-          return `Unknown command: ${cmd.action}`;
+          // 与 WorkspacePanel 同一个协议：回结构化"本机包不认识这个动作"，后端一步收场。
+          return unsupportedActionPayload(cmd.action);
       }
     } catch (e) {
       return `Error executing ${cmd.action}: ${e.message}`;
