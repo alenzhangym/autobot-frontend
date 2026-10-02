@@ -5,6 +5,7 @@
  */
 
 import api, { getLocalAgentBaseUrl } from '../auth';
+import { FRONTEND_CAPABILITIES } from '../runtime/frontendCapabilities';
 
 const CACHE_KEY = 'autobot_toolchain';
 const CACHE_TTL = 3600_000; // 1 hour
@@ -68,7 +69,9 @@ function pathSep() {
 }
 
 export function getClientInfo(probeResult) {
-  const tools = (probeResult?.tools || []).filter(t => t.found).reduce((acc, t) => {
+  // [L2] 三态: found:true 才进 tools; found:false(确实没有) 与 found:null/undefined(判不了)
+  //   都不进 —— 但两者的区别由 features 之外的 field 保留在 probeResult 里, 后端另有读取。
+  const tools = (probeResult?.tools || []).filter(t => t.found === true).reduce((acc, t) => {
     acc[t.key] = t.version || true;
     return acc;
   }, {});
@@ -78,6 +81,9 @@ export function getClientInfo(probeResult) {
     arch: typeof navigator !== 'undefined' ? navigator.platform || '' : '',
     path_sep: pathSep(),
     tools,
+    // [L0] 能力握手: 后端据此在**发命令前**判断这只手在不在。
+    //   旧前端包没有这一段 → 后端不会发出它必然回 Unknown command 的命令。
+    features: [...FRONTEND_CAPABILITIES],
   };
 }
 

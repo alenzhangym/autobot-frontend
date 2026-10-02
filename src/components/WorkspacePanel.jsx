@@ -1059,6 +1059,9 @@ async function executeSingleCommand(cmd, workspaceDir, onLog, sessionId) {
           // cwd 是工作区相对目录（后端下发的是 "admin" 这种），必须按工作区解析成绝对路径；
           // 原样透传会让 sidecar 的 path.resolve() 相对它自己的进程 cwd 解析 → monorepo 子模块装到错目录。
           cwd: cmd.cwd ? resolveCommandPath(workspaceDir, cmd.cwd) : workspaceDir,
+          // [L4] 带上工作区根，让 sidecar 能判 cwd 有没有越界（只给 cwd 时它无从判"相对谁"）。
+          //   越界 → sidecar 直接拒绝执行（fail-closed），不给"在错误目录真跑一次命令"的机会。
+          workspace_root: workspaceDir,
           code: cmd.code,
           extension: cmd.extension,
           timeoutSeconds: cmd.timeout_seconds || 60,
@@ -1125,10 +1128,19 @@ async function executeSingleCommand(cmd, workspaceDir, onLog, sessionId) {
           const res = await localApi.post('/api/local/workspace/probe', { tools })
           out.platform = res.data?.platform || '未探测'
           out.arch = res.data?.arch || ''
+          // [L2] 三态逐字透传: found:true 有版本 / found:false 确实没有 / found:null 判不了。
+          //   旧写法 `t.found ? … : {found:false}` 把"判不了"写成"没有" —— 后端据此会去装一个
+          //   已经装好的东西（2026-10-02: mvn 明明能跑，probe 却回 found:false）。
           for (const t of res.data?.tools || []) {
-            out.tools.push(t.found
-              ? { name: t.key, version: String(t.version || '').slice(0, 40) }
-              : { name: t.key, found: false })
+            if (t.found === true) {
+              out.tools.push({ name: t.key, version: String(t.version || '').slice(0, 40) })
+            } else if (t.found === false) {
+              out.tools.push({ name: t.key, found: false })
+            } else {
+              const why = String(t.reason || '探测失败（判不了）')
+              out.tools.push({ name: t.key, found: null, reason: why })
+              out.degraded.push(`tool ${t.key}: ${why}`)
+            }
           }
         } catch (e) {
           const detail = e.response?.data?.error || e.message
@@ -1169,6 +1181,8 @@ async function executeSingleCommand(cmd, workspaceDir, onLog, sessionId) {
       const body = {
         command,
         cwd: cmd.cwd ? resolveCommandPath(workspaceDir, cmd.cwd) : workspaceDir,
+        // [L4] 同 run：带工作区根，让 sidecar 的 cwd 越界守卫能判（proc_start 起的是常驻进程）。
+        workspace_root: workspaceDir,
         background: true,
         timeoutMs: Math.min(600_000, Math.max(1000, (Number(cmd.timeout_seconds) || 600) * 1000)),
       }
