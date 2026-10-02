@@ -1055,7 +1055,9 @@ async function executeSingleCommand(cmd, workspaceDir, onLog, sessionId) {
         const res = await localApi.post('/api/local/workspace/run', {
           command: cmd.command,
           args: Array.isArray(cmd.args) ? cmd.args : [],
-          cwd: cmd.cwd || workspaceDir,
+          // cwd 是工作区相对目录（后端下发的是 "admin" 这种），必须按工作区解析成绝对路径；
+          // 原样透传会让 sidecar 的 path.resolve() 相对它自己的进程 cwd 解析 → monorepo 子模块装到错目录。
+          cwd: cmd.cwd ? resolveCommandPath(workspaceDir, cmd.cwd) : workspaceDir,
           code: cmd.code,
           extension: cmd.extension,
           timeoutSeconds: cmd.timeout_seconds || 60,
