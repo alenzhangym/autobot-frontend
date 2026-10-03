@@ -5,6 +5,7 @@ import api, { getBackendHost, getLocalAgentBaseUrl } from '../auth'
 import axios from 'axios'
 import { shouldRequireConfirmation, formatCommandSummary, addTrustedPattern, patternFromCommand } from './agentCommandSafety'
 import { unsupportedActionPayload } from '../utils/unsupportedAction'
+import { clampWaitMs } from '../runtime/procVerifyWait.js'
 import { extractTrailingStateJson, extractImplStateBlock } from '../utils/helpers.jsx'
 import WorkspaceTopologySearch from './WorkspaceTopologySearch'
 
@@ -1216,6 +1217,11 @@ async function executeSingleCommand(cmd, workspaceDir, onLog, sessionId) {
       // 只读回看: 有 task_id 看单条, 没有就列本机当前所有后台任务 (模型据此避免起第二个 dev server)。
       // ⚠ sidecar 的 task 快照里带着整个 **env 对象** (里面有 token) —— 这里必须逐字段挑着回传,
       //   绝不能把 t 整体塞进 JSON: 回传原文是要进模型上下文的。
+      // [B·ii] wait_ms = 后端请我"等这么久再回答"。一次冷启动 (mvn 编译 + Spring 上下文) 要几十秒,
+      //   立刻回看只能拿到一份空 stdout (2026-10-03 实证: 三轮回看共 4.1 秒, 进程第 5.8 秒才报编译失败)。
+      //   等待放在本机这一侧: 服务端不 sleep, 就不占 worker 线程。上限 60s, 非法值按 0。
+      const waitMs = clampWaitMs(cmd.wait_ms)
+      if (waitMs > 0) await new Promise(resolve => setTimeout(resolve, waitMs))
       const id = String(cmd.task_id || '').trim()
       try {
         if (id) {
