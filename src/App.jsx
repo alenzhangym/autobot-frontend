@@ -3343,6 +3343,56 @@ function App() {
     }
   }, [messages.length])
 
+  // [F49⑤] 把"这条响应在等人确认/澄清"落成 UI。卡片只存在于一次 HTTP 响应里，而响应可能从
+  // 任何一条通道回来：用户发消息（postChatPayload）或端侧静默回传命令结果（sendCommandResultsSilently）。
+  // 真机 2026-10-04 14:44:55 实证：F47⑤ 环境准备收场后，写计划卡正是在**命令回传那一条**的响应里
+  // 到达（后端 status=pause + reply_context + qid 俱全），而那条通道当时只认 success/plan_generated，
+  // 于是卡被当成"非成功返回"丢在地上，会话从此挂在 WAITING_CONFIRMATION。
+  const openCardFromResponse = (data) => {
+    const st = data?.status
+    if (st !== 'pause' && st !== 'clarify') return false
+    let ctx = null
+    try {
+      ctx = data.reply_context ? JSON.parse(data.reply_context) : null
+    } catch (e) {
+      // P2-2: 解析失败给用户可见降级提示, 不再静默
+      message.warning(st === 'pause' ? '收到暂停确认但上下文解析失败，请按文本提示回复'
+        : '收到澄清请求但上下文解析失败，请按文本提示回复')
+    }
+    const text = typeof data.response === 'string' ? data.response : ''
+    // 命令块是给端侧执行的载荷，不是给人看的正文：漏进确认轮时不进聊天流（后端 ⑤ 那扇门开着时
+    // 交付的已是卡片文案，这里是双保险）
+    if (text && !text.includes('__CMD__{')) {
+      setMessages(prev => [...prev, normalizeMessage({ id: nextMsgId(), role: 'assistant', content: text })])
+    }
+    if (st === 'pause') {
+      setPendingPause({
+        preview: ctx?.planPreview || null,
+        clarifyQuestion: ctx?.clarifyQuestion || null,
+        partyQuestion: ctx?.partyQuestion || null,
+        reason: text || '⚠️ 高风险操作需要确认',
+        sessionId,
+        answerTo: ctx?.answer_to || null,
+      })
+    } else {
+      const cq = ctx?.clarifyQuestion || null
+      if (cq) {
+        setPendingClarify({ clarifyQuestion: cq, sessionId, answerTo: ctx?.answer_to || null })
+      } else {
+        // 无结构化 ClarifyQuestion → 通用 MISSING_SLOT 兜底，保证用户始终有输入入口
+        setPendingClarify({
+          clarifyQuestion: {
+            clarifyType: 'MISSING_SLOT',
+            blockingSlot: 'user_goal',
+            question: text || '需求信息不够明确，请补充更多细节',
+          },
+          sessionId,
+        })
+      }
+    }
+    return true
+  }
+
   /**
    * Send command results directly to backend without creating a user message.
    * Updates the target assistant message in place with the new response.
@@ -3417,6 +3467,18 @@ function App() {
           failureReason = e?.message || '计划执行请求失败。'
           appendLiveLog(`[CodeAnalysis] /chat/execute 异常: ${failureReason}\n`)
         }
+      } else if (res.data.status === 'pause' || res.data.status === 'clarify') {
+        // [F49⑤] 这一条通道以前没有 pause/clarify 分支 → 确认卡在这里被无声丢弃（见上面那处注释的实证）。
+        appendLiveLog(`[CodeAnalysis] /chat 返回 ${res.data.status}：本轮在等用户${res.data.status === 'pause' ? '确认' : '补充'}，弹出卡片\n`)
+        openCardFromResponse(res.data)
+        if (silentResponseVersionRef.current.get(targetMsgId) !== nextVersion) {
+          appendLiveLog('[CodeAnalysis] 检测到更晚的静默回传，忽略当前旧响应\n')
+          return
+        }
+        setMessages(prev => prev.map(m =>
+          m.id === targetMsgId ? { ...m, _isComplete: true } : m
+        ))
+        return
       } else {
         failureReason = res.data?.message || res.data?.error || '后端未返回可执行结果。'
         appendLiveLog(`[CodeAnalysis] /chat 非成功返回: ${failureReason}\n`)
