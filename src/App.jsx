@@ -928,10 +928,12 @@ function App() {
   const lastUserQueryRef = useRef('')
   // P0-4 + P3: 结构化恢复协议 — clarify/pause 恢复时携带 resumeContext + clarifyResponse。
   // P3 (2026-09-01): 由单对象改为先入先出队列，支持多个待处理澄清按到达顺序依次消费。
-  const pendingResumeRef = useRef([])  // List<ClarificationRequest> = [{resumeContext, clarifyResponse}]
+  const pendingResumeRef = useRef([])  // List<ClarificationRequest> = [{resumeContext, clarifyResponse, answerTo}]
   // P3: 入队一个澄清响应（每次弹窗 resolve/cancel 时 enqueue，发送时 dequeue 队头）。
-  const enqueueClarification = (resumeContext, clarifyResponse) => {
-    pendingResumeRef.current.push({ resumeContext, clarifyResponse })
+  // [F48③/3.2] answerTo = 这张卡的 qid（后端发卡时写进 reply_context 顶层）。带着它，后端就知道
+  // 这条回话答的是**哪一问**，不再靠"会话状态标量 + 确认词表"猜；没有它（旧卡/WS 推的卡）就按今天的路径走。
+  const enqueueClarification = (resumeContext, clarifyResponse, answerTo) => {
+    pendingResumeRef.current.push({ resumeContext, clarifyResponse, answerTo: answerTo || null })
   }
   // P3: 出队队头；队列为空返回 null。
   const dequeueClarification = () => (
@@ -2898,6 +2900,8 @@ function App() {
       if (pending) {
         payload.resume_context = pending.resumeContext
         payload.clarify_response = pending.clarifyResponse
+        // [F48③/3.2] 这条回话答的是哪一问（卡片自带的名牌）。没名牌 = 后端按今天的路径判。
+        if (pending.answerTo) payload.answer_to = pending.answerTo
       }
       // P4 (2026-09-01): 澄清策略配置 — 用户开启「下发」时才附加 clarify_strategy（后端按需消费）
       const clarifyStrategy = getClarifyStrategy()
@@ -2987,7 +2991,8 @@ function App() {
         // 先把暂停原因作为普通消息展示
         setMessages(prev => [...prev, normalizeMessage({ id: nextMsgId(), role: 'assistant', content: res.data.response || '⚠️ 高风险操作需要确认' })])
         // 弹出结构化确认 UI
-        setPendingPause({ preview, clarifyQuestion, partyQuestion, reason: res.data.response, sessionId })
+        setPendingPause({ preview, clarifyQuestion, partyQuestion, reason: res.data.response, sessionId,
+          answerTo: pauseCtx?.answer_to || null })
       } else if (res.data.status === 'clarify') {
         // Phase 4: 结构化澄清 — 解析 reply_context 中的 clarifyQuestion
         let clarifyCtx = null
@@ -3001,7 +3006,7 @@ function App() {
         if (clarifyQuestion) {
           // 有结构化 ClarifyQuestion → 弹出结构化澄清 UI
           setMessages(prev => [...prev, normalizeMessage({ id: nextMsgId(), role: 'assistant', content: res.data.response || clarifyQuestion.question || '请补充信息' })])
-          setPendingClarify({ clarifyQuestion, sessionId })
+          setPendingClarify({ clarifyQuestion, sessionId, answerTo: clarifyCtx?.answer_to || null })
         } else {
           // 无结构化 ClarifyQuestion → 构造通用 MISSING_SLOT 澄清弹窗兜底（2026-09-05），
           // 保证用户始终有输入入口（否则纯文本展示无输入框 → 澄清后无法推进/会话卡死）。
@@ -4664,7 +4669,7 @@ const handleDeleteSession = (id) => {
                         setPendingClarify(null)
                         // P0-4 + P3: 结构化恢复协议 — 入队澄清响应（多澄清依序处理）
                         if (replyText) {
-                          enqueueClarification(resumeContext, clarifyResponse)
+                          enqueueClarification(resumeContext, clarifyResponse, pendingClarify.answerTo)
                           // 直接发送, 不走 quick action 拼装
                           setInput(replyText)
                           // 用 setTimeout 等状态更新后自动发送
@@ -4699,13 +4704,13 @@ const handleDeleteSession = (id) => {
                         loading={clarifyLoading}
                         onConfirmReply={async (replyText, clarifyResponse) => {
                           setPendingPause(null)
-                          enqueueClarification(pendingPause.clarifyQuestion?.resumeContext || null, clarifyResponse)
+                          enqueueClarification(pendingPause.clarifyQuestion?.resumeContext || null, clarifyResponse, pendingPause.answerTo)
                           setInput(replyText)
                           setTimeout(() => { sendMessage(replyText) }, 0)
                         }}
                         onCancelReply={async () => {
                           setPendingPause(null)
-                          enqueueClarification(pendingPause.clarifyQuestion?.resumeContext || null, { confirmed: false })
+                          enqueueClarification(pendingPause.clarifyQuestion?.resumeContext || null, { confirmed: false }, pendingPause.answerTo)
                           setInput('取消')
                           setTimeout(() => { sendMessage('取消') }, 0)
                         }}
@@ -4725,7 +4730,7 @@ const handleDeleteSession = (id) => {
                             const resumeContext = pendingPause.clarifyQuestion?.resumeContext || null
                             const clarifyResponse = { confirmed: false }
                             setPendingPause(null)
-                            enqueueClarification(resumeContext, clarifyResponse)
+                            enqueueClarification(resumeContext, clarifyResponse, pendingPause.answerTo)
                             setInput(replyText)
                             setTimeout(() => { sendMessage(replyText) }, 0)
                           } finally {
@@ -4748,7 +4753,7 @@ const handleDeleteSession = (id) => {
                               const resumeContext = pendingPause.clarifyQuestion?.resumeContext || null
                               const clarifyResponse = { confirmed: true, editedParams: hasEdits ? editedParams : null }
                               setPendingPause(null)
-                              enqueueClarification(resumeContext, clarifyResponse)
+                              enqueueClarification(resumeContext, clarifyResponse, pendingPause.answerTo)
                               setInput(hasEdits ? '确认' : replyText)
                               setTimeout(() => { sendMessage(replyText) }, 0)
                             } finally {
@@ -4762,7 +4767,7 @@ const handleDeleteSession = (id) => {
                               const resumeContext = pendingPause.clarifyQuestion?.resumeContext || null
                               const clarifyResponse = { confirmed: false }
                               setPendingPause(null)
-                              enqueueClarification(resumeContext, clarifyResponse)
+                              enqueueClarification(resumeContext, clarifyResponse, pendingPause.answerTo)
                               setInput(replyText)
                               setTimeout(() => { sendMessage(replyText) }, 0)
                             } finally {
@@ -4795,7 +4800,7 @@ const handleDeleteSession = (id) => {
                               ? { confirmed: false, verdict: 'revise', feedback: result.feedback || result.text }
                               : { confirmed: !!result.confirmed }
                             setPendingPause(null)
-                            enqueueClarification(resumeContext, clarifyResponse)
+                            enqueueClarification(resumeContext, clarifyResponse, pendingPause.answerTo)
                             setInput(replyText)
                             setTimeout(() => {
                               sendMessage(replyText)
