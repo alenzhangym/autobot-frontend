@@ -1228,7 +1228,14 @@ async function executeSingleCommand(cmd, workspaceDir, onLog, sessionId) {
           const res = await localApi.get(`/api/local/bash/tasks/${encodeURIComponent(id)}`)
           const t = res.data?.task
           if (!t) return '{"proc":"status","task_id":' + JSON.stringify(id) + ',"status":"未找到"}'
-          const upSec = t.startedAt ? Math.max(0, Math.round((Date.now() - t.startedAt) / 1000)) : null
+          // [F64③] uptime 只对**还活着**的任务按 now 算。taskRegistry 的终态是
+          //   success/error/timeout/killed（status==='running' 才是活着），旧写法对已退出的任务
+          //   仍按 now-startedAt 递增 —— 2026-10-06 22:18 那轮 mvn 第 8.3 秒就退了
+          //   （duration_ms 恒为 8274），uptime_sec 却一路 21→42→63→84 地涨，
+          //   于是"进程还在启动中"这个信念是被这份假增长喂着的（它还进了后端的快照指纹）。
+          const alive = t.status === 'running'
+          const endMs = alive ? Date.now() : (t.endedAt ?? (t.startedAt + (t.durationMs ?? 0)))
+          const upSec = t.startedAt ? Math.max(0, Math.round((endMs - t.startedAt) / 1000)) : null
           return JSON.stringify({
             proc: 'status', task_id: id, status: t.status, command: t.command, cwd: t.cwd,
             uptime_sec: upSec, exit_code: typeof t.exitCode === 'number' ? t.exitCode : null,
