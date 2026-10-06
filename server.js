@@ -1522,6 +1522,43 @@ const MAX_RUN_OUTPUT_BYTES = 2 * 1024 * 1024; // 2MB
 const MAX_RUN_TIMEOUT_SECONDS = 600;
 const DEFAULT_RUN_TIMEOUT_SECONDS = 60;
 
+/**
+ * [F63①] 命令输出的字符集。
+ *
+ * Windows 中文控制台（javac/mvn/cmd 内建）写出的字节是 GBK(cp936)，而 execFile 默认按
+ * UTF-8 解 —— 非法序列变成 U+FFFD，**信息当场销毁**，后端再怎么解码都救不回来
+ * （2026-10-06 真机：注入给修复模型的编译报错「找不到符号」在日志里已是 efbfbd）。
+ *
+ * 规则：整段先按严格 UTF-8 解 —— 解得通说明输出本来就是 UTF-8，逐字不变（旧行为无回归）；
+ * 解不通才按调用方指定的字符集（默认 GBK 系）重解。返回值带上**实际用的编码**，
+ * 让调用方的日志与模型上下文能说清"这句话是谁解的"。
+ */
+function decodeConsoleOutput(buf, preferredEncoding) {
+    if (buf == null) return { text: '', encoding: 'utf-8' };
+    if (typeof buf === 'string') return { text: buf, encoding: 'utf-8(passthrough)' };
+    const pref = String(preferredEncoding || '').trim();
+    // 调用方点名要某种编码时先按它解（例如已知该项目输出 UTF-8 的构建工具）。
+    if (pref && !/^(auto|utf-8|utf8)$/i.test(pref)) {
+        try {
+            return { text: new TextDecoder(pref).decode(buf), encoding: pref };
+        } catch (e) {
+            // 端侧 ICU 不认这个名字 → 落回自动判定，不硬失败
+        }
+    }
+    try {
+        return { text: new TextDecoder('utf-8', { fatal: true }).decode(buf), encoding: 'utf-8' };
+    } catch (e) {
+        for (const cs of ['gbk', 'cp936', 'big5', 'windows-1252']) {
+            try {
+                return { text: new TextDecoder(cs).decode(buf), encoding: cs };
+            } catch (ignored) {
+                // 逐个试，全不认再落最后一条
+            }
+        }
+        return { text: String(buf), encoding: 'utf-8(inconsistent)' };
+    }
+}
+
 app.post('/api/local/workspace/run', (req, res) => {
     const {
         command,
@@ -1533,6 +1570,7 @@ app.post('/api/local/workspace/run', (req, res) => {
         timeoutSeconds = DEFAULT_RUN_TIMEOUT_SECONDS,
         tailLines = 200,
         skipIfNoTestScript = false,
+        outputEncoding = '',
     } = req.body;
 
     if (!command) return res.status(400).json({ error: 'command is required' });
@@ -1626,7 +1664,7 @@ app.post('/api/local/workspace/run', (req, res) => {
     // sidecar 进程死掉（2026-10-02 实测：一条 npm ci 打错目录就把用户机代理弄死了一晚上）。
     let responded = false;
 
-    function finishRun(combined, exitCode, timedOut) {
+    function finishRun(combined, exitCode, timedOut, encoding) {
         cleanupTemp();
         if (responded) return;
         responded = true;
@@ -1638,6 +1676,8 @@ app.post('/api/local/workspace/run', (req, res) => {
             exit_code: exitCode,
             timed_out: !!timedOut,
             duration_ms: elapsed,
+            // [F63①] 实际用的解码 —— 调用方的日志与模型上下文要能指出"这句话是谁解的"
+            output_encoding: encoding || 'utf-8',
         });
     }
 
@@ -1651,10 +1691,10 @@ app.post('/api/local/workspace/run', (req, res) => {
             timeoutMs: timeout * 1000,
             hostTempFile: tempFile,
         }, SANDBOX)
-            .then((r) => finishRun(r.output, r.exitCode, r.timedOut))
+            .then((r) => finishRun(r.output, r.exitCode, r.timedOut, 'utf-8(sandbox)'))
             .catch((err) => {
                 // 沙箱失败也是一条"有退出码的输出"，不要另写一次响应（同上：双写会打死进程）
-                finishRun('sandbox run failed: ' + err.message, 1, false);
+                finishRun('sandbox run failed: ' + err.message, 1, false, 'utf-8(literal)');
             });
     } else {
         const child = execFile(launchFile, launchArgs, {
@@ -1662,18 +1702,30 @@ app.post('/api/local/workspace/run', (req, res) => {
             timeout: timeout * 1000,
             maxBuffer: MAX_RUN_OUTPUT_BYTES,
             windowsHide: true,
+            // [F63①] 取原始字节，字符集由 decodeConsoleOutput 判 —— execFile 默认 utf-8 会把
+            // GBK 控制台输出解成不可复原的 U+FFFD。
+            encoding: 'buffer',
             // shell:false is the default for execFile; keep argv-only
         }, (error, stdout, stderr) => {
             const timedOut = error && (error.killed || error.signal === 'SIGTERM') && error.code === null;
             const exitCode = error && typeof error.code === 'number' ? error.code : (error ? 1 : 0);
-            const spawnFail = error && !stdout && !stderr && typeof error.code !== 'number';
+            // buffer 形态下"空输出"要看 length：Buffer.alloc(0) 是 truthy 的，直接用 !stdout 判
+            // 会让 spawn 失败那一格永远进不去（原因就丢了）。
+            const stdoutBuf = Buffer.isBuffer(stdout) ? stdout : Buffer.alloc(0);
+            const stderrBuf = Buffer.isBuffer(stderr) ? stderr : Buffer.alloc(0);
+            const spawnFail = error && stdoutBuf.length === 0 && stderrBuf.length === 0
+                && typeof error.code !== 'number';
             // spawn 失败时 stdout/stderr 全空，只回 exit=1 等于让调用方无从下手 —— 把原因写进输出
-            const text = spawnFail ? String(error.message || error) : (stdout || '') + (stderr || '');
-            finishRun(text, exitCode, timedOut);
+            if (spawnFail) {
+                return finishRun(String((error && (error.message || error)) || ''), exitCode, timedOut,
+                    'utf-8(spawn-error)');
+            }
+            const decoded = decodeConsoleOutput(Buffer.concat([stdoutBuf, stderrBuf]), outputEncoding);
+            finishRun(decoded.text, exitCode, timedOut, decoded.encoding);
         });
 
         child.on('error', (err) => {
-            finishRun(String((err && err.message) || err), 1, false);
+            finishRun(String((err && err.message) || err), 1, false, 'utf-8(spawn-error)');
         });
     }
 
