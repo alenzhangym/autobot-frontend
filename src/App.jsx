@@ -18,6 +18,8 @@ import {
 } from '@ant-design/icons'
 import api, { logout, isAuthenticated, getCurrentUser, fetchMe, getWsBaseUrl, getLocalAgentBaseUrl, getBackendHost } from './auth'
 import { useReactSessionEvents } from './hooks/useReactSessionEvents'
+import { historyEvidenceBody } from './utils/cmdBlocks.js'
+import { resolveTurnRun } from './utils/turnGroups.js'
 import Login from './Login'
 import HomeWrapper from './Home'
 import LogPanel from './LogPanel'
@@ -58,6 +60,7 @@ import SessionSidebar from './components/SessionSidebar'
 import { executeAgentCommands, appendStreamToken, tryStreamDispatch, resetStreamBuffer } from './components/WorkspacePanel'
 import MessageBubble from './components/MessageBubble'
 import FlowProcessCard from './components/FlowProcessCard'
+import TurnResultCard from './components/TurnResultCard'
 import EventLogPanel from './components/EventLogPanel'
 import InteractivePanel from './components/InteractivePanel'
 import OrderFormModal from './components/OrderFormModal'
@@ -161,6 +164,29 @@ const resolveFlowGroup = (messages, index) => {
   let end = index
   while (end + 1 < messages.length && isFlowIntermediateMsg(messages[end + 1])) end++
   return { start, end }
+}
+
+/**
+ * [F67③] 会话重载：含 __CMD__ 的那一轮**留正文**，不再整条丢掉。
+ *
+ * <p>丢掉的原因今天仍然成立一半：自动执行扫描认 {@code "__CMD__{"} 这个标记（见下面的 useEffect），
+ * 历史消息若原样留下，刷新一次就把已经回答过的命令再跑一遍。但代价被低估了 —— 运行腿失败那一轮交付的
+ * 就是"失败正文 + 【修改建议】清单 + 那句出路"，末尾才挂一条续跑指令；整条丢弃之后，用户刷新看到的只有
+ * 后面那句"部分完成"，12:36:09 那一轮发生过什么在界面上彻底没发生过（2026-10-07 真机）。</p>
+ *
+ * <p>所以这里剥掉机器块（与 {@code stripAgentMarkers} 同一个口径）只留人读的那段；剥完什么都不剩的
+ * （纯指令卡）照旧丢 —— 那种消息今天也不显示，行为一字不变。</p>
+ */
+const keepRoundEvidence = (m) => {
+  if (!m || m.role !== 'assistant' || typeof m.content !== 'string') return m
+  if (!m.content.includes('__CMD__{')) return m
+  let body = ''
+  try {
+    body = historyEvidenceBody(m.content)
+  } catch (e) {
+    return null            // 解析不动 = 与维护它的旧口径一致：这条不显示
+  }
+  return body.trim() ? { ...m, content: body } : null
 }
 
 function extractCommandSignature(content) {
@@ -2235,9 +2261,10 @@ function App() {
       history = history
         .filter(m =>
           !isCommandResultsMessage(m?.content)
-          && !isIntermediateCmdMessage(m?.content)
           && !isCommandResultsPlanMessage(m)
         )
+        .map(keepRoundEvidence)          // [F67③] 含 __CMD__ 的那一轮留正文（旧写法整条丢 → 刷新后那份失败证据就没了）
+        .filter(m => m !== null)
         .map(m => {
         if (m.role === 'plan' && typeof m.content === 'string') {
           try {
@@ -3125,9 +3152,6 @@ function App() {
 
   const isCommandResultsMessage = (content) =>
     typeof content === 'string' && content.trim().startsWith('[COMMAND_RESULTS]')
-
-  const isIntermediateCmdMessage = (content) =>
-    typeof content === 'string' && content.includes('__CMD__{')
 
   const isCommandResultsPlanMessage = (msg) => {
     if (!msg || msg.role !== 'plan') return false
@@ -4271,6 +4295,31 @@ const handleDeleteSession = (id) => {
                     increaseViewportBy={{ top: 200, bottom: 200 }}
                     itemContent={(index) => {
                       const msg = messages[index]
+                      // [F67②] 一个目标链一张结果卡：本轮已经收口（末条不是中间态、也不是流式那格空正文）时，
+                      // 整串 assistant 消息收进一张卡 —— 各段过程默认折叠，主体仍是那条真实答复（沿用既有气泡与其副面板）。
+                      // 本轮还在跑时不接管，交给下面的流程卡，进行中的样子与今天一字不差。
+                      const turnRun = resolveTurnRun(messages, index)
+                      const turnLast = turnRun && turnRun.end > turnRun.start ? messages[turnRun.end] : null
+                      if (turnLast && turnLast.content.trim() && !isFlowIntermediateMsg(turnLast)) {
+                        if (index !== turnRun.end) return null
+                        return (
+                          <div style={{ maxWidth: 1000, margin: '0 auto', padding: isMobile ? '0 12px' : '0 24px' }}>
+                            <TurnResultCard msgs={messages.slice(turnRun.start, turnRun.end + 1)}>
+                              <MessageBubble msg={msg} onDelete={() => handleDeleteMessage(msg.id || msg._localId)} sessionId={sessionId} />
+                              {msg.explanation && <ResultExplanationCard explanation={msg.explanation} />}
+                              {msg.paramSources && <ParamSourceCard paramSources={msg.paramSources} />}
+                              {msg.crossDomainEntities && <CrossDomainEntityCard entities={msg.crossDomainEntities} />}
+                              {msg.traceId && (
+                                <div style={{ marginTop: 2 }}>
+                                  <Tag color="purple" style={{ fontSize: 11, margin: 0, fontFamily: 'monospace' }}>
+                                    跨域 trace: {msg.traceId}
+                                  </Tag>
+                                </div>
+                              )}
+                            </TurnResultCard>
+                          </div>
+                        )
+                      }
                       // 2026-09-05: 流程过程合并 — 连续中间消息收敛为单个卡片。
                       // 组内除最后一条外全部隐藏；最新一条渲染 FlowProcessCard（含进度条 + 折叠的各轮过程）。
                       const flowGroup = resolveFlowGroup(messages, index)

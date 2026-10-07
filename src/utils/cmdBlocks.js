@@ -125,3 +125,82 @@ export function stripCmdBlocks(text) {
   out += text.slice(cursor)
   return out
 }
+
+/**
+ * [F67③] 会话重载时，一条"末尾挂着续跑指令的证据消息"里给人看的那一段。
+ *
+ * <p>过去 {@code App.jsx} 的 loadSession 把任何含 {@code __CMD__{} 的历史消息整条丢掉}，
+ * 于是运行腿失败那一轮（失败正文 + 【修改建议】清单 + 那句出路，指令块只在末尾一格）刷新之后
+ * <b>一句都不剩</b>，界面上只留下后面那句"部分完成" —— 用户读到的是"这轮做完了"，
+ * 而那一轮发生过什么在界面上从没发生过（2026-10-07 12:36:09 真机）。</p>
+ *
+ * <p>返回空串 = 这条除了机器块什么都没有（纯指令卡），那种今天也不显示，照旧丢。
+ * 剥掉指令块还有一层用意：自动执行扫描认的是 {@code "__CMD__{"} 这个标记，历史消息原样留在
+ * messages 里就会每刷新一次把已回答过的命令再跑一遍。</p>
+ */
+export function historyEvidenceBody(content) {
+  if (typeof content !== 'string') return ''
+  if (!content.includes('__CMD__{')) return content
+  let body = stripCmdBlocks(content)
+  const cut = body.indexOf('[COMMAND_RESULTS]')
+  if (cut >= 0) body = body.slice(0, cut)
+  return body.replace(/\n{3,}/g, '\n\n').trim()
+}
+
+/** 同句判据用的比对长度：前若干字符相同就算同一段事实的重复交付。 */
+const SECTION_DEDUPE_CHARS = 400
+
+/**
+ * [F67②] 一个目标链里"给人看的各段过程"怎么归并 —— 折叠区的唯一取数口。
+ *
+ * <p>真机 2026-10-07 12:35:47~12:36:09 那五条过程消息（库表 9941~9946）开头一字不差：同一条
+ * 「命令这一格过了，服务那一格没过」的失败正文，每条后面只挂着一格不同的待执行指令
+ * （env_probe/scan、read×4、proc_start、proc_status、plan_continue）。逐条铺开就是五个条目，
+ * 而它们对人说的是同一件事。所以这里按 {@link #historyEvidenceBody} 的口径剥掉机器块再按正文去重，
+ * 份数如实留在 {@code count} 上（渲染成「×5 轮同句」），不去撒谎合并。</p>
+ *
+ * <p>机器块不进正文，但归并成一行指令清单：这一轮到底让端侧跑了什么是给人看的事实，
+ * 而它恰好也是"这一串为什么有 5 条"的答案。解析不动的半截块不计入 —— 半截的块不是事实。</p>
+ *
+ * @param {Array<{content?: string}>} messages 同一段过程的消息（按时间正序）
+ * @returns {{sections: Array<{no: number, text: string, count: number}>,
+ *            actions: string[], distinctActions: string[]}}
+ */
+export function buildTurnSections(messages) {
+  const list = Array.isArray(messages) ? messages : []
+  const ordered = []
+  const byKey = new Map()
+  const actions = []
+  for (const m of list) {
+    const raw = m && typeof m.content === 'string' ? m.content : ''
+    if (raw.includes('__CMD__{')) {
+      try {
+        for (const b of parseAllCmdBlocks(raw)) {
+          const act = b && b.cmd && b.cmd.action
+          if (act) actions.push(act)
+        }
+      } catch (e) {
+        // 忽略：这一条的指令不进清单，正文仍按它自己的口径处理
+      }
+    }
+    let body = ''
+    try {
+      body = historyEvidenceBody(raw)
+    } catch (e) {
+      body = ''
+    }
+    if (!body) continue
+    const key = body.slice(0, SECTION_DEDUPE_CHARS)
+    const hit = byKey.get(key)
+    if (hit) {
+      hit.count += 1
+      continue
+    }
+    const item = { no: ordered.length + 1, text: body, count: 1 }
+    byKey.set(key, item)
+    ordered.push(item)
+  }
+  const distinctActions = []
+  for (const a of actions) if (!distinctActions.includes(a)) distinctActions.push(a)
+  return { sections: ordered, actions, distinctActions }
+}
