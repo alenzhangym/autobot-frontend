@@ -4404,9 +4404,11 @@ const handleDeleteSession = (id) => {
                       Footer: () => {
                         // 2026-09-01: 附加 ReactSession 实时状态徽标（经 /ws/react/{sessionId} 推送）
                         const running = isLoading && messages.length > 0;
-                        if (!running && !reactSessionState) return null;
                         const st = reactSessionState || '';
                         const terminal = ['COMPLETED', 'FAILED', 'CANCELLED', 'SESSION_UNAVAILABLE'].includes(st);
+                        // [F72 §13] 会话停在非终态（真机 18:23 那轮收场后 WS 报的仍是 RUNNING）时，
+                        // 原来这一格照样渲染 → 页面底下多出一个只有头像、没有正文的空消息框。
+                        if (!running && !terminal) return null;
                         const meta = { COMPLETED: ['success', '已完成'], FAILED: ['error', '失败'], CANCELLED: ['default', '已取消'] };
                         const [color, label] = meta[st] || (terminal ? ['default', st] : ['processing', `会话状态: ${st}`]);
                         return (
