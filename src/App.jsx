@@ -89,6 +89,7 @@ import StockMonitorPage from './StockMonitorPage'
 import AnalystPage from './AnalystPage'
 import TranslationCheckPage from './TranslationCheckPage'
 import LlmManagement from './LlmManagement'
+import LlmTraceViewer from './LlmTraceViewer'
 import { useUserStore } from './store/useUserStore'
 import { useDataStore } from './store/useDataStore'
 import { useConfigStore } from './store/useConfigStore'
@@ -4004,7 +4005,7 @@ const handleDeleteSession = (id) => {
                 )
               })() : (
                 <Text style={{ color: 'var(--ab-text-3)', fontSize: isMobile ? 13 : 14, fontFamily: "'Hanken Grotesk', system-ui, sans-serif", overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {activeTab === 'documents' ? t('nav.companyDocuments') : activeTab === 'academic' ? '学术分析' : activeTab === 'academic_stats' ? 'ReAct 闭环统计' : activeTab === 'llm_management' ? 'LLM 模型管理' : activeTab === 'sales_orders' ? '销售单管理' : activeTab === 'purchase_orders' ? '采购单管理' : activeTab === 'reconciliations' ? '对账单管理' : activeTab === 'inventory' ? '库存管理 (Admin)' : activeTab === 'profit_analysis' ? '出入库价差利润分析' : activeTab === 'audit_logs' ? '审计日志 (Admin)' : activeTab === 'plan_learning' ? '模型学习审核' : activeTab === 'crm_customers' ? 'CRM 客户管理' : activeTab === 'crm_contacts' ? 'CRM 联系人管理' : activeTab === 'crm_leads' ? 'CRM 线索管理' : activeTab === 'crm_opportunities' ? 'CRM 商机管理' : activeTab === 'crm_contracts' ? 'CRM 合同管理' : activeTab === 'crm_payment_plans' ? 'CRM 回款计划' : activeTab === 'crm_payment_records' ? 'CRM 回款记录' : activeTab === 'crm_follow_ups' ? 'CRM 跟进记录' : activeTab === 'dashboard' ? t('erp.dashboard') : activeTab === 'databases' ? t('nav.databases') : activeTab === 'monitor' ? 'autobot-monitor' : (sessions.find(s => s.id === sessionId)?.title || t('nav.newChat'))}
+                  {activeTab === 'documents' ? t('nav.companyDocuments') : activeTab === 'academic' ? '学术分析' : activeTab === 'academic_stats' ? 'ReAct 闭环统计' : activeTab === 'llm_management' ? 'LLM 模型管理' : activeTab === 'llm_trace' ? 'ReAct 观测' : activeTab === 'sales_orders' ? '销售单管理' : activeTab === 'purchase_orders' ? '采购单管理' : activeTab === 'reconciliations' ? '对账单管理' : activeTab === 'inventory' ? '库存管理 (Admin)' : activeTab === 'profit_analysis' ? '出入库价差利润分析' : activeTab === 'audit_logs' ? '审计日志 (Admin)' : activeTab === 'plan_learning' ? '模型学习审核' : activeTab === 'crm_customers' ? 'CRM 客户管理' : activeTab === 'crm_contacts' ? 'CRM 联系人管理' : activeTab === 'crm_leads' ? 'CRM 线索管理' : activeTab === 'crm_opportunities' ? 'CRM 商机管理' : activeTab === 'crm_contracts' ? 'CRM 合同管理' : activeTab === 'crm_payment_plans' ? 'CRM 回款计划' : activeTab === 'crm_payment_records' ? 'CRM 回款记录' : activeTab === 'crm_follow_ups' ? 'CRM 跟进记录' : activeTab === 'dashboard' ? t('erp.dashboard') : activeTab === 'databases' ? t('nav.databases') : activeTab === 'monitor' ? 'autobot-monitor' : (sessions.find(s => s.id === sessionId)?.title || t('nav.newChat'))}
                 </Text>
               )}
               {activeTab === 'chat' && (sessions.find(s => s.id === sessionId)?.channel === 'code' || (!sessions.find(s => s.id === sessionId)?.channel && currentChannel === 'code')) && workspaceDir && !isMobile && (
@@ -4176,6 +4177,10 @@ const handleDeleteSession = (id) => {
           ) : activeTab === 'llm_management' && isSuperAdmin ? (
             <Content style={{ background: '#0a0a0a', overflow: 'auto' }}>
               <LlmManagement />
+            </Content>
+          ) : activeTab === 'llm_trace' && isSuperAdmin ? (
+            <Content style={{ background: '#0a0a0a', overflow: 'auto' }}>
+              <LlmTraceViewer />
             </Content>
           ) : (
 

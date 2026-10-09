@@ -231,6 +231,8 @@ export default function SessionSidebar({
           // 2026-07-22: LLM 模型管理页面 (仅超管可见) — 列出 omlx 模型 + 运行时热切换主模型
           ...(isSuperAdminFn(user) ? [
             { key: 'llm_management', icon: <ApiOutlined />, label: 'LLM 模型管理' },
+            // ReAct 全链路可观测页面 (仅超管可见) — 按 会话/轮次/阶段 下钻查看 LLM prompt 与返回
+            { key: 'llm_trace', icon: <FileSearchOutlined />, label: 'ReAct 观测' },
           ] : []),
           // 2026-07-20: 小说创作入口 — 受 hasNovelChannel 网关控制
           // 公司管理员在"公司管理"页勾选 novel channel 后, 该公司所有用户可见此入口
