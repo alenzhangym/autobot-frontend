@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { Badge, Button, Spin, Tag, Tooltip, Typography } from 'antd'
-import { DownOutlined, RightOutlined } from '@ant-design/icons'
+import { Badge, Card, Space, Spin, Tag, Tooltip, Typography } from 'antd'
 import api from '../auth'
 import { useReactSessionEvents } from '../hooks/useReactSessionEvents'
 const { Text } = Typography
@@ -9,6 +8,11 @@ const { Text } = Typography
  * EventLogPanel — P3 事件溯源调试面板 (2026-09-01).
  *
  * <p>显示当前会话的事件溯源日志数量和状态，帮助用户了解会话的生命周期和历史。
+ *
+ * <p><b>位置（2026-10-13）</b>：以前挂在会话顶栏的 {@code Space} 里，展开后整条列表要在
+ * 一行的高度里挤出来 —— 时间列只有 52px，"11:10:43" 被裁成 "1:10:43"，步骤名与正文互相叠字，
+ * 等于看不见。现在由 {@code App.jsx} 挂进右侧栏（与 TODO 同一列，320px 且整栏可滚），
+ * 列表默认展开，不再需要"详情"这一层。
  *
  * <p><b>实时推送</b>: 订阅 {@code /ws/react/{sessionId}}，从 {@link ReactEventBus}
  * 实时收到会话状态 / 工具调用 / 流转式事件（替代 5s HTTP 轮询）。进出事件都视为一次
@@ -28,7 +32,6 @@ export default function EventLogPanel({ sessionId, style }) {
   // G9: 最近事件列表 + traceId 聚合 + 展开/过滤状态
   const [recentEvents, setRecentEvents] = useState([])
   const [traces, setTraces] = useState({})
-  const [expanded, setExpanded] = useState(false)
   const [activeTrace, setActiveTrace] = useState(null)
 
   // 实时事件→溯源计数：会话有事件流转时即时增加计数，替代依赖轮询刷新。
@@ -88,29 +91,18 @@ export default function EventLogPanel({ sessionId, style }) {
     return () => clearInterval(timer)
   }, [sessionId, fetchEvents])
 
-  if (!sessionId) {
-    return (
-      <div style={{ padding: '4px 8px', ...style }}>
-        <Text type="secondary" style={{ fontSize: 12 }}>事件溯源: 无活跃会话</Text>
-      </div>
-    )
-  }
+  // 降级三格（无会话 / 首帧加载中 / 后端未启用或未部署）：仍占同一张卡的位，不阻塞界面。
+  const degraded = (body) => (
+    <Card size="small" style={{ margin: 0, ...style }} title="步骤">
+      <div style={{ padding: '2px 0' }}>{body}</div>
+    </Card>
+  )
 
+  if (!sessionId) return degraded(<Text type="secondary" style={{ fontSize: 12 }}>无活跃会话</Text>)
   if (loading && eventCount === null) {
-    return (
-      <div style={{ padding: '4px 8px', ...style }}>
-        <Spin size="small" /> <Text type="secondary" style={{ fontSize: 12 }}>加载中...</Text>
-      </div>
-    )
+    return degraded(<><Spin size="small" /> <Text type="secondary" style={{ fontSize: 12 }}>加载中...</Text></>)
   }
-
-  if (!enabled) {
-    return (
-      <div style={{ padding: '4px 8px', ...style }}>
-        <Text type="secondary" style={{ fontSize: 12 }}>事件溯源: {error || '未启用'}</Text>
-      </div>
-    )
-  }
+  if (!enabled) return degraded(<Text type="secondary" style={{ fontSize: 12 }}>{error || '未启用'}</Text>)
 
   const eventColor = eventCount > 0 ? (eventCount > 50 ? 'blue' : 'green') : 'default'
 
@@ -159,88 +151,87 @@ export default function EventLogPanel({ sessionId, style }) {
   }
 
   return (
-    <div style={{ padding: '4px 8px', ...style }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <Badge status={eventCount > 0 ? 'success' : 'default'} />
-        <Text style={{ fontSize: 12 }}>事件溯源:</Text>
-        <Tag color={eventColor} style={{ margin: 0, fontSize: 11 }}>
-          {eventCount} 条事件
-        </Tag>
-        {traceKeys.length > 0 && (
-          <Tooltip title={`共 ${traceKeys.length} 个跨域 trace`}>
-            <Tag color="purple" style={{ margin: 0, fontSize: 11 }}>
-              {traceKeys.length} trace
-            </Tag>
-          </Tooltip>
-        )}
-        <Button
-          type="text"
-          size="small"
-          icon={expanded ? <DownOutlined /> : <RightOutlined />}
-          onClick={() => setExpanded(!expanded)}
-          style={{ fontSize: 11, padding: 0 }}
-        >
-          {expanded ? '收起' : '详情'}
-        </Button>
-      </div>
-
-      {expanded && (
-        <div style={{ marginTop: 6, borderTop: '1px dashed #f0f0f0', paddingTop: 6 }}>
-          {/* G9: trace 过滤标签 — 点击切换只看该 trace 的事件 */}
+    <Card
+      size="small"
+      style={{ margin: 0, ...style }}
+      title={
+        <Space size={6}>
+          <Badge status={eventCount > 0 ? 'success' : 'default'} />
+          <span>步骤</span>
+          <Tag color={eventColor} style={{ margin: 0, fontSize: 11 }}>{eventCount}</Tag>
           {traceKeys.length > 0 && (
-            <div style={{ marginBottom: 6, display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }}>
-              <Text type="secondary" style={{ fontSize: 11 }}>按 trace 过滤:</Text>
-              <Tag
-                color={!activeTrace ? 'processing' : 'default'}
-                style={{ fontSize: 11, cursor: 'pointer' }}
-                onClick={() => setActiveTrace(null)}
-              >
-                全部
-              </Tag>
-              {traceKeys.map((t) => (
-                <Tag
-                  key={t}
-                  color={activeTrace === t ? 'purple' : 'default'}
-                  style={{ fontSize: 11, cursor: 'pointer', fontFamily: 'monospace' }}
-                  onClick={() => setActiveTrace(activeTrace === t ? null : t)}
-                >
-                  {t} ×{traces[t]}
-                </Tag>
-              ))}
-            </div>
+            <Tooltip title={`共 ${traceKeys.length} 个跨域 trace`}>
+              <Tag color="purple" style={{ margin: 0, fontSize: 11 }}>{traceKeys.length} trace</Tag>
+            </Tooltip>
           )}
+        </Space>
+      }
+    >
+      {/* G9: trace 过滤标签 — 点击切换只看该 trace 的事件 */}
+      {traceKeys.length > 0 && (
+        <div style={{ marginBottom: 6, display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }}>
+          <Text type="secondary" style={{ fontSize: 11 }}>按 trace 过滤:</Text>
+          <Tag
+            color={!activeTrace ? 'processing' : 'default'}
+            style={{ fontSize: 11, cursor: 'pointer' }}
+            onClick={() => setActiveTrace(null)}
+          >
+            全部
+          </Tag>
+          {traceKeys.map((t) => (
+            <Tag
+              key={t}
+              color={activeTrace === t ? 'purple' : 'default'}
+              style={{ fontSize: 11, cursor: 'pointer', fontFamily: 'monospace' }}
+              onClick={() => setActiveTrace(activeTrace === t ? null : t)}
+            >
+              {t} ×{traces[t]}
+            </Tag>
+          ))}
+        </div>
+      )}
 
-          {filteredEvents.length === 0 ? (
-            <Text type="secondary" style={{ fontSize: 11 }}>暂无事件</Text>
-          ) : (
-            <ul style={{ margin: 0, padding: 0, listStyle: 'none', maxHeight: 200, overflowY: 'auto' }}>
-              {filteredEvents.map((e, idx) => {
-                const label = eventLabel(e)
-                return (
-                  <li key={idx} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '2px 0' }}>
-                    <Text type="secondary" style={{ fontSize: 11, width: 52, flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
-                      {formatTime(e.timestamp)}
-                    </Text>
-                    <Tag color={label.color} style={{ fontSize: 11, margin: 0, flexShrink: 0 }}>
-                      {label.text}
-                    </Tag>
+      {filteredEvents.length === 0 ? (
+        <Text type="secondary" style={{ fontSize: 11 }}>暂无事件</Text>
+      ) : (
+        <ul style={{ margin: 0, padding: 0, listStyle: 'none', maxHeight: '45vh', overflowY: 'auto' }}>
+          {filteredEvents.map((e, idx) => {
+            const label = eventLabel(e)
+            return (
+              <li
+                key={idx}
+                style={{
+                  display: 'flex', gap: 6, alignItems: 'flex-start', padding: '3px 0',
+                  borderBottom: '1px dashed rgba(255,255,255,0.06)',
+                }}
+              >
+                {/* 时间列以前是 52px 且不换行 → "11:10:43" 被裁成 "1:10:43"（用户说的"看不清"） */}
+                <Text
+                  type="secondary"
+                  style={{ fontSize: 11, width: 70, flexShrink: 0, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}
+                >
+                  {formatTime(e.timestamp)}
+                </Text>
+                <div style={{ minWidth: 0 }}>
+                  <Space size={4} wrap>
+                    <Tag color={label.color} style={{ fontSize: 11, margin: 0 }}>{label.text}</Tag>
                     {e.traceId && (
-                      <Tag color="purple" style={{ fontSize: 10, margin: 0, flexShrink: 0, fontFamily: 'monospace' }}>
+                      <Tag color="purple" style={{ fontSize: 10, margin: 0, fontFamily: 'monospace' }}>
                         {e.traceId}
                       </Tag>
                     )}
-                    {label.isCross && e.message && (
-                      <Text type="secondary" style={{ fontSize: 11 }} ellipsis>
-                        {e.message}
-                      </Text>
-                    )}
-                  </li>
-                )
-              })}
-            </ul>
-          )}
-        </div>
+                  </Space>
+                  {label.isCross && e.message && (
+                    <div style={{ fontSize: 11, marginTop: 2, wordBreak: 'break-all' }}>
+                      <Text type="secondary">{e.message}</Text>
+                    </div>
+                  )}
+                </div>
+              </li>
+            )
+          })}
+        </ul>
       )}
-    </div>
+    </Card>
   )
 }

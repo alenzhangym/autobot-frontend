@@ -4043,10 +4043,6 @@ const handleDeleteSession = (id) => {
                   图谱
                 </Button>
               )}
-              {/* P3: 事件溯源状态面板 — 仅在有活跃会话时显示 */}
-              {sessionId && !isMobile && (
-                <EventLogPanel sessionId={sessionId} />
-              )}
               {/* P4: 自动上下文投影开关 */}
               {sessionId && !isMobile && (
                 <Switch
@@ -4760,6 +4756,9 @@ const handleDeleteSession = (id) => {
               const rightPanelInner = (
                 <>
                 <InteractivePanel sessionId={sessionId} />
+                {/* P3: 事件溯源/步骤流 — 2026-10-13 从顶栏挪进来: 顶栏一行放不下整条列表,
+                    时间列 52px 把 "11:10:43" 裁成 "1:10:43", 用户读不到步骤。右栏 320px 且整栏可滚。 */}
+                <EventLogPanel sessionId={sessionId} />
                 {/* 阶段5: ERP 订单表单弹窗 — 收到 reply_context.formSpec 时弹出 */}
                 <OrderFormModal
           open={orderFormOpen}
