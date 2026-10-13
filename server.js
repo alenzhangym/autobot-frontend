@@ -1,6 +1,6 @@
 import express from 'express';
 import cors from 'cors';
-import { exec, execSync, execFile } from 'child_process';
+import { exec, execSync, execFile, execFileSync } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import open from 'open';
@@ -15,9 +15,16 @@ import { searchWorkspace } from './src/runtime/workspaceSearch.js';
 import { resolveLauncher } from './src/runtime/winLauncher.js';
 // [L4] cwd 越界守卫（判据/三态/理由见模块顶部注释）：run 与 /api/local/bash 共用同一份实现。
 import { cwdGuard } from './src/runtime/cwdGuard.js';
+// 客户端统一管理 Defender 排除项：项目集归客户端所有，后端只发"请处理"这一件事。
+import {
+  READ_EXCLUSIONS_SCRIPT, isCovered, missingProjects, loadProjects,
+  registerProject, buildAddScript, buildElevateScript, parseExclusionsJson,
+} from './src/runtime/defenderExclusions.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+const DEFENDER_STORE = path.join(__dirname, 'data', 'defender-workspaces.json');
 
 dotenv.config({ path: path.join(__dirname, '.env') });
 
@@ -1766,6 +1773,7 @@ function trimToTail(text, lines) {
 import { getOrCreate, get, kill as killShellById, list as listShells, killAll as killAllShells } from './src/runtime/shellRegistry.js';
 import { analyzeCommand, setDefaultRules as setAnalyzerRules, setDefaultAction as setAnalyzerAction, DEFAULT_RULES as ANALYZER_DEFAULT_RULES } from './src/runtime/commandAnalyzer.js';
 import { createTask as createBgTask, get as getTask, list as listTasks, kill as killTask, killAll as killAllTasks, summarize as summarizeTask } from './src/runtime/taskRegistry.js';
+import { killOrphansByCwd } from './src/runtime/processGroup.js';
 import { webfetch, WebfetchError } from './src/runtime/webfetch.js';
 import { websearch, WebsearchError } from './src/runtime/websearch.js';
 import { write as todoWrite, read as todoRead, updateItem as todoUpdate, clear as todoClear } from './src/runtime/todoStore.js';
@@ -1907,8 +1915,27 @@ app.get('/api/local/bash/tasks/:id', (req, res) => {
 });
 
 app.delete('/api/local/bash/tasks/:id', async (req, res) => {
-    const ok = await killTask(req.params.id);
+    // sweep: true —— 停止腿的 proc_stop 走这里。终态任务（如 timeout）按 task_id 杀不动时，
+    //   再按该任务的 cwd 做一次 OS 级兜底查杀，避免 mvn 遗留的孤儿 Java 进程继续占端口。
+    const ok = await killTask(req.params.id, { sweep: true });
     res.json({ killed: ok });
+});
+
+// [方案C 兜底] proc_sweep —— 现查无登记任务（如 sidecar 重启后 taskRegistry 被清空）时，
+//   按工作区目录做一次 OS 级兜底清扫：杀掉命令行里含该目录的残留进程（mvn 遗留的孤儿 Java 等），
+//   排除自身/父进程。这是"停止腿看不见但确实还在跑"的服务唯一的清场手段。
+app.post('/api/local/bash/sweep', async (req, res) => {
+    try {
+        const cwd = String((req.body && req.body.cwd) || '').trim();
+        if (!cwd) return res.status(400).json({ status: 'error', error: 'sweep 需要 cwd' });
+        const r = await killOrphansByCwd(cwd);
+        // 诊断透传：枚举通道（via）/条数、命中条数、逐条的 taskkill 退出码与 stderr —— "一个都没
+        //   杀到"时必须说得出原因（权限/进程已不在/枚举整条空回），否则停止腿只能拿到一个 false。
+        res.json({ killed: r.killed, enumerated: r.enumerated, matched: r.matched,
+            via: r.via, enumErr: r.enumErr, detail: r.detail });
+    } catch (err) {
+        res.status(500).json({ status: 'error', error: err.message });
+    }
 });
 
 // Cleanup on shutdown — kill all persistent shells AND background
@@ -2033,6 +2060,122 @@ app.post('/api/local/questions/:id/answer', (req, res) => {
     const q = qAnswer(req.params.id, answer);
     if (!q) return res.status(404).json({ status: 'error', error: 'question not found or already answered' });
     res.json({ status: 'ok', question: q });
+});
+
+// ── Defender 排除项（客户端统一管理；读免提权、写需 UAC）──────────────────────
+// 项目集来源：前端在设置/切换工作区时 POST /api/local/workspaces/register 显式登记，
+// sidecar 持久化到 data/defender-workspaces.json。后端只发 __CMD__ 动作，排除哪些目录由这里自算。
+
+/** 读现有排除列表。返回 {supported, exclusions, reason?, error?}；非 Windows/无 Defender 模块 → supported:false。 */
+function readDefenderExclusions() {
+    if (os.platform() !== 'win32') {
+        return { supported: false, reason: 'not_windows', exclusions: [] };
+    }
+    try {
+        const out = execFileSync('powershell', ['-NoProfile', '-Command', READ_EXCLUSIONS_SCRIPT], {
+            encoding: 'utf-8', timeout: 15000, windowsHide: true, maxBuffer: 10 * 1024 * 1024,
+        });
+        return { supported: true, exclusions: parseExclusionsJson(out) };
+    } catch (e) {
+        return { supported: false, reason: 'defender_unavailable', error: e.message, exclusions: [] };
+    }
+}
+
+// 只读：当前平台 / Defender 可用性 / 已登记项目是否已排除。
+app.get('/api/local/defender/status', (req, res) => {
+    const probe = readDefenderExclusions();
+    const projects = loadProjects(DEFENDER_STORE);
+    const payload = {
+        platform: os.platform(),
+        supported: probe.supported,
+        reason: probe.reason || null,
+        error: probe.error || null,
+        exclusions: probe.exclusions,
+        projects: projects.map((p) => ({
+            path: p,
+            excluded: probe.supported ? isCovered(p, probe.exclusions) : null,
+        })),
+    };
+    res.json(payload);
+});
+
+// 登记一个（或一批）项目根。前端切换工作区时调用；幂等。
+app.post('/api/local/workspaces/register', (req, res) => {
+    const body = req.body || {};
+    const incoming = [];
+    if (typeof body.path === 'string' && body.path.trim()) incoming.push(body.path);
+    if (Array.isArray(body.paths)) {
+        for (const p of body.paths) if (typeof p === 'string' && p.trim()) incoming.push(p);
+    }
+    if (incoming.length === 0) {
+        return res.status(400).json({ error: 'path is required' });
+    }
+    let projects = loadProjects(DEFENDER_STORE);
+    for (const p of incoming) projects = registerProject(DEFENDER_STORE, p);
+    res.json({ registered: incoming, projects });
+});
+
+// 由客户端自算"已登记但未排除"的集合 → 一次性提权批量加排除项 → 重新读取排除列表按事实判定。
+app.post('/api/local/defender/ensure', (req, res) => {
+    if (os.platform() !== 'win32') {
+        return res.json({ ok: false, elevated: false, reason: 'not_windows' });
+    }
+    const body = req.body || {};
+    if (Array.isArray(body.paths)) {
+        for (const p of body.paths) if (typeof p === 'string' && p.trim()) registerProject(DEFENDER_STORE, p);
+    }
+    const projects = loadProjects(DEFENDER_STORE);
+    if (projects.length === 0) {
+        return res.json({ ok: false, elevated: false, reason: 'no_projects', message: '尚无已登记项目，请先选择工作区' });
+    }
+    const probe = readDefenderExclusions();
+    if (!probe.supported) {
+        return res.json({ ok: false, elevated: false, reason: probe.reason || 'defender_unavailable', error: probe.error || null });
+    }
+    const missing = missingProjects(projects, probe.exclusions);
+    if (missing.length === 0) {
+        return res.json({ ok: true, alreadyOk: true, elevated: false, requested: [], added: [], stillMissing: [], exclusions: probe.exclusions });
+    }
+
+    const tag = crypto.randomBytes(6).toString('hex');
+    const tmpDir = os.tmpdir();
+    const innerFile = path.join(tmpDir, `autobot-defender-add-${tag}.ps1`);
+    const outerFile = path.join(tmpDir, `autobot-defender-elevate-${tag}.ps1`);
+    const resultFile = path.join(tmpDir, `autobot-defender-result-${tag}.txt`);
+    let spawnError = null;
+    try {
+        fs.writeFileSync(innerFile, buildAddScript(missing, resultFile), 'utf-8');
+        fs.writeFileSync(outerFile, buildElevateScript(innerFile, resultFile), 'utf-8');
+        execFileSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', outerFile], {
+            encoding: 'utf-8', timeout: 180000, windowsHide: true, maxBuffer: 10 * 1024 * 1024,
+        });
+    } catch (e) {
+        // 用户取消 UAC / 超时 / 提权进程非零退出都到这里；真伪一律交给下面的重查判定。
+        spawnError = e.message;
+    }
+    let resultMsg = null;
+    try {
+        if (fs.existsSync(resultFile)) resultMsg = fs.readFileSync(resultFile, 'utf-8').trim();
+    } catch { /* 读不到就算了，重查才是判据 */ }
+
+    const after = readDefenderExclusions();
+    const stillMissing = after.supported ? missingProjects(projects, after.exclusions) : missing;
+    const ok = after.supported && stillMissing.length === 0;
+    const added = missing.filter((p) => !stillMissing.includes(p));
+    let message = null;
+    if (!ok) {
+        if (resultMsg && resultMsg.startsWith('ERR:')) message = resultMsg.slice(4).trim();
+        else message = spawnError || '未获管理员权限（可能取消了 UAC），排除项未生效';
+    }
+    try { fs.unlinkSync(innerFile); } catch { /* ignore */ }
+    try { fs.unlinkSync(outerFile); } catch { /* ignore */ }
+    try { fs.unlinkSync(resultFile); } catch { /* ignore */ }
+    res.json({
+        ok, alreadyOk: false, elevated: true,
+        requested: missing, added, stillMissing,
+        exclusions: after.exclusions,
+        message,
+    });
 });
 
 // autobot-monitor routes — manage the auto-healer subsystem

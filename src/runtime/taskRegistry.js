@@ -19,7 +19,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import { killProcessTree } from './processGroup.js'
+import { killProcessTree, killOrphansByCwd } from './processGroup.js'
 
 /** Default output cap per task (bytes). 2 MiB matches PersistentShell. */
 const MAX_OUTPUT_BYTES = 2 * 1024 * 1024
@@ -192,17 +192,34 @@ export function list() {
   return Array.from(TASKS.values()).map(summarize)
 }
 
-/** Terminate a running task. Returns true if a kill signal was sent. */
-export async function kill(id) {
+/**
+ * Terminate a running task. Returns true if a kill signal was sent.
+ *
+ * @param {string} id
+ * @param {{sweep?: boolean}} [opts] sweep=true 时，对<b>已终态</b>的任务也按 cwd 做一次
+ *   OS 级兜底查杀（见 [STOP] 说明）——默认关，关停清理等其它路径不受影响。
+ */
+export async function kill(id, opts = {}) {
   const task = TASKS.get(id)
   if (!task) return false
-  if (task.status !== 'running') return false
-  task.killed = true
-  task.status = 'killed'
-  if (task._child) {
-    await killProcessTree(task._child)
+  if (task.status === 'running') {
+    task.killed = true
+    task.status = 'killed'
+    if (task._child) {
+      await killProcessTree(task._child)
+    }
+    return true
   }
-  return true
+  // [STOP] 终态任务：进程可能已从 mvn 父进程脱手成孤儿（Windows 下 killProcessTree 没覆盖到），
+  //   task_id 再停也杀不动。仅在显式 sweep 时按 cwd 兜底扫一遍 —— 默认路径不扫，避免误伤。
+  if (opts.sweep !== true) return false
+  const sweep = await killOrphansByCwd(task.cwd)
+  const orphanKilled = sweep.killed
+  if (orphanKilled) {
+    task.killed = true
+    task.status = 'killed'
+  }
+  return orphanKilled
 }
 
 /** Kill every running task — used on server shutdown. */

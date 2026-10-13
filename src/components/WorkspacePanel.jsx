@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef, useImperativeHandle, forwardRef, lazy, Suspense } from 'react'
 import { Layout, Input, Button, Tree, Space, Typography, message, Spin, Modal, List } from 'antd'
-import { FolderOpenOutlined, FileOutlined, ReloadOutlined, SaveOutlined, EditOutlined, HomeOutlined, SearchOutlined } from '@ant-design/icons'
+import { FolderOpenOutlined, FileOutlined, ReloadOutlined, SaveOutlined, EditOutlined, HomeOutlined, SearchOutlined, SafetyOutlined } from '@ant-design/icons'
 import api, { getBackendHost, getLocalAgentBaseUrl } from '../auth'
 import axios from 'axios'
 import { shouldRequireConfirmation, formatCommandSummary, addTrustedPattern, patternFromCommand } from './agentCommandSafety'
@@ -90,6 +90,11 @@ export default forwardRef(function WorkspacePanel({ workspaceDir, onDirChange, s
   const [targetLine, setTargetLine] = useState(null)  // 1-based; non-null after jumpToFile
   // S5: 拓扑索引搜索 modal
   const [topologyVisible, setTopologyVisible] = useState(false)
+  // Defender 白名单（手动入口）：status 只读、ensure 需 UAC。
+  const [defenderVisible, setDefenderVisible] = useState(false)
+  const [defenderStatus, setDefenderStatus] = useState(null)
+  const [defenderLoading, setDefenderLoading] = useState(false)
+  const [defenderBusy, setDefenderBusy] = useState(false)
   const viewerRef = useRef(null)  // scrollable <pre> container
 
   // Imperative API for parent components (e.g. the right-hand issue panel
@@ -183,6 +188,49 @@ export default forwardRef(function WorkspacePanel({ workspaceDir, onDirChange, s
     if (onDirChange) onDirChange(browsePath)
     fetchFilesList(browsePath)
   }
+
+  // ── Defender 白名单（手动入口）──────────────────────────────
+  // 把当前工作区登记给 sidecar，并只读展示"哪些项目尚未排除"。真正加入要用户确认后走 UAC。
+  const refreshDefenderStatus = async () => {
+    setDefenderLoading(true)
+    try {
+      const res = await localApi.get('/api/local/defender/status')
+      setDefenderStatus(res.data || null)
+    } catch (e) {
+      setDefenderStatus({ supported: false, reason: 'request_failed', error: e.response?.data?.error || e.message, projects: [] })
+    }
+    setDefenderLoading(false)
+  }
+
+  const openDefender = async () => {
+    setDefenderVisible(true)
+    const target = dirInput || workspaceDir
+    if (target) {
+      try { await localApi.post('/api/local/workspaces/register', { path: target }) } catch (e) { /* 登记失败不阻断查看 */ }
+    }
+    await refreshDefenderStatus()
+  }
+
+  const confirmDefenderEnsure = async () => {
+    setDefenderBusy(true)
+    try {
+      const target = dirInput || workspaceDir
+      const res = await localApi.post('/api/local/defender/ensure', { paths: target ? [target] : [] })
+      const d = res.data || {}
+      if (d.ok) {
+        message.success(d.alreadyOk ? '所登记项目均已在白名单中' : `已加入白名单: ${(d.added || []).join(', ')}`)
+      } else {
+        message.error('加入白名单失败: ' + (d.message || d.reason || '未知原因'))
+      }
+      await refreshDefenderStatus()
+    } catch (e) {
+      message.error('加入白名单失败: ' + (e.response?.data?.error || e.message))
+    }
+    setDefenderBusy(false)
+  }
+
+  const defenderProjects = defenderStatus?.projects || []
+  const defenderPending = defenderProjects.filter(p => p.excluded === false)
 
   const readFile = async (filePath) => {
     setSelectedFile(filePath)
@@ -304,6 +352,15 @@ export default forwardRef(function WorkspacePanel({ workspaceDir, onDirChange, s
             title="按符号/类名/方法名搜索工作区拓扑索引"
           >
             拓扑搜索
+          </Button>
+          <Button
+            size="small"
+            icon={<SafetyOutlined />}
+            onClick={openDefender}
+            disabled={!isWindows()}
+            title="把本机项目目录加入 Windows Defender 白名单（需管理员 UAC）"
+          >
+            防护白名单
           </Button>
         </Space>
       </div>
@@ -433,6 +490,60 @@ export default forwardRef(function WorkspacePanel({ workspaceDir, onDirChange, s
             />
           )}
         </div>
+      </Modal>
+      {/* Defender 白名单（手动入口）—— 只读展示 + 用户确认后提权加入 */}
+      <Modal
+        title="Windows Defender 白名单"
+        open={defenderVisible}
+        onCancel={() => setDefenderVisible(false)}
+        footer={[
+          <Button key="close" onClick={() => setDefenderVisible(false)}>关闭</Button>,
+          <Button
+            key="ensure"
+            type="primary"
+            loading={defenderBusy}
+            disabled={!defenderStatus?.supported || defenderPending.length === 0}
+            onClick={confirmDefenderEnsure}
+          >
+            {defenderPending.length ? `加入白名单 (${defenderPending.length})` : '已全部在白名单'}
+          </Button>
+        ]}
+        width={560}
+      >
+        {defenderLoading ? <Spin size="small" /> : (
+          <div style={{ fontSize: 12, color: '#ccc' }}>
+            {!defenderStatus?.supported ? (
+              <div style={{ color: '#faad14' }}>
+                当前环境不支持（{defenderStatus?.reason || '未知原因'}）。此功能仅在安装了 Defender 的 Windows 上可用。
+                {defenderStatus?.error ? <div style={{ color: '#888', marginTop: 6 }}>{defenderStatus.error}</div> : null}
+              </div>
+            ) : (
+              <>
+                <div style={{ color: '#faad14', marginBottom: 10 }}>
+                  注意：把目录加入白名单会<b>降低该目录的实时防护</b>。加入需要管理员权限，会弹出 UAC 由你确认。
+                </div>
+                {defenderProjects.length === 0 ? (
+                  <div style={{ color: '#888' }}>尚无已登记项目。请先在上方选择工作区目录。</div>
+                ) : (
+                  <List
+                    size="small"
+                    dataSource={defenderProjects}
+                    renderItem={item => (
+                      <List.Item style={{ padding: '4px 8px' }}>
+                        <Space>
+                          <span style={{ color: item.excluded ? '#52c41a' : '#ff4d4f' }}>
+                            {item.excluded ? '已排除' : '未排除'}
+                          </span>
+                          <Text code style={{ fontSize: 11 }}>{item.path}</Text>
+                        </Space>
+                      </List.Item>
+                    )}
+                  />
+                )}
+              </>
+            )}
+          </div>
+        )}
       </Modal>
       {/* S5: 拓扑索引搜索 modal —— 按符号/类名/方法名跨文件检索 */}
       <WorkspaceTopologySearch
@@ -1268,6 +1379,22 @@ async function executeSingleCommand(cmd, workspaceDir, onLog, sessionId) {
         return `{"proc":"error","task_id":${JSON.stringify(id)},"error":${JSON.stringify(detail)}}`
       }
     }
+    case 'proc_sweep': {
+      // [方案C 兜底] 现查无登记任务时（如 sidecar 重启清空台账），按工作区目录做 OS 级兜底清扫。
+      //   cwd 由后端带（=工作区根）；缺失则退回本组件的 workspaceDir。
+      const cwd = String(cmd.cwd || workspaceDir || '').trim()
+      if (!cwd) return '{"proc":"error","error":"proc_sweep 需要 cwd"}'
+      try {
+        const res = await localApi.post('/api/local/bash/sweep', { cwd, workspace_root: workspaceDir })
+        const d = res.data || {}
+        onLog?.(`[AgentCMD] proc_sweep cwd=${cwd} killed=${d.killed} via=${d.via} enumerated=${d.enumerated} matched=${d.matched} enumErr=${d.enumErr || ''} detail=${JSON.stringify(d.detail || [])}\n`)
+        return JSON.stringify({ proc: 'swept', cwd, killed: d.killed === true })
+      } catch (e) {
+        const detail = e.response?.data?.error || e.message
+        onLog?.(`[AgentCMD] proc_sweep failed: ${detail}\n`)
+        return `{"proc":"error","error":${JSON.stringify(detail)}}`
+      }
+    }
     case 'graph':
     case 'graph_search':
     case 'graph_callchain':
@@ -1295,6 +1422,56 @@ async function executeSingleCommand(cmd, workspaceDir, onLog, sessionId) {
       // 以免被流式预派发; 后端每条指令都带唯一 id, 不会命中 streamedCmdResults 的 id 缓存。
       onLog?.(`[AgentCMD] plan_continue ack id=${cmd.id || ''}\n`)
       return '{"ack":true,"note":"已确认，请继续生成写方案"}'
+    }
+    case 'defender_exclude': {
+      // 后端检测到"写/git 腿被系统实时防护瞬时拒绝"后提议这件事；**排除哪些目录由客户端决定**
+      // （后端不带任何路径）。这里把当前工作区并入已登记项目集，再让 sidecar 自算缺少的集合，
+      // 一次性提权批量加入。是否需要 UAC 由 sidecar 判断：全都已排除就不会弹框。
+      // 诚实纪律：以 sidecar"重新读取排除列表"的判定为准，不把"发出了提权请求"当成"已生效"。
+      try {
+        // 人批准才执行：这是后端在"写/git 腿被实时防护拒绝"后自动发来的提议，不是用户主动点的。
+        // 加入排除项会降低该目录实时防护，必须由用户显式点头（随后还会弹一次 UAC）。
+        const approved = await confirmRunCommand(
+          { action: 'run', command: 'Add-MpPreference -ExclusionPath <本项目目录>', args: [] },
+          '把项目目录加入 Windows Defender 白名单会降低该目录的实时防护，且需要管理员权限（会弹 UAC）。',
+          onLog
+        )
+        if (!approved) {
+          onLog?.(`[AgentCMD] defender_exclude REJECTED by user\n`)
+          return JSON.stringify({ defender: 'rejected' })
+        }
+        const regPaths = workspaceDir ? [workspaceDir] : []
+        if (regPaths.length) {
+          try { await localApi.post('/api/local/workspaces/register', { paths: regPaths }) } catch (e) { /* 登记失败不阻断 ensure */ }
+        }
+        try {
+          const st = await localApi.get('/api/local/defender/status')
+          if (st.data?.supported === false) {
+            onLog?.(`[AgentCMD] defender_exclude 不支持: ${st.data?.reason || 'unknown'}\n`)
+            return JSON.stringify({ defender: 'unsupported', reason: st.data?.reason || 'unknown' })
+          }
+          const pending = (st.data?.projects || []).filter(p => p.excluded === false).map(p => p.path)
+          onLog?.(`[AgentCMD] defender_exclude pending=${pending.length} ${pending.join(', ')}\n`)
+        } catch (e) {
+          onLog?.(`[AgentCMD] defender_exclude status failed: ${e.response?.data?.error || e.message}\n`)
+        }
+        const res = await localApi.post('/api/local/defender/ensure', { paths: regPaths })
+        const d = res.data || {}
+        onLog?.(`[AgentCMD] defender_exclude ok=${d.ok} alreadyOk=${d.alreadyOk} added=${(d.added || []).length} stillMissing=${(d.stillMissing || []).length} msg=${d.message || ''}\n`)
+        return JSON.stringify({
+          defender: d.ok ? 'ok' : 'failed',
+          already_ok: d.alreadyOk === true,
+          requested: d.requested || [],
+          added: d.added || [],
+          still_missing: d.stillMissing || [],
+          reason: d.reason || null,
+          message: d.message || null,
+        })
+      } catch (e) {
+        const detail = e.response?.data?.error || e.message
+        onLog?.(`[AgentCMD] defender_exclude failed: ${detail}\n`)
+        return JSON.stringify({ defender: 'failed', error: detail })
+      }
     }
     default:
       // [F47 修复轮] 走到这里 = 这个包里没有该动作的 case（后端新加的动作 + 浏览器加载旧包）。

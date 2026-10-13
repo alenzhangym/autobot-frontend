@@ -2414,6 +2414,17 @@ function App() {
     createSessionDirect(ch)
   }
 
+  // 客户端统一管理 Defender 排除项：工作区一旦确定就登记给 sidecar（它据此自算要排除哪些目录）。
+  // 只登记不弹窗，纯粹维护"这台 sidecar 服务哪些项目根"的集合；真正加排除项由用户点入口触发。
+  useEffect(() => {
+    if (!workspaceDir) return
+    fetch(`${getLocalAgentBaseUrl()}/api/local/workspaces/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: workspaceDir }),
+    }).catch(() => {})
+  }, [workspaceDir])
+
   // Handle workspace selection without creating new session
   const handleWorkspaceSelect = (newDir) => {
     if (!newDir || newDir === workspaceDir) return

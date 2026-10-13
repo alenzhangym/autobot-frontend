@@ -24,9 +24,11 @@ export const FRONTEND_CAPABILITIES = Object.freeze([
   // 写
   'write', 'delete', 'restore_bak', 'delete_bak',
   // 执行
-  'run', 'proc_start', 'proc_status', 'proc_stop',
+  'run', 'proc_start', 'proc_status', 'proc_stop', 'proc_sweep',
   // 环境（F47）
   'env_probe',
+  // 系统防护（Windows Defender 排除项；由客户端统一管理，见 runtime/defenderExclusions.js）
+  'defender_exclude',
   // 流程（F39⑥）
   'plan_continue',
 ]);
