@@ -21,6 +21,9 @@
 export const FRONTEND_CAPABILITIES = Object.freeze([
   // 只读
   'read', 'ls', 'tree_sync',
+  // [F72·枚23/枚26] 只读端口真探（读现有监听表，不占口）：运行腿的"起来了没有"与停止腿的
+  //   "停了没有"都要这一格结构事实，不再靠 stdout 词表猜。
+  'proc_port_probe',
   // 写
   'write', 'delete', 'restore_bak', 'delete_bak',
   // 执行

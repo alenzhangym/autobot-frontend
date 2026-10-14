@@ -236,7 +236,11 @@ export async function killOrphansByCwd(cwd, opts = {}) {
   for (const t of targets) {
     const r = await forceKill(t.pid)
     if (r.killed) killedAny = true
-    detail.push({ pid: t.pid, killed: r.killed, exitCode: r.exitCode, error: r.error })
+    // [F72·枚26] 带上命令行摘要（截断）：服务端要拿它对着**模块表**说"命中这条是哪一档"，
+    //   否则"停止前端服务"永远只能说"扫到几条"，答不出停的是不是前端。摘要只用于归属判断，
+    //   不进模型上下文的那格由服务端控制。
+    detail.push({ pid: t.pid, killed: r.killed, exitCode: r.exitCode, error: r.error,
+      cmd: String(t.commandLine || '').replace(/\s+/g, ' ').trim().slice(0, 120) })
   }
   const killedN = detail.filter((d) => d.killed).length
   console.log(`[sweep] cwd=${cwd} 枚举 ${procs.length} 条(via=${listing.via})，命中 ${targets.length} 条，`

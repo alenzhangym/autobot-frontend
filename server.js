@@ -1774,6 +1774,7 @@ import { getOrCreate, get, kill as killShellById, list as listShells, killAll as
 import { analyzeCommand, setDefaultRules as setAnalyzerRules, setDefaultAction as setAnalyzerAction, DEFAULT_RULES as ANALYZER_DEFAULT_RULES } from './src/runtime/commandAnalyzer.js';
 import { createTask as createBgTask, get as getTask, list as listTasks, kill as killTask, killAll as killAllTasks, summarize as summarizeTask } from './src/runtime/taskRegistry.js';
 import { killOrphansByCwd } from './src/runtime/processGroup.js';
+import { probePortListening } from './src/runtime/portProbe.js';
 import { webfetch, WebfetchError } from './src/runtime/webfetch.js';
 import { websearch, WebsearchError } from './src/runtime/websearch.js';
 import { write as todoWrite, read as todoRead, updateItem as todoUpdate, clear as todoClear } from './src/runtime/todoStore.js';
@@ -1933,6 +1934,20 @@ app.post('/api/local/bash/sweep', async (req, res) => {
         //   杀到"时必须说得出原因（权限/进程已不在/枚举整条空回），否则停止腿只能拿到一个 false。
         res.json({ killed: r.killed, enumerated: r.enumerated, matched: r.matched,
             via: r.via, enumErr: r.enumErr, detail: r.detail });
+    } catch (err) {
+        res.status(500).json({ status: 'error', error: err.message });
+    }
+});
+
+// [F72·枚23/枚26] proc_port_probe —— 只读探一个端口现在有没有进程在听（读**现有监听表**，
+//   不做绑定试探：那会短暂占口，且只回答"我能不能占"而不是"谁在听"）。
+//   三态是这一格的全部意义：枚举失败必须回 unknown，绝不能折成 free ——
+//   "没探到"和"没有"是两件事（真机 12:55 那轮就是被这两个词混过去的）。
+app.post('/api/local/bash/port-probe', async (req, res) => {
+    try {
+        const r = await probePortListening(req.body && req.body.port);
+        res.json({ state: r.state, port: r.port, pids: r.pids, via: r.via,
+            enumerated: r.enumerated, error: r.error });
     } catch (err) {
         res.status(500).json({ status: 'error', error: err.message });
     }

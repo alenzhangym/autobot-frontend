@@ -1388,11 +1388,40 @@ async function executeSingleCommand(cmd, workspaceDir, onLog, sessionId) {
         const res = await localApi.post('/api/local/bash/sweep', { cwd, workspace_root: workspaceDir })
         const d = res.data || {}
         onLog?.(`[AgentCMD] proc_sweep cwd=${cwd} killed=${d.killed} via=${d.via} enumerated=${d.enumerated} matched=${d.matched} enumErr=${d.enumErr || ''} detail=${JSON.stringify(d.detail || [])}\n`)
-        return JSON.stringify({ proc: 'swept', cwd, killed: d.killed === true })
+        // [F72·枚26] 诊断字段一起回传，不再只留在本机日志里：服务端要说清"扫了几条/命中几条/
+        //   逐条杀没杀掉"必须拿到它们。旧形状只有 {proc,cwd,killed} 三键 → 交付只能回一个布尔，
+        //   于是"停止前后端服务"杀了一条却没说杀的是谁，用户只能再问一次「停止前端服务」（真机 12:55）。
+        return JSON.stringify({ proc: 'swept', cwd, killed: d.killed === true,
+          enumerated: Number.isFinite(d.enumerated) ? d.enumerated : -1,
+          matched: Number.isFinite(d.matched) ? d.matched : -1,
+          via: d.via || '', enumErr: d.enumErr || '',
+          pids: (d.detail || []).map((x) => `${x.pid}${x.killed ? '' : '(未杀掉)'}`).join(' '),
+          // 逐条命令行摘要（剥掉引号与反斜杠 —— 回传正文由服务端的朴素 jsonField 取字段，
+          //   嵌套引号会把它读歪；完整原文只进本机 onLog）。
+          matched_cmds: (d.detail || []).map((x) => `${x.pid}${x.killed ? '' : '(未杀掉)'} `
+            + String(x.cmd || '').replace(/["\\]/g, '').slice(0, 120)).join(' ;; ') })
       } catch (e) {
         const detail = e.response?.data?.error || e.message
         onLog?.(`[AgentCMD] proc_sweep failed: ${detail}\n`)
         return `{"proc":"error","error":${JSON.stringify(detail)}}`
+      }
+    }
+    case 'proc_port_probe': {
+      // [F72·枚23/枚26] 只读: 这个端口现在有没有进程在听（读现有监听表，不做绑定试探）。
+      //   三态原样回传 —— listening / free / unknown。"枚举失败"绝不能折成"没在听"，
+      //   这一格存在的意义就是把这两件事分开说。
+      try {
+        const res = await localApi.post('/api/local/bash/port-probe', { port: cmd.port })
+        const d = res.data || {}
+        onLog?.(`[AgentCMD] proc_port_probe port=${cmd.port} state=${d.state} pids=${d.pids || ''} via=${d.via} enumerated=${d.enumerated} err=${d.error || ''}\n`)
+        return JSON.stringify({ proc: 'portprobe', port: d.port ?? null, state: d.state || 'unknown',
+          pids: d.pids || '', via: d.via || '',
+          enumerated: Number.isFinite(d.enumerated) ? d.enumerated : -1,
+          error: d.error || '' })
+      } catch (e) {
+        const detail = e.response?.data?.error || e.message
+        onLog?.(`[AgentCMD] proc_port_probe failed: ${detail}\n`)
+        return `{"proc":"portprobe","state":"unknown","error":${JSON.stringify(detail)}}`
       }
     }
     case 'graph':
