@@ -51,7 +51,9 @@ describe('parseListenTable：netstat（Linux 与 macOS 两种列形）', () => {
       'Proto Recv-Q Send-Q Local Address          Foreign Address        State',
       'tcp        0      0 0.0.0.0:8081           0.0.0.0:*              LISTEN',
       'tcp        0      0 127.0.0.1:5432         0.0.0.0:*              LISTEN',
-      'tcp        0      0 127.0.0.1:5432         127.0.0.1:49999        ESTABLISHED',
+      //   这条 ESTABLISHED 的**本地端口不在监听表里**：筛掉 LISTEN 的那把刀只有在这种数据上才咬得动
+      //   （旧数据用的是 5432，去掉筛选也得到同一个键 → 变异体等价，2026-10-14 实测过）
+      'tcp        0      0 127.0.0.1:54999        127.0.0.1:49999        ESTABLISHED',
     ].join('\n')
     const t = parseListenTable(linux, 'netstat')
     assert.deepEqual([...t.keys()].sort((a, b) => a - b), [5432, 8081])
