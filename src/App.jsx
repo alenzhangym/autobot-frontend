@@ -143,6 +143,16 @@ const isStatusOnlyAssistantMsg = (m) => {
   return STATUS_ONLY_PHRASES.has(content)
 }
 
+// [F72 §42] 本轮终态徽标。今天它画在列表底下**另一个只有头像的空消息框**上（Footer 那一格），
+// 于是用户看到的是"又冒了一条消息说已完成"。改挂到**这条答复自己**的名字那一行 —— 终态说的是
+// 这条答复，就该长在这条答复上。进行中那一格仍留在 Footer（它要带 spinner 与取消入口）。
+const TURN_END_TAG = {
+  COMPLETED: ['success', '已完成'],
+  FAILED: ['error', '失败'],
+  CANCELLED: ['default', '已取消'],
+  SESSION_UNAVAILABLE: ['default', '会话已不可用'],
+}
+
 const isFlowIntermediateMsg = (m) => {
   if (!m || m.role !== 'assistant') return false
   if (isStatusOnlyAssistantMsg(m)) return true
@@ -4307,6 +4317,10 @@ const handleDeleteSession = (id) => {
                     increaseViewportBy={{ top: 200, bottom: 200 }}
                     itemContent={(index) => {
                       const msg = messages[index]
+                      // [F72 §42] 本轮终态挂在最后一条答复上（原来它画在列表底下另一个只有头像的空框里，
+                      //   读起来像"又冒了一条新消息说已完成"）。
+                      const endTag = index === messages.length - 1 && !isLoading
+                        ? (TURN_END_TAG[reactSessionState || ''] || null) : null
                       // [F67②] 一个目标链一张结果卡：本轮已经收口（末条不是中间态、也不是流式那格空正文）时，
                       // 整串 assistant 消息收进一张卡 —— 各段过程默认折叠，主体仍是那条真实答复（沿用既有气泡与其副面板）。
                       // 本轮还在跑时不接管，交给下面的流程卡，进行中的样子与今天一字不差。
@@ -4317,7 +4331,7 @@ const handleDeleteSession = (id) => {
                         return (
                           <div style={{ maxWidth: 1000, margin: '0 auto', padding: isMobile ? '0 12px' : '0 24px' }}>
                             <TurnResultCard msgs={messages.slice(turnRun.start, turnRun.end + 1)}>
-                              <MessageBubble msg={msg} onDelete={() => handleDeleteMessage(msg.id || msg._localId)} sessionId={sessionId} />
+                              <MessageBubble msg={msg} onDelete={() => handleDeleteMessage(msg.id || msg._localId)} sessionId={sessionId} endTag={endTag} />
                               {msg.explanation && <ResultExplanationCard explanation={msg.explanation} />}
                               {msg.paramSources && <ParamSourceCard paramSources={msg.paramSources} />}
                               {msg.crossDomainEntities && <CrossDomainEntityCard entities={msg.crossDomainEntities} />}
@@ -4350,6 +4364,7 @@ const handleDeleteSession = (id) => {
                               <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '2px 0 16px 42px', color: '#6b6b6b', fontSize: 12 }}>
                                 <RobotOutlined style={{ fontSize: 12 }} />
                                 <span>{seen.join(' → ')}</span>
+                                {endTag && <Tag color={endTag[0]} style={{ fontSize: 11, margin: 0 }}>{endTag[1]}</Tag>}
                               </div>
                             </div>
                           )
@@ -4357,12 +4372,15 @@ const handleDeleteSession = (id) => {
                         return (
                           <div style={{ maxWidth: 1000, margin: '0 auto', padding: isMobile ? '0 12px' : '0 24px' }}>
                             <FlowProcessCard msgs={groupMsgs} />
+                            {endTag && (
+                              <Tag color={endTag[0]} style={{ fontSize: 11, margin: '2px 0 0 42px' }}>{endTag[1]}</Tag>
+                            )}
                           </div>
                         )
                       }
                       return (
                         <div style={{ maxWidth: 1000, margin: '0 auto', padding: isMobile ? '0 12px' : '0 24px' }}>
-                          <MessageBubble msg={msg} onDelete={() => handleDeleteMessage(msg.id || msg._localId)} sessionId={sessionId} />
+                          <MessageBubble msg={msg} onDelete={() => handleDeleteMessage(msg.id || msg._localId)} sessionId={sessionId} endTag={endTag} />
                           {msg.explanation && <ResultExplanationCard explanation={msg.explanation} />}
                           {msg.paramSources && <ParamSourceCard paramSources={msg.paramSources} />}
                           {msg.crossDomainEntities && <CrossDomainEntityCard entities={msg.crossDomainEntities} />}
@@ -4410,14 +4428,13 @@ const handleDeleteSession = (id) => {
                       },
                       Footer: () => {
                         // 2026-09-01: 附加 ReactSession 实时状态徽标（经 /ws/react/{sessionId} 推送）
+                        // [F72 §42] 这一行只在<b>本轮还在跑</b>时出现（spinner / 取消入口 / 卡住提示）。
+                        //   终态那一格改挂到最后一条答复上（见 itemContent 里的 endTag）：它原来在列表底下
+                        //   另起一个只有头像、没有正文的空消息框，用户读到的是"又冒了一条消息说已完成"。
                         const running = isLoading && messages.length > 0;
+                        if (!running) return null;
                         const st = reactSessionState || '';
-                        const terminal = ['COMPLETED', 'FAILED', 'CANCELLED', 'SESSION_UNAVAILABLE'].includes(st);
-                        // [F72 §13] 会话停在非终态（真机 18:23 那轮收场后 WS 报的仍是 RUNNING）时，
-                        // 原来这一格照样渲染 → 页面底下多出一个只有头像、没有正文的空消息框。
-                        if (!running && !terminal) return null;
-                        const meta = { COMPLETED: ['success', '已完成'], FAILED: ['error', '失败'], CANCELLED: ['default', '已取消'] };
-                        const [color, label] = meta[st] || (terminal ? ['default', st] : ['processing', `会话状态: ${st}`]);
+                        const [color, label] = TURN_END_TAG[st] || ['processing', `会话状态: ${st}`];
                         return (
                           <div style={{ maxWidth: 1000, margin: '0 auto', padding: isMobile ? '0 12px' : '0 24px' }}>
                             <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>

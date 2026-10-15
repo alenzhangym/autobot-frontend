@@ -286,7 +286,7 @@ function StructuredAnalysisView({ data }) {
   );
 }
 
-function MessageBubble({ msg, onCopy, onRegenerate, onExpand, onDelete, sessionId, index }) {
+function MessageBubble({ msg, onCopy, onRegenerate, onExpand, onDelete, sessionId, index, endTag }) {
   const [copied, setCopied] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [injectedHtml, setInjectedHtml] = useState(null);
@@ -500,6 +500,11 @@ function MessageBubble({ msg, onCopy, onRegenerate, onExpand, onDelete, sessionI
       <div style={{ maxWidth: 'calc(100% - 50px)', flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
           <span style={{ color: '#888', fontSize: 12 }}>{isUser ? 'You' : 'AutoBot'}</span>
+          {/* [F72 §42] 本轮终态（已完成/失败/已取消）挂在<b>这条答复自己</b>那一行，
+              不再像今天这样在列表底下另起一个只有头像的空消息框。 */}
+          {!isUser && endTag && (
+            <Tag color={endTag[0]} style={{ fontSize: 11, margin: 0 }}>{endTag[1]}</Tag>
+          )}
           {formatMessageTime(msg) && (
             <span style={{ color: '#555', fontSize: 11 }}>{formatMessageTime(msg)}</span>
           )}
