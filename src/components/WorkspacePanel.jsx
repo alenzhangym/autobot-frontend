@@ -1424,6 +1424,31 @@ async function executeSingleCommand(cmd, workspaceDir, onLog, sessionId) {
         return `{"proc":"portprobe","state":"unknown","error":${JSON.stringify(detail)}}`
       }
     }
+    case 'proc_listen': {
+      // [F72·枚35] 只读: 这条任务(task_id)的**进程树此刻在听哪些口**（按 pid 归树，不占口、不筛端口）。
+      //   state 三态原样回传 —— ok / unknown / no-root。"枚举失败"与"一条都没有"是两件事。
+      const id = String(cmd.task_id || '').trim()
+      try {
+        const res = await localApi.post('/api/local/bash/proc-listen',
+          { task_id: id, pid: cmd.pid })
+        const d = res.data || {}
+        onLog?.(`[AgentCMD] proc_listen task=${id} state=${d.state} via=${d.via} roots=${(d.roots || []).join(',')} listeners=${(d.listeners || []).length} err=${d.error || ''}\n`)
+        // 回传体是**扁平**的：服务端的 jsonField 是朴素抽键（嵌套数组会被读歪），所以
+        //   listeners/tree 逐行收成 "|" / 空格分隔的字符串，逐字带出处（pid|port|address|channel）。
+        return JSON.stringify({
+          proc: 'listen', task_id: d.task_id || id, state: d.state || 'unknown',
+          roots: (d.roots || []).join(' '), tree: (d.tree || []).join(' '),
+          listeners: (d.listeners || [])
+            .map((x) => `${x.pid}|${x.port}|${x.address}|${x.channel}`).join(';'),
+          via: d.via || '', enumerated: Number.isFinite(d.enumerated) ? d.enumerated : -1,
+          error: d.error || '',
+        })
+      } catch (e) {
+        const detail = e.response?.data?.error || e.message
+        onLog?.(`[AgentCMD] proc_listen failed: ${detail}\n`)
+        return `{"proc":"listen","task_id":${JSON.stringify(id)},"state":"unknown","error":${JSON.stringify(detail)}}`
+      }
+    }
     case 'graph':
     case 'graph_search':
     case 'graph_callchain':

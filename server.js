@@ -1775,6 +1775,7 @@ import { analyzeCommand, setDefaultRules as setAnalyzerRules, setDefaultAction a
 import { createTask as createBgTask, get as getTask, list as listTasks, kill as killTask, killAll as killAllTasks, summarize as summarizeTask } from './src/runtime/taskRegistry.js';
 import { killOrphansByCwd } from './src/runtime/processGroup.js';
 import { probePortListening } from './src/runtime/portProbe.js';
+import { collectProcListen } from './src/runtime/procListen.js';
 import { webfetch, WebfetchError } from './src/runtime/webfetch.js';
 import { websearch, WebsearchError } from './src/runtime/websearch.js';
 import { write as todoWrite, read as todoRead, updateItem as todoUpdate, clear as todoClear } from './src/runtime/todoStore.js';
@@ -1948,6 +1949,22 @@ app.post('/api/local/bash/port-probe', async (req, res) => {
         const r = await probePortListening(req.body && req.body.port);
         res.json({ state: r.state, port: r.port, pids: r.pids, via: r.via,
             enumerated: r.enumerated, error: r.error });
+    } catch (err) {
+        res.status(500).json({ status: 'error', error: err.message });
+    }
+});
+
+// [F72·枚35] proc_listen —— 只读事实：某个后台任务(task_id)的**进程树此刻在听哪些口**。
+//   为什么不能复用 port-probe：那一格要一个"端口"当输入，而 npm 包了一层 node、端口在子进程上，
+//   账上这条腿的端口格是空的 → 永不铸探针（§0.④）。这一格按 task_id 顺 pid 树，不看端口格。
+//   返回逐行原料 {pid, port, address, channel}，服务端只当账上的原料，不解读、不筛口。
+app.post('/api/local/bash/proc-listen', async (req, res) => {
+    try {
+        const r = await collectProcListen({
+            taskId: String((req.body && req.body.task_id) || '').trim(),
+            rootPid: req.body && req.body.pid,
+        });
+        res.json(r);
     } catch (err) {
         res.status(500).json({ status: 'error', error: err.message });
     }

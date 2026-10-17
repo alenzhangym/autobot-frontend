@@ -24,6 +24,10 @@ export const FRONTEND_CAPABILITIES = Object.freeze([
   // [F72·枚23/枚26] 只读端口真探（读现有监听表，不占口）：运行腿的"起来了没有"与停止腿的
   //   "停了没有"都要这一格结构事实，不再靠 stdout 词表猜。
   'proc_port_probe',
+  // [F72·枚35] 只读任务真探（按 task_id 顺 pid 树，看它的进程树在听哪些口）：停止腿"停了没有"
+  //   与运行腿"起来了没有"都要这一格结构事实。与 proc_port_probe 的分工：那一格按**端口**问，
+  //   这一格按**任务**问 —— npm 包了一层 node、端口在子进程上时，只有后者答得出来。
+  'proc_listen',
   // 写
   'write', 'delete', 'restore_bak', 'delete_bak',
   // 执行
