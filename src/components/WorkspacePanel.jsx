@@ -6,6 +6,10 @@ import axios from 'axios'
 import { shouldRequireConfirmation, formatCommandSummary, addTrustedPattern, patternFromCommand } from './agentCommandSafety'
 import { unsupportedActionPayload } from '../utils/unsupportedAction'
 import { clampWaitMs } from '../runtime/procVerifyWait.js'
+import {
+  buildCommandResultsMeta, buildCommandCellResults, isBatchEnumerated,
+  recordCommandCellFact, takeCommandCellFacts,
+} from '../runtime/commandResultsMeta.js'
 import { extractTrailingStateJson, extractImplStateBlock } from '../utils/helpers.jsx'
 import WorkspaceTopologySearch from './WorkspaceTopologySearch'
 
@@ -572,22 +576,9 @@ function extractTrailingAnalysisStateJson(content) {
   return parts.join('')
 }
 
-/**
- * P1 线协议升级: 构造 [COMMAND_RESULTS] 可选的 [META:{json}] 行。
- * 仅携带已跟踪的字段 (session_id 必有; turn_id / tool_call_id / session_version 尚未
- * 跟踪时可缺省, 由后端填权威值)。无 sessionId 时返回空串 → 消息保持与 legacy 格式一致。
- * @param {string} sessionId
- * @param {{turnId?: number, toolCallId?: string, sessionVersion?: number}} [extra]
- * @returns {string} '[META:{...}]' 或 ''
- */
-export function buildCommandResultsMeta(sessionId, extra) {
-  if (!sessionId) return ''
-  const meta = { session_id: sessionId }
-  if (extra?.turnId != null) meta.turn_id = extra.turnId
-  if (extra?.toolCallId != null) meta.tool_call_id = extra.toolCallId
-  if (extra?.sessionVersion != null) meta.session_version = extra.sessionVersion
-  return `[META:${JSON.stringify(meta)}]`
-}
+// [返工 R2·2.1] [META:{json}] 头与逐格原子事实的纯逻辑在 runtime/commandResultsMeta.js
+//   —— 抽出去是为了钉住"不给 extra 就与今天逐字节一致"这条判据（JSX 在 node --test 下编不动，
+//   与 runtime/portProbe.js、runtime/procListen.js 同一口径）。这里只负责在派发时记账。
 
 // ── Streaming __CMD__ pre-dispatch ───
 // When the LLM streams tokens via WebSocket, we intercept __CMD__ blocks and
@@ -805,13 +796,25 @@ export async function executeAgentCommands(text, workspaceDir, onLog, sessionId)
   const readCmds = commands.filter(c => readActions.has(c.action))
   const mutCmds = commands.filter(c => !readActions.has(c.action))
 
+  // [返工 R2·2.1] 逐格耗时：只有**这一批真执行过**的那几格才有值。
+  //   走缓存复用（流式预派发已经跑过）的那条不许编一个本轮耗时出来 —— 那一格本轮没花时间。
+  const cellTimings = new Map()
+  async function runCell(cmd) {
+    const t0 = Date.now()
+    try {
+      return await executeSingleCommand(cmd, workspaceDir, onLog, sessionId)
+    } finally {
+      cellTimings.set(cmd.id, Date.now() - t0)
+    }
+  }
+
   for (const cmd of readCmds) {
     const targetPath = cmd.path || workspaceDir || '(empty)'
     onLog?.(
       `[AgentCMD] Running ${cmd.action} id=${cmd.id || '(none)'} path=${targetPath}${formatCommandLogMeta(cmd)}\n`
     )
   }
-  const readResults = await Promise.all(readCmds.map(c => executeSingleCommand(c, workspaceDir, onLog, sessionId)))
+  const readResults = await Promise.all(readCmds.map(c => runCell(c)))
   for (let i = 0; i < readCmds.length; i++) {
     const cmd = readCmds[i]
     let r = await resolveCachedResult(cmd.id, readResults[i])
@@ -830,7 +833,7 @@ export async function executeAgentCommands(text, workspaceDir, onLog, sessionId)
       onLog?.(
         `[AgentCMD] Running ${cmd.action} id=${cmd.id || '(none)'} path=${targetPath}${formatCommandLogMeta(cmd)}\n`
       )
-      r = await executeSingleCommand(cmd, workspaceDir, onLog, sessionId)
+      r = await runCell(cmd)
       streamedCmdResults.set(cmd.id, r)
     } else {
       onLog?.(`[AgentCMD] Reusing streamed ${cmd.action} id=${cmd.id || '(none)'}\n`)
@@ -841,8 +844,16 @@ export async function executeAgentCommands(text, workspaceDir, onLog, sessionId)
   // Preserve the full trailing state JSON so backend can recover the next round correctly
   const stateJson = extractTrailingAnalysisStateJson(text)
 
+  // [返工 R2·2.1] 逐格原子事实 + "这批我逐格报完了没有"。前端**不折 outcome、不折批**：
+  //   这里既没写 status 也没写 killed_ids —— 那一层判决归读回灌正文的一方，
+  //   服务端唯一的集合运算（killed_ids = ∪ timed_out）在 CommandResultsEnvelope 一处做。
+  const cellResults = buildCommandCellResults(commands, takeCommandCellFacts(commands), cellTimings)
+
   // P1: 可选 [META:...] 头 (有 sessionId 时前置), body 部分与 legacy 格式逐字节一致.
-  const metaLine = buildCommandResultsMeta(sessionId)
+  const metaLine = buildCommandResultsMeta(sessionId, {
+    results: cellResults,
+    enumerated: isBatchEnumerated(commands),
+  })
 
   // P2: 当有并行只读命令时，在结果中嵌入批次元信息，让后端能匹配到 pendingToolCalls
   const batchLine = readCmds.length > 1
@@ -1183,6 +1194,9 @@ async function executeSingleCommand(cmd, workspaceDir, onLog, sessionId) {
         const output = res.data.output || ''
         const exitCode = typeof res.data.exit_code === 'number' ? res.data.exit_code : 0
         const timedOut = res.data.timed_out === true
+        // [返工 R2·2.1] 这两个字段是这一格唯一真在手的结构化事实，原样记进逐格账；
+        //   正文仍走 formatRunOutput，字节形状一个字节都不动。
+        recordCommandCellFact(cmd.id, { action: cmd.action, exit_code: exitCode, timed_out: timedOut })
         onLog?.(`[AgentCMD] run ok ${cmd.command} (exit=${exitCode}${timedOut ? ', timed out' : ''})\n`)
         return formatRunOutput(output, exitCode, timedOut)
       } catch (e) {

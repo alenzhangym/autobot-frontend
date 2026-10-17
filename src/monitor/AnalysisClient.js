@@ -6,6 +6,9 @@ import { EventEmitter } from 'events';
 import os from 'os';
 import { parseAllCmdBlocks } from '../utils/cmdBlocks.js'; // S2: 共享解析器
 import { unsupportedActionPayload } from '../utils/unsupportedAction.js';
+// [返工 R2·2.1] META 头的形状只有一个定义点（与 WorkspacePanel 同一份）。
+// 留两份=协议一加字段就有一份悄悄落后；这一只客户端不发逐格明细，走的正是"缺字段=旧语义"那条路。
+import { buildCommandResultsMeta } from '../runtime/commandResultsMeta.js';
 
 /**
  * AnalysisClient drives the autobot backend's chat endpoint to perform a
@@ -32,17 +35,9 @@ function parseCmdBlocks(text) {
   return parseAllCmdBlocks(text).map(b => b.cmd);
 }
 
-// P1 线协议升级: 构造 [COMMAND_RESULTS] 可选的 [META:{json}] 行。
-// 仅携带已跟踪字段 (session_id 必有); turn_id / tool_call_id / session_version 尚未跟踪
-// 时可缺省, 由后端填权威值。无 sessionId 时返回空串 → 消息保持与 legacy 格式一致。
-function buildCommandResultsMeta(sessionId, extra) {
-  if (!sessionId) return '';
-  const meta = { session_id: sessionId };
-  if (extra?.turnId != null) meta.turn_id = extra.turnId;
-  if (extra?.toolCallId != null) meta.tool_call_id = extra.toolCallId;
-  if (extra?.sessionVersion != null) meta.session_version = extra.sessionVersion;
-  return `[META:${JSON.stringify(meta)}]`;
-}
+// P1 线协议升级: [META:{json}] 行由 runtime/commandResultsMeta.js 统一构造。
+// 这里只传 sessionId（无 turn_id / tool_call_id / session_version 可跟踪 → 由后端填权威值；
+// 也不发逐格明细 → 后端按"缺字段=旧语义"处理，与今天一致）。
 
 function extractFinalJson(text) {
   if (!text) return null;
