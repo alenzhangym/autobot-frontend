@@ -127,15 +127,25 @@ async function listProcessTable() {
  *
  * <p>`state` 三态（与端口真探同一条纪律：绝不许把"没取到"折成"没有"）：</p>
  * <ul>
- *   <li>{@code ok}    监听表枚举成功（哪怕表里一条都没有 —— 那时 `listeners` 为空才是真事实）；</li>
- *   <li>{@code unknown} 监听表枚举失败/超时 —— 这一格今天不知道；</li>
+ *   <li>{@code ok}    <b>两份</b>事实都取到了（监听表 + 进程树）—— 那时 `listeners` 为空才是真事实；</li>
+ *   <li>{@code unknown} 监听表<b>或</b>进程树没取到 —— 这一格今天不知道；</li>
  *   <li>{@code no-root} 拿不到根 pid（task_id 不在登记簿里、或它没有活着的子进程句柄）。</li>
  * </ul>
  *
+ * <p>进程树那一半为什么也算缺事实（[F72·枚41 #161]）：npm 包一层 node 时端口挂在<b>子进程</b>上，
+ * 只有树枚举成功才认得出那棵树的成员。旧写法只看监听表 —— 树没拿到就只按根 pid 筛，
+ * 于是这份事实必然是空的，而 `state` 还写着 {@code ok}，服务端据此交付
+ * 「停完之后实测没有监听的口」：那正是 §0.④ 那条谎换了个措辞回来。</p>
+ *
  * @param {{taskId?: string, rootPid?: number|string}} opts
+ * @param {{listProcessTable?: Function, listListeners?: Function, getTask?: Function}} [deps]
+ *        只给用例注入真值用的缝（默认走本机枚举，产品路径不传）
  * @returns {Promise<object>}
  */
-export async function collectProcListen(opts = {}) {
+export async function collectProcListen(opts = {}, deps = {}) {
+  const listTable = deps.listProcessTable || listProcessTable
+  const listListen = deps.listListeners || listListeners
+  const lookupTask = deps.getTask || getTask
   const taskId = String(opts.taskId || '').trim()
   const observedAtMs = Date.now()
   const roots = []
@@ -143,7 +153,7 @@ export async function collectProcListen(opts = {}) {
   const rootPid = Number.parseInt(opts.rootPid, 10)
   if (rootPid > 0) roots.push(rootPid)
   if (taskId) {
-    const t = getTask(taskId)
+    const t = lookupTask(taskId)
     if (!t) {
       notes.push('task_id 不在端侧登记簿里（已终态并过了保留期，或本机不是起它的那台）')
     } else {
@@ -160,21 +170,20 @@ export async function collectProcListen(opts = {}) {
       observed_at_ms: observedAtMs }
   }
 
-  const treeInfo = await listProcessTable()
+  const treeInfo = await listTable()
+  const treeFailed = !(treeInfo && treeInfo.code === 0 && treeInfo.ppidOf && treeInfo.ppidOf.size > 0)
   let tree = dedup
-  if (treeInfo.code === 0 && treeInfo.ppidOf.size > 0) {
-    tree = descendFromRoots(dedup, treeInfo.ppidOf)
-  } else {
-    notes.push(treeInfo.err || '进程树枚举没给出可判的结果')
-  }
+  if (!treeFailed) tree = descendFromRoots(dedup, treeInfo.ppidOf)
+  else notes.push(((treeInfo && treeInfo.err) || '进程树枚举没给出可判的结果')
+    + ' —— 只认得到根 pid，认不出它的子进程（端口常常正挂在子进程上）')
 
-  const listen = await listListeners()
-  const enumerated = (listen.rows || []).length
-  const enumFailed = !listen.raw && listen.err
-  const state = enumFailed ? 'unknown' : 'ok'
-  if (enumFailed) notes.push('监听表枚举失败: ' + listen.err)
-  const listeners = enumFailed ? [] : listenersOfTree(listen.rows, tree)
-  return { task_id: taskId, roots: dedup, tree, listeners,
-    via: listen.via, enumerated, state,
+  const listen = await listListen()
+  const listenersEnumFailed = !listen.raw && listen.err
+  if (listenersEnumFailed) notes.push('监听表枚举失败: ' + listen.err)
+  // 两份事实任缺一格都不算"取到了" —— 缺事实只能写"今天不知道"，不许折成"没有监听的口"
+  const state = listenersEnumFailed || treeFailed ? 'unknown' : 'ok'
+  return { task_id: taskId, roots: dedup, tree,
+    listeners: listenersEnumFailed ? [] : listenersOfTree(listen.rows, tree),
+    via: listen.via, enumerated: (listen.rows || []).length, state,
     error: notes.filter(Boolean).join(' | '), observed_at_ms: observedAtMs }
 }
