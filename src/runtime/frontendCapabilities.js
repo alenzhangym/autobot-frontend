@@ -14,6 +14,18 @@
  * <p>约束: 这里的每一项都必须真的在 `components/WorkspacePanel.jsx` 的
  * `executeSingleCommand` 里有对应 `case`。清单只描述"我能执行什么"，不描述"后端有什么"。</p>
  *
+ * <p>[返工 R3·U1 贡献规范] 反方向同一条规矩，两条都要同笔改：<b>新增一个 `case` 就必须同笔入这份清单</b>
+ * （`__tests__/frontendCapabilities.test.js` 两向都钉着）。确实不归这份清单管的手 ——
+ * 后端就地解析的（`graph*` / `focus` / `issues` / `skill`）、写通道那一族的（`mkdir` / `cp` /
+ * `search_replace` / `network`）、只由铸卡那条腿下发而不经 `clientSupports` 的（`scan`）——
+ * 要在测试文件那份 `OUT_OF_LIST_BY_DESIGN` 里加一项并<b>写一行是谁下发的</b>；
+ * 空着不写等于下一轮没人分得清"漏报"和"刻意不报"。</p>
+ *
+ * <p>为什么反方向也值得钉：漏报的代价按族不同，最重的一族是<b>手令</b> —— 后端发前读
+ * `clientSupports`（`CodeAnalysisAgent` 的 `analysisCmdActions()` 那一族），
+ * 漏报会让一只本来在的手永远发不出去，而交付里出现的是 `[能力不支持]`，
+ * 读起来像"这台机器没这个能力"。那是谎报宿主事实，不是缺功能。</p>
+ *
  * <p>刻意<b>不</b>列的: `depgraph` / `graph*` / `focus` / `issues` / `skill` / `diff` —— 这些由后端
  * {@code ServerSideCommandResolver} 就地解析或由别的通道处理，前端走到它们只会落 `default` 回
  * `unsupported_action`；把它们列进来等于告诉后端"这只手在"，而它不在。</p>
