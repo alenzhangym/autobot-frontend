@@ -8,7 +8,7 @@ import { unsupportedActionPayload } from '../utils/unsupportedAction'
 import { clampWaitMs } from '../runtime/procVerifyWait.js'
 import {
   buildCommandResultsMeta, buildCommandCellResults, isBatchEnumerated,
-  recordCommandCellFact, takeCommandCellFacts,
+  recordCommandCellFact, takeCommandCellFacts, readRunCell,
 } from '../runtime/commandResultsMeta.js'
 import { extractTrailingStateJson, extractImplStateBlock } from '../utils/helpers.jsx'
 import WorkspaceTopologySearch from './WorkspaceTopologySearch'
@@ -1191,14 +1191,14 @@ async function executeSingleCommand(cmd, workspaceDir, onLog, sessionId) {
           tailLines: cmd.tail_lines || 200,
           skipIfNoTestScript: cmd.skip_if_no_test_script === true,
         })
-        const output = res.data.output || ''
-        const exitCode = typeof res.data.exit_code === 'number' ? res.data.exit_code : 0
-        const timedOut = res.data.timed_out === true
-        // [返工 R2·2.1] 这两个字段是这一格唯一真在手的结构化事实，原样记进逐格账；
-        //   正文仍走 formatRunOutput，字节形状一个字节都不动。
-        recordCommandCellFact(cmd.id, { action: cmd.action, exit_code: exitCode, timed_out: timedOut })
-        onLog?.(`[AgentCMD] run ok ${cmd.command} (exit=${exitCode}${timedOut ? ', timed out' : ''})\n`)
-        return formatRunOutput(output, exitCode, timedOut)
+        // [返工 R2·2.1] 这一格真在手的结构化事实原样记进逐格账。
+        // [枚48/#173] 正文与逐格账由同一次归一产出：sidecar 没回退出码 → 两处都如实成"不知道"，
+        //   不许折成 0（折出来的那个假 0 会被服务端读成"跑通了"）。
+        const cell = readRunCell(res.data.output, res.data.exit_code, res.data.timed_out)
+        recordCommandCellFact(cmd.id, { action: cmd.action, ...cell.fact })
+        onLog?.(`[AgentCMD] run ok ${cmd.command} (exit=${cell.exitCode ?? 'unknown'}`
+          + `${cell.timedOut ? ', timed out' : ''})\n`)
+        return cell.body
       } catch (e) {
         const detail = e.response?.data?.error || e.message
         onLog?.(`[AgentCMD] run failed ${cmd.command}: ${detail}\n`)
@@ -1637,14 +1637,4 @@ function tailLines(text, n) {
   if (!s) return ''
   const lines = s.split('\n')
   return lines.slice(Math.max(0, lines.length - (n || 40))).join('\n')
-}
-
-function formatRunOutput(output, exitCode, timedOut) {
-  if (typeof output !== 'string') output = String(output || '')
-  let suffix = ''
-  // 始终追加结构化退出码标记（成功 [exit=0] / 失败 [exit=N] / 超时），
-  // 让后端 isExecutionFailure 优先按退出码判定，避免"成功但 stdout 含 Error 字样"被误判为失败。
-  if (timedOut) suffix += `\n[Execution timed out]`
-  else suffix += `\n[exit=${exitCode}]`
-  return output + suffix
 }

@@ -57,6 +57,48 @@ export function isBatchEnumerated(commands) {
 }
 
 /**
+ * [枚48/#173] `run` 那一格的退出码：sidecar 没回 = <b>不知道</b>，不许折成 0。
+ *
+ * <p>原状是一处折两次：{@code WorkspacePanel.jsx} 的 {@code case 'run'} 与
+ * {@code scripts/dogfood/real-session-driver.mjs} 各写一份 {@code typeof x === 'number' ? x : 0}，
+ * 于是①交回服务端的正文尾部出现 {@code [exit=0]}、②逐格账的 {@code exit_code} 也是 0。
+ * 服务端 {@code CommandResultsEnvelope.exitCodeOfRunBody} 里"没有标记 = 判不了成败（不等于失败）"
+ * 那一支因此永远不会被喂到，而一条没拿到结论的命令被说成"跑通了"。</p>
+ *
+ * <p>定式：这一格只有<b>一个实现点</b>，正文与逐格账由同一次归一产出（一枚结构事实的两个消费点
+ * 不许各写一份）。{@code [exit=unknown]} 与"不写标记"在服务端读成同一格（都判不了成败），
+ * 选前者是为了让读正文的那一方看见"端侧真去拿了，那一格不在场"。</p>
+ */
+export function normalizeRunExitCode(raw) {
+  return Number.isInteger(raw) ? raw : null
+}
+
+/** 正文尾部那一格：被等待上限杀死 / 真拿到的退出码 / 没拿到（unknown = 判不了，不是失败）。
+ *  标记要始终在场：后端 `isExecutionFailure` 优先按它判，避免"成功但 stdout 含 Error 字样"被误判成失败。 */
+export function runOutputMarker(exitCode, timedOut) {
+  if (timedOut === true) return '\n[Execution timed out]'
+  return Number.isInteger(exitCode) ? `\n[exit=${exitCode}]` : '\n[exit=unknown]'
+}
+
+/**
+ * 一次产出 `run` 那一格的<b>两个</b>消费者：逐格账要的 fact、交回服务端的正文。
+ *
+ * <p>{@code fact} 里那一格缺失时 {@code exit_code} 键<b>不进</b>明细 —— 端侧只报原子事实，
+ * 缺字段在后端读成"不知道"（折成 null 上去会让 {@code ImplementationService} 那句
+ * "含 exit_code 且不为 0 = 失败"的字符串兜底把它读成失败）。</p>
+ */
+export function readRunCell(output, rawExitCode, rawTimedOut) {
+  const exitCode = normalizeRunExitCode(rawExitCode)
+  const timedOut = rawTimedOut === true
+  return {
+    exitCode,
+    timedOut,
+    fact: exitCode === null ? { timed_out: timedOut } : { exit_code: exitCode, timed_out: timedOut },
+    body: (typeof output === 'string' ? output : String(output || '')) + runOutputMarker(exitCode, timedOut),
+  }
+}
+
+/**
  * 拼逐格明细：每格只带它真的有的那几项。
  *
  * @param {Array<{id?: string, action?: string}>} commands 本批命令（顺序即回传顺序）
