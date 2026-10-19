@@ -2,6 +2,8 @@ import React, { useState, useCallback, useEffect } from 'react'
 import { Alert, Button, Input, Modal, Space, Tag, Typography, message } from 'antd'
 import { QuestionCircleOutlined, BulbOutlined, SendOutlined } from '@ant-design/icons'
 import api from '../auth'
+// [返工 R3·#120] 候选表与用例共读 runtime 那一份（原先这里一份、用例里手抄一份）
+import { CODE_SESSION_INTENTS } from '../runtime/codeSessionIntent'
 
 const { Text } = Typography
 
@@ -46,12 +48,7 @@ export default function IntentCorrectionFloater({ visible, onClose, onResult, qu
     if (!visible) return
     setCorrected('')
     setReason('')
-    setAlternatives([
-      'ANALYZE',
-      'FIX',
-      'BUILD',
-      'QUERY',
-    ])
+    setAlternatives(CODE_SESSION_INTENTS)
   }, [visible])
 
   const submit = useCallback(async () => {

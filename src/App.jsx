@@ -82,6 +82,8 @@ import LlmModuleConfigTab from './components/LlmModuleConfigTab'
 import CodeGraphExplorer from './components/CodeGraphExplorer'
 import CodePreviewDrawer from './components/CodePreviewDrawer'
 import IntentCorrectionFloater from './components/IntentCorrectionFloater'
+// [返工 R3·#120] code_mode 那一手与意图浮层的判据收在 runtime 那一份，产品与用例共读同一实现点
+import { applyCodeMode, intentFloaterDecision } from './runtime/codeSessionIntent'
 import AcademicResearchPage from './AcademicResearchPage'
 import AcademicStatsPage from './AcademicStatsPage'
 import NovelPage from './NovelPage'
@@ -2684,28 +2686,20 @@ function App() {
   // S6: 触发意图纠正浮层。
   // 后端 PlannerService.attachIntentAnalysis 把 taskIntent.name() 写到
   // planData.intent；直接 success 路径有时也会写 res.data.intent。
-  // 触发策略：
-  //   1. 用户 query 长度 >= 4（避免空 / 标点）
-  //   2. 分类结果是 code 会话专用的 CodeSessionIntent（ANALYZE/FIX/BUILD/QUERY）且不是 QUERY
-  //      ——QUERY 频率太高（每条自由提问都是），弹浮层没意义
-  //   3. 当前浮层未开（避免堆叠）
-  //   4. 当前会话不是 code 会话 —— code 任务的意图由后端自行处理, 不再弹纠正浮层
-  //      (用户已确认 "全部给后端自行处理" 不必每次确认)
+  // [返工 R3·#120] 判据（三处透传来源 / 静默那几档 / 短问句 / code 会话静默 / 已开不叠）
+  //   收在 runtime/codeSessionIntent.js —— 那份用例以前手抄了一份规则却连 import 都没有，
+  //   一条也没跑过；现在产品与用例共读同一份。这里只留副作用（setState）与 best-effort 的静默。
   const maybeShowIntentFloater = (data, queryText, isCodeSess) => {
     try {
-      if (!data) return
-      if (isCodeSess) return  // code 任务静默, 后端 PlannerService 自己处理 intent 推断 + 执行
-      if (intentFloater.open) return
-      const predicted = data.intent || (data.plan && data.plan.intent) || (data.plan && data.plan.code_intent)
-      if (!predicted) return
-      const normalized = String(predicted).toUpperCase()
-      // A 方案：code 会话 4 档意图中，ANALYZE/FIX/BUILD 都值得用户确认（避免 LLM 误判改文件），
-      // QUERY 频率太高、CONFIRMATION 是系统拦截，CONVERSATIONAL 是闲聊——这三类静默。
-      const silent = ['QUERY', 'CONVERSATIONAL', 'CONFIRMATION', 'UNKNOWN']
-      if (silent.includes(normalized)) return
-      const q = (queryText || lastUserQueryRef.current || '').trim()
-      if (q.length < 4) return
-      setIntentFloater({ open: true, query: q, predicted: normalized })
+      const d = intentFloaterDecision({
+        data,
+        queryText,
+        lastUserQuery: lastUserQueryRef.current,
+        isCodeSess,
+        floaterOpen: intentFloater.open,
+      })
+      if (!d) return
+      setIntentFloater({ open: true, query: d.query, predicted: d.predicted })
     } catch (_) { /* 静默 — 浮层是 best-effort */ }
   }
 
@@ -2962,11 +2956,9 @@ function App() {
       //   · 显式锁定 'build'：强制 code_mode=build + execution_mode=apply（override，无视问句）；
       //   · 显式锁定 'plan'：只分析/只给方案，不改文件（code_mode=plan）。
       // 当前 UI 已移除 plan/build toggle，默认 auto；此处保留强制锁定通道供高级用户/子页面复用。
-      if (codeMode && codeMode !== 'auto') {
-        payload.code_mode = codeMode;
-        if (codeMode === 'build') payload.execution_mode = 'apply';
-        else if (codeMode === 'plan') payload.execution_mode = 'plan';
-      }
+      // [返工 R3·#120] 这两个字段是一对（build→apply / plan→plan），规则收在 runtime 那一份 —— 
+      //   原先这里一份、用例里手抄一份，而手抄那份**没有 execution_mode**：它绿着，产品却是两份真相。
+      applyCodeMode(payload, codeMode);
       // 多图片附件 (数组); 兼容旧 image_base64 (首图), 后端含去重
       if (selectedImages.length > 0) {
         payload.images = selectedImages.map(i => i.base64);
