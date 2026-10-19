@@ -24,14 +24,21 @@ const HERE = path.dirname(fileURLToPath(import.meta.url))
 /**
  * 已知"一例都没跑过"的文件。key = 文件名，value = 为什么在这里（**不是**设计如此，是欠账）。
  * 修好一份就删掉一行；删干净之后这张表应当是空的。
+ *
+ * [F72·#182 收口，2026-10-19 15:4x] 五笔全部接完，表是空的：
+ *   · `cmdBlocks` 那笔的真正成因不是"模块不存在"，是 **import 少写了 `.js`**（打包器能解析，node ESM 不能）；
+ *     接上后又发现它整份用的是 jest 的 `expect()`，本仓跑的是 node:test + assert —— 即两条静默叠在一起。
+ *   · 另四笔（`codeAnalysisTools` / `intentCorrect` / `toolIcon` / `useLspLookup`）补 import 也不会看见任何东西：
+ *     它们的断言全打在**测试自己造的常量**上，产品怎么改都不会红。这一轮把每份都改成逐字读真源
+ *     （前端调用点 + 后端 controller / BaseAgent 那一头），当场照出两条真的：
+ *     `DesktopOutlined` 后端会发而前端 ICON_MAP 从没登记（界面上退成通用图标，已补登记）、
+ *     `intent/correct` 的键名两侧对齐（这条今天是对的，钉住它别再漂）。
+ *   · 同族第 7 例（形状不同，故本用例抓不到）：`serverIntegration.test.js` 把 server.js 指到 `src/` 下
+ *     那个不存在的路径，spawn 立刻退出 → `before` 抛错 → 报 `tests 10 / pass 0 / fail 0`，一条都不落。
+ *     已改指包根真身 + 加载期 `existsSync` 断言（路径再写错就是**加载即红**，不许再静默），
+ *     10 条第一次全跑；两条 background 用例补了产品自己那只手会带的 `confirmed:true`。
  */
-const KNOWN_DEAD = {
-  'codeAnalysisTools.test.js': '#182 无 node:test import → ReferenceError，加载即红',
-  'intentCorrect.test.js': '#182 同上',
-  'toolIcon.test.js': '#182 同上',
-  'useLspLookup.test.js': '#182 同上',
-  'cmdBlocks.test.js': '#182 import 指向 src/utils/cmdBlocks（该模块不存在）→ ERR_MODULE_NOT_FOUND',
-}
+const KNOWN_DEAD = {}
 
 const testFiles = () => readdirSync(HERE).filter((f) => f.endsWith('.test.js')).sort()
 
@@ -49,7 +56,6 @@ describe('#120/#182 端侧用例目录的反向着例：新用例不许静默不
   })
 
   test('KNOWN_DEAD 里不许留着已经修好的文件（修好就划掉，别把债留成常态）', () => {
-    // cmdBlocks 那一行还多欠一格：它 import 的 `src/utils/cmdBlocks` 得真的存在才算修好。
     const stale = Object.keys(KNOWN_DEAD).filter((f) => {
       return /from\s+'node:test'/.test(readFileSync(path.join(HERE, f), 'utf-8'))
     })
@@ -57,12 +63,37 @@ describe('#120/#182 端侧用例目录的反向着例：新用例不许静默不
   })
 
   test('欠账总数要说得出（不许悄悄变多，也不许写成"没有"）', () => {
-    assert.equal(Object.keys(KNOWN_DEAD).length, 5)
-    assert.equal(testFiles().length >= Object.keys(KNOWN_DEAD).length, true)
+    const n = Object.keys(KNOWN_DEAD).length
+    assert.equal(n, 0, `#182 已收口，这张表就该是空的；现在留着 ${n} 笔：`
+      + Object.entries(KNOWN_DEAD).map(([k, v]) => k + '=' + v).join(' / '))
+    assert.equal(testFiles().length >= n, true)
   })
 
   test('本枚修好的那份不许再回到表里（codeSessionIntent 已共读 runtime 那一份）', () => {
     assert.equal('codeSessionIntent.test.js' in KNOWN_DEAD, false)
     assert.match(readFileSync(path.join(HERE, 'codeSessionIntent.test.js'), 'utf-8'), /from 'node:test'/)
+  })
+
+  // ── #182 那三份的"不许回到旧形状"：旧形状不是断言红，是**加载不了 / 根本什么都没测** ──
+
+  test('cmdBlocks 那份要用带扩展名的真源 import，且断言层是本仓跑得动的那一套', () => {
+    const s = readFileSync(path.join(HERE, 'cmdBlocks.test.js'), 'utf-8')
+    // 少写 `.js` 时打包器照样解析、node ESM 报 ERR_MODULE_NOT_FOUND —— 一条都不跑且不红。
+    assert.match(s, /from '\.\.\/utils\/cmdBlocks\.js'/)
+    assert.equal(/^\s*expect\(/m.test(s), false,
+      'jest 的 expect 在本仓不存在：这份用例当年就是死在"连 expect 都没定义"上')
+  })
+
+  test('serverIntegration 那份要在加载期就钉住被启动的那个文件真的存在', () => {
+    const s = readFileSync(path.join(HERE, 'serverIntegration.test.js'), 'utf-8')
+    // 它旧的下场是 `tests 10 / pass 0 / fail 0`：路径指错 → spawn 立刻退出 → before 抛错，一条都不落。
+    assert.match(s, /existsSync\(SERVER_PATH\)/)
+  })
+
+  test('契约类用例不许再拿测试自己造的常量当产品（读真源那三份各留一条特征）', () => {
+    const reads = (f) => readFileSync(path.join(HERE, f), 'utf-8').includes('node:fs')
+    for (const f of ['toolIcon.test.js', 'intentCorrect.test.js', 'codeAnalysisTools.test.js']) {
+      assert.equal(reads(f), true, f + ' 没有读真源 —— 它断言的很可能只是自己抄的那份')
+    }
   })
 })

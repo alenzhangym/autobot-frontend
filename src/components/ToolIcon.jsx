@@ -3,7 +3,7 @@ import {
   ToolOutlined, FileTextOutlined, EditOutlined, SearchOutlined,
   FolderOpenOutlined, DatabaseOutlined, ConsoleSqlOutlined, CodeOutlined,
   BranchesOutlined, BulbOutlined, DeleteOutlined, EyeOutlined,
-  BuildOutlined, ExperimentOutlined,
+  BuildOutlined, ExperimentOutlined, DesktopOutlined,
 } from '@ant-design/icons'
 
 /**
@@ -31,6 +31,9 @@ const ICON_MAP = {
   EyeOutlined,
   BuildOutlined,
   ExperimentOutlined,
+  // [F72·#182] 后端 resolveToolIcon 的 canvas_ui / open_tab / show_preview / navigate_to_file
+  //   那一族发的就是这个名字，而这份表里从没登记过 —— 界面上一律退成通用图标，且没有任何一处会红。
+  DesktopOutlined,
 }
 
 export default function ToolIcon({ name, ...rest }) {

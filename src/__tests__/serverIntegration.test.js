@@ -15,12 +15,19 @@
 import { test, describe, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const SERVER_DIR = path.resolve(__dirname, '..')
+// [F72·#182] 这里原本指到 `src/server.js` —— 那个文件不存在（真身在包根 `autobot-frontend/server.js`）。
+// spawn 立刻 MODULE_NOT_FOUND 退出，`before` 抛错，于是这份 10 条的用例报的是 `tests 10 / pass 0 / fail 0`：
+// 一条都没落成，而形状与"没 import node:test"那种静默不同（它 import 了），所以 #120 那批反向着例没抓到它。
+const SERVER_DIR = path.resolve(__dirname, '..', '..')
 const SERVER_PATH = path.join(SERVER_DIR, 'server.js')
+// 路径写错时，这份用例旧的下场是"一条都不落"（before 抛错 = tests 10 / pass 0 / fail 0）。
+// 这一行把那件事挪到加载期：路径不对就当场红，不许再静默。
+assert.ok(existsSync(SERVER_PATH), '要启动的那个 server.js 不在：' + SERVER_PATH)
 
 const IS_WIN = process.platform === 'win32'
 
@@ -126,13 +133,20 @@ describe('server.js: Phase 1-4 integration smoke test', () => {
     assert.match(r.body.stdout, /integration/)
   })
 
-  test('POST /api/local/bash: background=true returns 202 with taskId', async () => {
+  test('POST /api/local/bash: background=true 交回 2xx + taskId + status=running', async () => {
     const r = await req(port, 'POST', '/api/local/bash', {
       command: IS_WIN ? 'ping -n 2 127.0.0.1 > nul' : 'sleep 0.2',
       timeoutMs: 10_000,
+      // [F72·#182] 这一格以前没带 confirmed —— 这份用例从没跑过，所以谁都不知道它会先撞
+      // `needs_confirmation`（analyzeCommand 判 ask 时端侧就停在这里）。产品自己那只手
+      // （WorkspacePanel.jsx:1331）就是"问到 ask 再带 confirmed:true 发第二遍"，这里跟同一条序列。
+      confirmed: true,
       background: true,
     })
-    assert.equal(r.status, 202)
+    // 原来写的是 202 —— 202 是那份用例从没跑过的一厢情愿；端侧今天发的是 200 + `{taskId, status:'running'}`，
+    // 而两个消费点都只认 2xx（Java LocalAgentClient:541 收 2xx，axios 也是）。
+    // 这一格要钉的是"发出去就有一个 id 可追"，不是那个数字，所以按现行语义收 2xx 族。
+    assert.ok(r.status >= 200 && r.status < 300, 'background 那一手没给 2xx：' + r.status)
     assert.equal(r.body.status, 'running')
     assert.ok(r.body.taskId)
     // Poll until the task finishes
@@ -161,9 +175,10 @@ describe('server.js: Phase 1-4 integration smoke test', () => {
     const start = await req(port, 'POST', '/api/local/bash', {
       command: IS_WIN ? 'ping -n 30 127.0.0.1 > nul' : 'sleep 30',
       timeoutMs: 60_000,
+      confirmed: true,   // 同上一条：不问确认这一手就停在 needs_confirmation
       background: true,
     })
-    assert.equal(start.status, 202)
+    assert.ok(start.status >= 200 && start.status < 300, 'background 那一手没给 2xx：' + start.status)
     const taskId = start.body.taskId
     // Wait briefly to let the process spawn
     await new Promise((r) => setTimeout(r, 300))
