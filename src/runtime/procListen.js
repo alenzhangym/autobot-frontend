@@ -87,6 +87,42 @@ export function listenersOfTree(rows, tree) {
   return out
 }
 
+/**
+ * 这份原料<b>覆盖不覆盖得住</b>"本机此刻在听的那些 pid"（纯函数，[返工R3·枚54 / #183]）。
+ *
+ * <p>#183 实测到的那一档（`scripts/dogfood/proc-listen-broken-chain-probe.mjs`）：
+ * 包装层（`cmd /d /s /c node …`）被 taskkill 之后，<b>孙进程还在听</b>，而它的
+ * `ParentProcessId` 已经是一个<b>不在进程表里的号</b> —— Windows 不重新收养子进程，
+ * `descendFromRoots` 的 children 表只由活着的行构成，那个死掉的中间层进不了队列，
+ * 它的孩子就顺不到。于是 `listeners` 为空、`state` 仍是 `ok`（两份枚举确实都成功了），
+ * 服务端据此交付「停完之后实测没有监听的口」—— 恰好在这条腿<b>根本没停干净</b>的时候说。</p>
+ *
+ * <p>这一格只数三件事，全是从已有原料直读的结构事实：树外还在听的条数、其中父进程已不在表里的条数
+ * （断链）、以及根本没有 pid 可归的行数（`netstat` 那种表）。<b>不筛端口、不猜归属</b> ——
+ * "哪个口是这条腿对外服务的口"是判断，归读文本的那一方。</p>
+ *
+ * @param {Array<{pid:number}>} listenRows 整张监听表（未筛树）
+ * @param {number[]} tree 这条腿顺出来的进程树
+ * @param {Map<number, number>} ppidOf 活着的 PID→PPID 表
+ * @returns {{off_tree_listening:number, off_tree_broken_chain:number, pid_unknown:number}}
+ */
+export function coverageOfTree(listenRows, tree, ppidOf) {
+  const allow = new Set((tree || []).map((x) => Number.parseInt(x, 10)))
+  let off = 0
+  let broken = 0
+  let unknown = 0
+  for (const row of listenRows || []) {
+    const pid = Number.parseInt(row && row.pid, 10)
+    if (!(pid > 0)) { unknown++; continue }
+    if (allow.has(pid)) continue
+    off++
+    const ppid = ppidOf && ppidOf.get(pid)
+    // ppid<=4 是 System/System Idle 那一类根，本就该在表外；除此以外父不在这张表里 = 断链。
+    if (ppid === undefined || (ppid > 4 && !(ppidOf && ppidOf.has(ppid)))) broken++
+  }
+  return { off_tree_listening: off, off_tree_broken_chain: broken, pid_unknown: unknown }
+}
+
 /** 收一条只读命令的 stdout+stderr（失败 → 空串，绝不抛）。超时 code=-2、spawn 失败 -1。 */
 function runCapture(cmd, args, timeoutMs = 8000) {
   return new Promise((resolve) => {
@@ -182,8 +218,14 @@ export async function collectProcListen(opts = {}, deps = {}) {
   if (listenersEnumFailed) notes.push('监听表枚举失败: ' + listen.err)
   // 两份事实任缺一格都不算"取到了" —— 缺事实只能写"今天不知道"，不许折成"没有监听的口"
   const state = listenersEnumFailed || treeFailed ? 'unknown' : 'ok'
+  // [枚54 / #183] 覆盖性那一格：树枚举没成功时它是"没算出来"，写 -1 而不是 0 ——
+  //   0 会被服务端读成"树外没有别的口"，那正是这一枚要治的那类折法。
+  const coverage = treeFailed
+    ? { off_tree_listening: -1, off_tree_broken_chain: -1, pid_unknown: -1 }
+    : coverageOfTree(listen.rows, tree, treeInfo.ppidOf)
   return { task_id: taskId, roots: dedup, tree,
     listeners: listenersEnumFailed ? [] : listenersOfTree(listen.rows, tree),
     via: listen.via, enumerated: (listen.rows || []).length, state,
+    ...coverage,
     error: notes.filter(Boolean).join(' | '), observed_at_ms: observedAtMs }
 }

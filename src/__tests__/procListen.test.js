@@ -2,7 +2,7 @@
 // 只钉纯函数 —— 真枚举那一步在 sidecar 里由 powershell/ss/netstat 完成（与 portProbe.test.js 同一口径）。
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
-import { parsePpidTable, descendFromRoots, listenersOfTree, collectProcListen } from '../runtime/procListen.js'
+import { parsePpidTable, descendFromRoots, listenersOfTree, coverageOfTree, collectProcListen } from '../runtime/procListen.js'
 import { parseListenRows } from '../runtime/portProbe.js'
 
 describe('parsePpidTable：两种分隔（Windows TAB / POSIX 空白）都收，认不出的行跳过', () => {
@@ -112,5 +112,81 @@ describe('collectProcListen：两份事实任缺一格都不算 ok（[F72·枚41
     const got = await collectProcListen({ taskId: 't-x' }, deps(okTree, okListen([]), null))
     assert.equal(got.state, 'no-root')
     assert.ok(got.error.includes('不在端侧登记簿里'))
+  })
+})
+
+// ── [返工 R3·枚54 / #183] 覆盖性那一格：树里没有口 ≠ 它没在听 ──────────────
+// 探针实测到的那一档（scripts/dogfood/proc-listen-broken-chain-probe.mjs，2026-10-19 14:33）：
+// 包装层 cmd 被 taskkill 之后，孙进程还在听，而它的 ParentProcessId 已经是一个不在表里的号
+// （Windows 不重新收养）→ 从根顺下来的树够不着它 → listeners 为空而 state 仍是 ok。
+
+describe('coverageOfTree：数"树外还在听"那三格（纯结构事实，不筛端口不猜归属）', () => {
+  const table = parsePpidTable('100\t1\n200\t100\n300\t200\n400\t1\n')
+
+  test('树内的行不算缺口；树外而父还活着的算 off_tree 但不算断链', () => {
+    const rows = parseListenRows('9527\t300\t0.0.0.0\n8081\t400\t0.0.0.0\n', 'nettcp')
+    const got = coverageOfTree(rows, [100, 200, 300], table)
+    assert.deepEqual(got, { off_tree_listening: 1, off_tree_broken_chain: 0, pid_unknown: 0 })
+  })
+
+  test('父进程已不在表里 = 断链（包装层被杀掉之后孩子还在听就是这一格）', () => {
+    //   200 已被 taskkill → 表里只剩 100 与 300，而 300 的父仍写着 200
+    const after = parsePpidTable('100\t1\n300\t200\n')
+    const rows = parseListenRows('5174\t300\t0.0.0.0\n', 'nettcp')
+    assert.deepEqual(coverageOfTree(rows, [100], after),
+      { off_tree_listening: 1, off_tree_broken_chain: 1, pid_unknown: 0 })
+  })
+
+  test('ppid≤4（System 那一类根）本就在表外，不算断链', () => {
+    const rows = parseListenRows('445\t7\t0.0.0.0\n', 'nettcp')
+    const got = coverageOfTree(rows, [], parsePpidTable('7\t4\n'))
+    assert.equal(got.off_tree_broken_chain, 0)
+    assert.equal(got.off_tree_listening, 1)
+  })
+
+  test('没有 pid 的行单独算一格（它既进不了树也谈不上断链）', () => {
+    const rows = parseListenRows('tcp4 0 0 *.9527 *.* LISTEN\n', 'netstat')
+    assert.deepEqual(coverageOfTree(rows, [100], table),
+      { off_tree_listening: 0, off_tree_broken_chain: 0, pid_unknown: 1 })
+  })
+})
+
+describe('collectProcListen 把覆盖性带上线路（枚54：让服务端那句硬否定认得出自己覆盖不住）', () => {
+  const deps = (treeInfo, listenInfo) => ({
+    getTask: () => ({ _child: { pid: 100 } }),
+    listProcessTable: async () => treeInfo,
+    listListeners: async () => listenInfo,
+  })
+  const okListen = (rows, raw = 'x') => ({ rows, raw, via: 'nettcp', code: 0, err: '' })
+
+  test('#183 那一档：树只剩根、孙进程还在听 → state=ok 且 broken_chain=1（服务端据此不许硬否定）', async () => {
+    const rows = parseListenRows('5174\t300\t0.0.0.0\n', 'nettcp')
+    const got = await collectProcListen({ taskId: 't-1' }, deps(
+      { code: 0, ppidOf: parsePpidTable('100\t1\n300\t200\n'), err: '' }, okListen(rows)))
+    assert.equal(got.state, 'ok')
+    assert.deepEqual(got.listeners, [])
+    assert.deepEqual(got.tree, [100])
+    assert.equal(got.off_tree_listening, 1)
+    assert.equal(got.off_tree_broken_chain, 1)
+    assert.equal(got.pid_unknown, 0)
+  })
+
+  test('覆盖核过（树外那些父都还活着）→ broken_chain=0，硬否定才有原料', async () => {
+    const rows = parseListenRows('8081\t400\t0.0.0.0\n', 'nettcp')
+    const got = await collectProcListen({ taskId: 't-1' }, deps(
+      { code: 0, ppidOf: parsePpidTable('100\t1\n400\t4\n'), err: '' }, okListen(rows)))
+    assert.equal(got.state, 'ok')
+    assert.equal(got.off_tree_listening, 1)
+    assert.equal(got.off_tree_broken_chain, 0)
+  })
+
+  test('树枚举没成功 → 那三格写 -1（没算出来），不许折成 0 = "树外没有"', async () => {
+    const rows = parseListenRows('5174\t300\t0.0.0.0\n', 'nettcp')
+    const got = await collectProcListen({ taskId: 't-1' }, deps(
+      { code: 1, ppidOf: new Map(), err: 'powershell 超时' }, okListen(rows)))
+    assert.equal(got.state, 'unknown')
+    assert.equal(got.off_tree_listening, -1)
+    assert.equal(got.off_tree_broken_chain, -1)
+    assert.equal(got.pid_unknown, -1)
   })
 })

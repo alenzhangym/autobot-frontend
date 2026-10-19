@@ -1446,15 +1446,22 @@ async function executeSingleCommand(cmd, workspaceDir, onLog, sessionId) {
         const res = await localApi.post('/api/local/bash/proc-listen',
           { task_id: id, pid: cmd.pid })
         const d = res.data || {}
-        onLog?.(`[AgentCMD] proc_listen task=${id} state=${d.state} via=${d.via} roots=${(d.roots || []).join(',')} listeners=${(d.listeners || []).length} err=${d.error || ''}\n`)
+        onLog?.(`[AgentCMD] proc_listen task=${id} state=${d.state} via=${d.via} roots=${(d.roots || []).join(',')}`
+          + ` listeners=${(d.listeners || []).length} off_tree=${d.off_tree_listening}`
+          + ` broken_chain=${d.off_tree_broken_chain} pid_unknown=${d.pid_unknown} err=${d.error || ''}\n`)
         // 回传体是**扁平**的：服务端的 jsonField 是朴素抽键（嵌套数组会被读歪），所以
         //   listeners/tree 逐行收成 "|" / 空格分隔的字符串，逐字带出处（pid|port|address|channel）。
+        // [返工R3·枚54 / #183] 覆盖性那三格一起带上（-1 = 没算出来，服务端不许折成 0 读成"树外没有别的口"）。
+        const cov = (v) => (Number.isFinite(v) ? v : -1)
         return JSON.stringify({
           proc: 'listen', task_id: d.task_id || id, state: d.state || 'unknown',
           roots: (d.roots || []).join(' '), tree: (d.tree || []).join(' '),
           listeners: (d.listeners || [])
             .map((x) => `${x.pid}|${x.port}|${x.address}|${x.channel}`).join(';'),
           via: d.via || '', enumerated: Number.isFinite(d.enumerated) ? d.enumerated : -1,
+          off_tree_listening: cov(d.off_tree_listening),
+          off_tree_broken_chain: cov(d.off_tree_broken_chain),
+          pid_unknown: cov(d.pid_unknown),
           error: d.error || '',
         })
       } catch (e) {
