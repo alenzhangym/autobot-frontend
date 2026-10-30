@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Form, Input, Button, Alert, Typography, Space, Modal, Tabs, Select, Divider, Card, ConfigProvider, theme } from 'antd'
+import { Form, Input, Button, Alert, Typography, Space, Modal, Tabs, Select, Divider, Card, ConfigProvider, theme, message } from 'antd'
 import { UserOutlined, LockOutlined, SettingOutlined } from '@ant-design/icons'
 import api, { login, getBackendHost, setBackendHost, getSuggestedBackendHost } from './auth'
 
@@ -76,9 +76,19 @@ export default function Login({ onLoginSuccess }) {
   }
 
   const handleSaveSettings = () => {
-    if (backendHost) {
-      setBackendHost(backendHost)
-      setSettingsVisible(false)
+    const res = setBackendHost(backendHost)
+    if (!res.host) {
+      message.warning('请填写后端地址')
+      return
+    }
+    setLocalBackendHost(res.host)
+    setSettingsVisible(false)
+    if (res.requiresLogin) {
+      message.info('后端地址已切换，正在返回登录页，请用该后端的账号重新登录')
+    } else if (res.switched) {
+      message.success('后端地址已切换，当前页面会立即使用新地址')
+    } else {
+      message.success('后端地址未变化')
     }
   }
 
@@ -198,8 +208,11 @@ export default function Login({ onLoginSuccess }) {
         cancelText="取消"
       >
         <Paragraph style={{ color: 'var(--ab-text-3)', fontSize: 12, marginBottom: 12 }}>
-          默认后端地址为 <span className="ab-code">http://120.26.113.95:8000</span>。
-          如需修改, 请填写完整 URL (含 http://) 或 host:port, 保存后会自动刷新页面。
+          默认后端地址为 <span className="ab-code">http://120.26.113.95:8000</span>
+          （若页面由后端自己服务、即当前就是 8000 端口，则默认同源）。
+          可填完整 URL 或 host:port；地址一旦变化会清空旧登录凭证并回到登录页 ——
+          token 是各后端自己签发的，请用新后端的账号重新登录。
+          该地址保存在当前页面的 localStorage 里，只对当前主机名/端口生效。
         </Paragraph>
         <Form layout="vertical">
           <Form.Item label={<span className="ab-mono-dim" style={{ fontSize: 10 }}>BACKEND ADDRESS</span>}>

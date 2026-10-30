@@ -1,49 +1,107 @@
 import axios from 'axios';
+import {
+  BACKEND_HOST_STORAGE_KEY,
+  apiBaseUrlFromHost,
+  normalizeBackendHost,
+  resolveBackendHost,
+  wsBaseUrlFromHost
+} from './backendHost';
 
-// Default backend host. Users who haven't touched the login screen's
-// "backend address" field get this. The user can still override at
-// runtime via the Settings panel — that value lands in localStorage
-// (`backend_host`) and wins over this default.
-const DEFAULT_BACKEND_HOST = 'http://120.26.113.95:8000';
+// 后端地址的唯一解析入口在 ./backendHost.js —— 这里只负责把
+// 「localStorage / 构建期 env / 当前页面 location」喂给纯函数。
+// 2026-10-30: 此前 src 里存在第二、第三套 fallback(helpers.jsx 的 iframe bridge、
+// App.jsx 的 hostname:8000), 导致 `/api/skills` 打本机、`/api/chat` 打远端,
+// 用户看到的就是「设置了 backend 却没生效」。
 
-// Smart default: when the user hasn't configured anything, fall back
-// to `DEFAULT_BACKEND_HOST`. The earlier heuristic (browser hostname
-// :8000) made sense for fully LAN deployments but is wrong for
-// production — most users access the frontend from outside the LAN
-// and the backend lives on a fixed public address.
-function smartDefaultBackendHost() {
-  return DEFAULT_BACKEND_HOST;
-}
-
-export const getBackendHost = () => {
-  // Use localStorage if available, otherwise fallback to env variable or default
-  if (localStorage.getItem('backend_host')) {
-    return localStorage.getItem('backend_host');
+const readStoredBackendHost = () => {
+  try {
+    return localStorage.getItem(BACKEND_HOST_STORAGE_KEY);
+  } catch (e) {
+    return null;
   }
-  if (import.meta.env.VITE_BACKEND_HOST) {
-    return import.meta.env.VITE_BACKEND_HOST;
-  }
-  return smartDefaultBackendHost();
 };
 
+const currentLocation = () => {
+  try {
+    return window.location;
+  } catch (e) {
+    return null;
+  }
+};
+
+/**
+ * 当前生效的后端地址(已归一化, 一定带 http(s)://)。
+ * 优先级: 用户保存值 → VITE_BACKEND_HOST → 页面同源(:8000) → 远端默认。
+ */
+export const getBackendHost = () => resolveBackendHost({
+  stored: readStoredBackendHost(),
+  env: import.meta.env.VITE_BACKEND_HOST,
+  location: currentLocation()
+});
+
+/**
+ * 当前「页面 ↔ 后端」的完整路由画像, 供 DevTools 排查用:
+ * 控制台执行 `__autobotBackendInfo()` 即可看到页面 origin、解析出的 host、api/ws 基址。
+ */
+export const getBackendRouting = () => {
+  const loc = currentLocation();
+  return {
+    page: loc ? `${loc.protocol}//${loc.host}` : '',
+    storedBackendHost: normalizeBackendHost(readStoredBackendHost()),
+    backendHost: getBackendHost(),
+    apiBaseUrl: getApiBaseUrl(),
+    wsBaseUrl: getWsBaseUrl()
+  };
+};
+
+/**
+ * 保存后端地址。返回 `{ host, switched, requiresLogin }` 给调用方决定提示文案。
+ *
+ * <p>两个关键语义:</p>
+ * <ol>
+ *   <li>写入前先归一化(`127.0.0.1:8000` → `http://127.0.0.1:8000`), 否则 `${host}/api`
+ *       这类拼接会拼出非法 URL, 看起来就像"设置没生效"。</li>
+ *   <li>地址**确实变化**时清掉 `token`/`user` 并回登录页: JWT 是各后端用自己的 secret
+ *       签的, 拿 A 后端的 token 去打 B 后端必然 401, 而响应拦截器会静默清 token + reload,
+ *       用户只会看到"被踢回首页/一直登录不上"。在这里主动做, 并明确提示需要重新登录。</li>
+ * </ol>
+ */
 export const setBackendHost = (host) => {
-  // The axios request interceptor re-reads `getApiBaseUrl()` (which in
-  // turn reads `getBackendHost()`) on every request, so the new host
-  // takes effect immediately. We previously called `window.location.reload()`
-  // here, but that re-initialises React state (e.g. HomeWrapper's
-  // `showLogin` flag), so users who saved the backend address from the
-  // login screen would be kicked back to the home page. Saving and
-  // returning is enough — let the caller show a toast and stay put.
-  localStorage.setItem('backend_host', host);
+  const next = normalizeBackendHost(host);
+  if (!next) {
+    return { host: '', switched: false, requiresLogin: false };
+  }
+
+  const previous = getBackendHost();
+  let hadToken = false;
+  try {
+    localStorage.setItem(BACKEND_HOST_STORAGE_KEY, next);
+    hadToken = !!localStorage.getItem('token');
+  } catch (e) {
+    // 隐私模式等 localStorage 不可用的场景: 保持旧行为(不阻断保存动作)
+  }
+
+  const switched = previous !== next;
+  if (!switched) {
+    return { host: next, switched: false, requiresLogin: false };
+  }
+
+  console.info('[backend] 后端地址已切换', { from: previous, to: next, hadToken });
+  if (hadToken) {
+    try {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+    } catch (e) { /* ignore */ }
+    // 延迟 reload 让当前 catch 链/React 状态收尾, 避免与状态更新冲突.
+    setTimeout(() => { try { window.location.reload(); } catch (e) { /* ignore */ } }, 100);
+  }
+  return { host: next, switched: true, requiresLogin: hadToken };
 };
 
 export const getSuggestedBackendHost = () => {
-  // Already configured? Honour it (preserve whatever the user has, with or without http://).
-  const configured = localStorage.getItem('backend_host');
-  if (configured) return configured;
-  // smartDefaultBackendHost() now returns a fully-qualified URL
-  // (e.g. http://120.26.113.95:8000), so don't double-prefix http://.
-  return smartDefaultBackendHost();
+  // 已配置就回显用户自己的值(归一化后), 否则回显当前生效值,
+  // 让设置框里显示的就是"这次请求真正会打到哪里"。
+  return normalizeBackendHost(readStoredBackendHost()) || getBackendHost();
 };
 
 export const getApiBaseUrl = () => {
@@ -52,28 +110,13 @@ export const getApiBaseUrl = () => {
   // 这样手机端通过局域网 IP (http://192.168.x.x:5173) 访问前端时,
   // /api/* 请求会被 Vite 代理转发到后端, 绕过 CORS 和手机端无法直连后端公网 IP 的问题.
   // 如果用户显式配置了 backend_host (localStorage), 优先使用配置值.
-  const configured = localStorage.getItem('backend_host');
-  if (!configured && import.meta.env.DEV) {
+  if (!normalizeBackendHost(readStoredBackendHost()) && import.meta.env.DEV) {
     return '/api';
   }
-  let host = getBackendHost();
-  if (host.startsWith('https://')) {
-    host = host.replace('https://', 'http://');
-  } else if (!host.startsWith('http://')) {
-    host = `http://${host}`;
-  }
-  return `${host}/api`;
+  return apiBaseUrlFromHost(getBackendHost());
 };
 
-export const getWsBaseUrl = () => {
-  let host = getBackendHost();
-  if (host.startsWith('https://')) {
-    host = host.replace('https://', '');
-  } else if (host.startsWith('http://')) {
-    host = host.replace('http://', '');
-  }
-  return `ws://${host}`;
-};
+export const getWsBaseUrl = () => wsBaseUrlFromHost(getBackendHost());
 
 export const getLocalAgentBaseUrl = () => {
   // For local agent APIs, always use localhost with the current frontend serving port
@@ -81,6 +124,15 @@ export const getLocalAgentBaseUrl = () => {
   const port = window.location.port;
   return `http://localhost:${port}`;
 };
+
+// 可观测性: 页面一加载就把「当前到底在跟哪个后端说话」打到控制台,
+// 并暴露 __autobotBackendInfo() 供排查 —— 换后端"没生效"时先看这一行。
+try {
+  console.info('[backend] routing resolved', getBackendRouting());
+  window.__autobotBackendInfo = getBackendRouting;
+} catch (e) {
+  // 非浏览器环境(单测/SSR)或隐私模式下忽略
+}
 
 // Create an Axios instance
 const api = axios.create({
@@ -131,6 +183,9 @@ api.interceptors.response.use(
       // 排除 /auth/login 本身 — 登录失败应让调用方处理(弹出"密码错误"), 不应跳转.
       if (!url.includes('/auth/login') && hadAuthHeader) {
         _unauthorizedRedirecting = true;
+        // 打一条 warn: 401 时页面会静默清 token + reload, 用户只会觉得"设置没生效";
+        // 带上当前后端地址, 一眼能分辨"token 是另一个后端签的"。
+        console.warn('[backend] 401 清空凭证并回登录页', { url, backendHost: getBackendHost() });
         localStorage.removeItem('token');
         localStorage.removeItem('user');
         // 延迟 100ms 让当前 catch 链跑完, 避免 React 状态更新与 reload 冲突.

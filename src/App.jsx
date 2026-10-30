@@ -1315,8 +1315,9 @@ function App() {
     setUpdating(true)
     try {
       // Get backend host to form download URL
-      const backendHost = window.localStorage.getItem('backend_host') || import.meta.env.VITE_BACKEND_HOST || `${window.location.hostname}:8000`
-      const downloadUrl = `http://${backendHost}/api/frontend/update/download`
+      // 唯一解析入口在 auth.js(getBackendHost): 已归一化(带 http://),
+      // 不再自带 `hostname:8000` 的第二套 fallback(那会让下载请求打到另一台机器)。
+      const downloadUrl = `${getBackendHost()}/api/frontend/update/download`
       
       console.log('Sending update request to local agent:', downloadUrl);
       const res = await fetch(`${getLocalAgentBaseUrl()}/api/local/update`, {
@@ -3861,10 +3862,9 @@ const handleDeleteSession = (id) => {
         onCancel={() => setLocalAgentStatus('ok')}
         footer={[
           <Button key="download" type="primary" icon={<DownloadOutlined />} onClick={() => {
-            const backendHost = window.localStorage.getItem('backend_host') || import.meta.env.VITE_BACKEND_HOST || `${window.location.hostname}:8000`;
             const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0 || navigator.userAgent.toLowerCase().indexOf('mac') >= 0;
             const os = isMac ? 'mac' : 'win';
-            window.open(`http://${backendHost}/api/frontend/update/download?os=${os}`, '_blank');
+            window.open(`${getBackendHost()}/api/frontend/update/download?os=${os}`, '_blank');
           }}>
             Download Desktop Client
           </Button>

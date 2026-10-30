@@ -576,14 +576,20 @@ function LoginForm({ onLoginSuccess, onBackToHome }) {
   }, [settingsVisible])
 
   const handleSaveSettings = () => {
-    const v = (backendHost || '').trim()
-    if (!v) {
+    const res = setBackendHost(backendHost)
+    if (!res.host) {
       message.warning('请填写后端地址')
       return
     }
-    setBackendHost(v)
+    setLocalBackendHost(res.host)
     setSettingsVisible(false)
-    message.success('后端地址已保存, 当前页面会立即使用新地址')
+    if (res.requiresLogin) {
+      message.info('后端地址已切换, 正在返回登录页, 请用该后端的账号重新登录')
+    } else if (res.switched) {
+      message.success('后端地址已切换, 当前页面会立即使用新地址')
+    } else {
+      message.success('后端地址未变化, 当前页面会立即使用新地址')
+    }
   }
 
   const handleLogin = async (e) => {
@@ -699,7 +705,10 @@ function LoginForm({ onLoginSuccess, onBackToHome }) {
         <Paragraph style={{ color: 'var(--ab-text-3)', fontSize: 12, marginBottom: 12 }}>
           默认后端地址为{' '}
           <span className="ab-code">{INSTALL_DEFAULT_BACKEND_HOST}</span>
-          。如需修改, 请填写完整 URL (含 http://) 或 host:port, 保存后会自动刷新页面。
+          （若页面由后端自己服务、即当前就是 8000 端口，则默认同源）。
+          可填完整 URL 或 host:port；地址一旦变化会清空旧登录凭证并回到登录页 ——
+          token 是各后端自己签发的，请用新后端的账号重新登录。
+          该地址保存在当前页面的 localStorage 里，只对当前主机名/端口生效。
         </Paragraph>
         <div className="ab-mono-dim" style={{ marginBottom: 8, fontSize: 11 }}>
           后端地址 (host:port 或完整 URL)

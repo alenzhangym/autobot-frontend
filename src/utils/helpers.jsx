@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm';
 import SyntaxHighlighter from 'react-syntax-highlighter/dist/esm/prism';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { useUIStore } from '../store/useUIStore';
+import { getBackendHost } from '../auth';
 
 // ── Clean script src in HTML ─────────────────────────────────────────────────
 
@@ -113,17 +114,26 @@ export const wrapUiHtml = (html) => {
       }
     };
     const getBackendBaseUrl = function() {
+      var normalizeHost = function(raw) {
+        var h = (raw || '').trim().replace(/\/+$/, '');
+        if (!h) return '';
+        if (!/^http(s)?:\/\//i.test(h)) h = 'http://' + h.replace(/^\/+/, '');
+        return h;
+      };
+      // 与 auth.js 读的是同一份来源(backend_host), 但 iframe 场景下当前窗口的
+      // 存储未必可读, 所以「本窗口 → 父窗口」依次回落。
+      // 2026-10-30: 之前这里**只**读 window.parent.localStorage, 宿主把地址存在自己
+      // 窗口里时这里读不到, 于是数据存储请求绕过了宿主配置好的后端。
+      var candidates = [];
+      try { candidates.push(window.localStorage ? window.localStorage.getItem('backend_host') : null); } catch(e){}
+      try { candidates.push((window.parent && window.parent.localStorage) ? window.parent.localStorage.getItem('backend_host') : null); } catch(e){}
+      for (var i = 0; i < candidates.length; i++) {
+        var h = normalizeHost(candidates[i]);
+        if (h) return h;
+      }
       try {
-        const host = (window.parent && window.parent.localStorage) ? window.parent.localStorage.getItem('backend_host') : null;
-        if (host && typeof host === 'string' && host.trim()) {
-          const h = host.trim();
-          if (h.startsWith('http://') || h.startsWith('https://')) return h;
-          return 'http://' + h;
-        }
-      } catch(e){}
-      try {
-        const p = (window.parent && window.parent.location) ? window.parent.location : null;
-        const hostname = (p && p.hostname) ? p.hostname : window.location.hostname;
+        var p = (window.parent && window.parent.location) ? window.parent.location : null;
+        var hostname = (p && p.hostname) ? p.hostname : window.location.hostname;
         return 'http://' + hostname + ':8000';
       } catch(e){}
       return 'http://127.0.0.1:8000';
@@ -639,9 +649,10 @@ export function isValidDataStoreResponse(response, data) {
 }
 
 export async function fetchMissingDataFromServer(dataIds) {
-  const backendHost = window.localStorage.getItem('backend_host') || 
-    (import.meta.env.VITE_BACKEND_HOST ? import.meta.env.VITE_BACKEND_HOST.replace(/\/$/, '') : null) ||
-    window.location.hostname + ':8000';
+  // 唯一解析入口在 auth.js(getBackendHost): 已归一化(带 http://), 与 axios/WS 用同一份 host。
+  // 2026-10-30: 这里原本自带 localStorage → VITE → hostname:8000 的第三套 fallback,
+  // 且拼接时不带协议, 会出现 `127.0.0.1:8000/api/...` 这类非法 URL。
+  const backendHost = getBackendHost();
   
   const fetchPromises = dataIds.map(async (id) => {
     try {
