@@ -73,7 +73,6 @@ const OUT_OF_LIST_BY_DESIGN = {
   skill: '后端就地解析（cmd-skill: 由服务端读技能正文）',
   diff: '不由分析通道铸卡（全仓 grep `cmd-diff:` = 0）；由别的通道/就地解析处理',
   scan: '不由能力闸管辖：后端只在手令族读清单（cmd-scan: 那条腿不经 clientSupports）',
-  search: '不由能力闸管辖：全仓 grep `cmd-search:` = 0，属别的通道',
   search_replace: '写通道那一族的动作（ImplementationService / 语言适配器），不读这份清单',
   mkdir: '写通道那一族（cmd-mkdir: 出自 ImplementationService/适配器），不读这份清单',
   cp: '写通道那一族（cmd-cp: 同上），不读这份清单',

@@ -33,6 +33,10 @@
 export const FRONTEND_CAPABILITIES = Object.freeze([
   // 只读
   'read', 'ls', 'tree_sync',
+  // [P4-A] 只读检索（glob/grep，只回命中位置）：父循环编排器（CodeOrchestratorAgent）**发前读本清单**
+  //   （allowedActions → clientSupports），所以它必须在这里 —— 否则这只本来在的手永远发不出去。
+  //   `WorkspacePanel.executeSingleCommand` 的 case 'search' 是它的事实依据。
+  'search',
   // [F72·枚23/枚26] 只读端口真探（读现有监听表，不占口）：运行腿的"起来了没有"与停止腿的
   //   "停了没有"都要这一格结构事实，不再靠 stdout 词表猜。
   'proc_port_probe',
