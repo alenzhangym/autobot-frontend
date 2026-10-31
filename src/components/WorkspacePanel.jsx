@@ -1327,7 +1327,8 @@ async function executeSingleCommand(cmd, workspaceDir, onLog, sessionId) {
       }
       if (res.data?.status === 'needs_confirmation') {
         const pseudo = { ...cmd, action: 'run', command, args: [] }
-        const approved = await confirmRunCommand(pseudo, askReason, onLog)
+        // [C·2026-10-31] 起进程不给「本次信任」：它是长命进程，一次点头不该让后面同类启动静默通过。
+        const approved = await confirmRunCommand(pseudo, askReason, onLog, { allowTrust: false })
         if (!approved) {
           onLog?.(`[AgentCMD] proc_start REJECTED by user\n`)
           return '{"proc":"rejected","error":"用户拒绝起这个进程"}'
@@ -1367,6 +1368,8 @@ async function executeSingleCommand(cmd, workspaceDir, onLog, sessionId) {
           const upSec = t.startedAt ? Math.max(0, Math.round((endMs - t.startedAt) / 1000)) : null
           return JSON.stringify({
             proc: 'status', task_id: id, status: t.status, command: t.command, cwd: t.cwd,
+            // [C·2026-10-31] pid 是 proc_stop {pid} 唯一可靠的目标来源（台账里查不到的残留也靠它）
+            pid: typeof t.pid === 'number' ? t.pid : null,
             uptime_sec: upSec, exit_code: typeof t.exitCode === 'number' ? t.exitCode : null,
             duration_ms: typeof t.durationMs === 'number' ? t.durationMs : null,
             stdout_tail: tailLines(t.stdout, 40),
@@ -1376,6 +1379,7 @@ async function executeSingleCommand(cmd, workspaceDir, onLog, sessionId) {
         const res = await localApi.get('/api/local/bash/tasks')
         const tasks = (res.data?.tasks || []).map(t => ({
           task_id: t.id, status: t.status, command: String(t.command || '').slice(0, 120), cwd: t.cwd,
+          pid: typeof t.pid === 'number' ? t.pid : null,
         }))
         return JSON.stringify({ proc: 'list', count: tasks.length, tasks })
       } catch (e) {
@@ -1387,9 +1391,39 @@ async function executeSingleCommand(cmd, workspaceDir, onLog, sessionId) {
     }
     case 'proc_stop': {
       const id = String(cmd.task_id || '').trim()
-      if (!id) return '{"proc":"error","error":"proc_stop 需要 task_id"}'
+      // [C·2026-10-31] 显式目标：台账里查不到的残留进程只剩 pid 可指（sidecar 重启后台账会清空）。
+      //   两种停止都带着服务端递下来的 exclude_pids（它的进程族），端侧兜底扫按它摘人。
+      const exPids = Array.isArray(cmd.exclude_pids) ? cmd.exclude_pids : []
+      const pidText = String(cmd.pid ?? '').trim()
+      if (!id && !pidText) return '{"proc":"error","error":"proc_stop 需要 task_id 或 pid"}'
+      if (!id) {
+        const pid = Number(pidText)
+        if (!Number.isInteger(pid) || pid <= 0) {
+          return `{"proc":"error","error":"proc_stop 的 pid 必须是正整数（收到 ${pidText}）"}`
+        }
+        // 破坏性且不可撤销 → 先把"要杀哪一个"摊开让用户点头（不提供"本次信任"）。
+        const approved = await confirmStopPid(pid, cmd.reason, onLog)
+        if (!approved) {
+          onLog?.(`[AgentCMD] proc_stop pid=${pid} REJECTED by user\n`)
+          return JSON.stringify({ proc: 'rejected', pid, error: '用户拒绝终止该进程（未终止任何进程）' })
+        }
+        try {
+          const res = await localApi.post('/api/local/bash/kill-pid', { pid, exclude_pids: exPids })
+          const d = res.data || {}
+          onLog?.(`[AgentCMD] proc_stop pid=${pid} killed=${d.killed} exit=${d.exitCode} err=${d.error || ''}\n`)
+          return JSON.stringify({ proc: d.killed ? 'stopped' : 'stop_failed', pid,
+            killed: d.killed === true, exit_code: Number.isFinite(d.exitCode) ? d.exitCode : null,
+            error: d.error || '' })
+        } catch (e) {
+          const detail = e.response?.data?.error || e.message
+          onLog?.(`[AgentCMD] proc_stop pid=${pid} failed: ${detail}\n`)
+          return `{"proc":"error","pid":${pid},"error":${JSON.stringify(detail)}}`
+        }
+      }
       try {
-        const res = await localApi.delete(`/api/local/bash/tasks/${encodeURIComponent(id)}`)
+        const res = await localApi.delete(`/api/local/bash/tasks/${encodeURIComponent(id)}`, {
+          data: { exclude_pids: exPids },
+        })
         onLog?.(`[AgentCMD] proc_stop task=${id} killed=${res.data?.killed}\n`)
         return JSON.stringify({ proc: 'stopped', task_id: id, killed: res.data?.killed === true })
       } catch (e) {
@@ -1400,10 +1434,57 @@ async function executeSingleCommand(cmd, workspaceDir, onLog, sessionId) {
     case 'proc_sweep': {
       // [方案C 兜底] 现查无登记任务时（如 sidecar 重启清空台账），按工作区目录做 OS 级兜底清扫。
       //   cwd 由后端带（=工作区根）；缺失则退回本组件的 workspaceDir。
-      const cwd = String(cmd.cwd || workspaceDir || '').trim()
+      //
+      // [C·2026-10-31] 两段式：先只读预览"命中了谁"，用户确认后才真杀。
+      //   为什么必须这一刀：sweep 没有可分析的命令字符串（它按 cwd 匹配），确认只能落在**候选**上；
+      //   旧实现直接 POST 就杀，用户在确认框里根本没有东西可看 —— 2026-10-31 dogfood 那次盲扫
+      //   把后端自己当成孤儿杀掉，就是"命令不可见 + 无人确认"的合成结果。
+      const rawCwd = String(cmd.cwd || '').trim()
+      const cwd = rawCwd ? String(resolveCommandPath(workspaceDir, rawCwd) || '').trim()
+        : String(workspaceDir || '').trim()
       if (!cwd) return '{"proc":"error","error":"proc_sweep 需要 cwd"}'
+      const base = {
+        cwd,
+        workspace_root: workspaceDir,
+        // 后端随手令带来的"别杀我"名单（workspace 就是 autobot 仓库时，后端自己的命令行里含 cwd）
+        exclude_pids: Array.isArray(cmd.exclude_pids) ? cmd.exclude_pids : [],
+        exclude_markers: Array.isArray(cmd.exclude_markers) ? cmd.exclude_markers : [],
+      }
+      let preview
       try {
-        const res = await localApi.post('/api/local/bash/sweep', { cwd, workspace_root: workspaceDir })
+        preview = await localApi.post('/api/local/bash/sweep', { ...base, dry_run: true })
+      } catch (e) {
+        const detail = e.response?.data?.error || e.message
+        onLog?.(`[AgentCMD] proc_sweep 预览失败: ${detail}\n`)
+        return `{"proc":"error","error":${JSON.stringify(detail)}}`
+      }
+      const p = preview.data || {}
+      const cands = Array.isArray(p.candidates) ? p.candidates : []
+      onLog?.(`[AgentCMD] proc_sweep 预览 cwd=${cwd} 枚举=${p.enumerated} 命中=${p.matched} `
+        + `via=${p.via || ''} 候选=${JSON.stringify(cands)}\n`)
+      if (p.status !== 'candidates') {
+        return JSON.stringify({ proc: 'error', cwd,
+          error: `sweep 预览没回候选（status=${p.status || '空'}）`, enumErr: p.enumErr || '' })
+      }
+      if (cands.length === 0) {
+        // 没有命中 → 不需要确认框（这一步不改任何东西），如实说"一个都没扫到"
+        return JSON.stringify({ proc: 'swept', cwd, killed: false,
+          enumerated: Number.isFinite(p.enumerated) ? p.enumerated : -1, matched: 0,
+          via: p.via || '', enumErr: p.enumErr || '',
+          note: '扫了一遍，命中 0 条 —— 没有终止任何进程' })
+      }
+      const approved = await confirmSweep(cands, p.reason, onLog)
+      if (!approved) {
+        onLog?.('[AgentCMD] proc_sweep REJECTED by user\n')
+        return '{"proc":"rejected","error":"用户拒绝清扫这些进程（未终止任何进程）"}'
+      }
+      try {
+        // [C·2026-10-31] 把"用户刚确认的那一批 pid"钉进请求体（only_pids）：预览到执行之间
+        //   新起的进程用户没见过，端侧重新按 cwd 枚举就会把它们顺带杀掉 —— 确认的对象必须与
+        //   执行的对象是同一批。
+        const res = await localApi.post('/api/local/bash/sweep', {
+          ...base, confirmed: true, only_pids: cands.map((c) => c.pid),
+        })
         const d = res.data || {}
         onLog?.(`[AgentCMD] proc_sweep cwd=${cwd} killed=${d.killed} via=${d.via} enumerated=${d.enumerated} matched=${d.matched} enumErr=${d.enumErr || ''} detail=${JSON.stringify(d.detail || [])}\n`)
         // [F72·枚26] 诊断字段一起回传，不再只留在本机日志里：服务端要说清"扫了几条/命中几条/
@@ -1597,19 +1678,26 @@ async function executeSingleCommand(cmd, workspaceDir, onLog, sessionId) {
 /**
  * Show an Ant Design modal asking the user to confirm a `run` command.
  * Returns a Promise<boolean> — true if the user approved, false otherwise.
+ *
+ * @param {object} cmd
+ * @param {string} reason
+ * @param {(line:string)=>void} [onLog]
+ * @param {{allowTrust?: boolean}} [opts] allowTrust=false 时**不提供**「本次信任」勾选，
+ *   也绝不把这条命令写进信任表 —— 起进程/杀进程这类动作不可复用（{@link confirmStopPid} 同一条纪律）。
  */
-function confirmRunCommand(cmd, reason, onLog) {
+function confirmRunCommand(cmd, reason, onLog, opts = {}) {
   return new Promise((resolve) => {
     const summary = formatCommandSummary(cmd)
     const cwd = cmd.cwd || '(no cwd)'
     const timeout = cmd.timeout_seconds || 60
+    const allowTrust = opts.allowTrust !== false
     // Hold the trust-for-session flag in a closure so onOk can read it.
     let trustForSession = false
     let resolved = false
     const finish = (ok) => {
       if (resolved) return
       resolved = true
-      if (ok && trustForSession) {
+      if (ok && allowTrust && trustForSession) {
         try {
           const fullCommandLine = [cmd.command, ...(Array.isArray(cmd.args) ? cmd.args : [])]
             .filter(Boolean)
@@ -1652,7 +1740,7 @@ function confirmRunCommand(cmd, reason, onLog) {
         <p style={{ marginTop: 8, marginBottom: 4, color: '#666', fontSize: 12 }}>
           cwd: {cwd} | timeout: {timeout}s
         </p>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 12, fontSize: 12 }}>
+        <label style={{ display: allowTrust ? 'flex' : 'none', alignItems: 'center', gap: 6, marginTop: 12, fontSize: 12 }}>
           <input
             type="checkbox"
             onChange={(e) => { trustForSession = e.target.checked }}
@@ -1671,6 +1759,108 @@ function confirmRunCommand(cmd, reason, onLog) {
       width: 640,
       maskClosable: false,
       onOk: () => finish(true),
+      onCancel: () => finish(false),
+    })
+  })
+}
+
+/**
+ * [C·2026-10-31] `proc_stop {pid}` 的确认框：确认的对象是**那一个进程**（pid）。
+ *
+ * <p>为什么单开一格：按 task_id 停走的是端侧台账（模型只能抄回本会话见过的 id，成员闸在服务端，
+ * 天然没有"杀错人"的面）；而按 pid 停是**手填一个数字**——服务端能验的只有"是不是自己"，
+ * 剩下"这个 pid 到底是不是我要停的那个服务"只有用户能判。所以框里摊 pid + 一句"会连子进程一起杀"，
+ * 且与 {@link confirmSweep} 同一条纪律：<b>不提供</b>「本次信任」。</p>
+ */
+function confirmStopPid(pid, reason, onLog) {
+  return new Promise((resolve) => {
+    let resolved = false
+    const finish = (ok) => {
+      if (resolved) return
+      resolved = true
+      resolve(ok)
+    }
+    const content = (
+      <div>
+        <p style={{ marginBottom: 8 }}>
+          <strong>警告</strong>: 这一步会强杀进程 <b>pid={pid}</b> 及其子进程树，且不受 git 撤销影响。
+        </p>
+        <p style={{ marginBottom: 4 }}>
+          <strong>为什么危险</strong>: {reason || '按 pid 杀进程不会核对它是不是你要停的服务 —— 杀错了只能重起。'}
+        </p>
+        <p style={{ marginTop: 8, marginBottom: 0, color: '#666', fontSize: 12 }}>
+          确认这个 pid 就是你要停的那一个，再点「终止」；不确定就先 proc_status / proc_port_probe 核一下。
+        </p>
+      </div>
+    )
+    Modal.confirm({
+      title: '确认终止该进程',
+      content,
+      okText: '终止',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      width: 560,
+      maskClosable: false,
+      onOk: () => {
+        onLog?.(`[AgentCMD] proc_stop pid=${pid} 用户已确认\n`)
+        finish(true)
+      },
+      onCancel: () => finish(false),
+    })
+  })
+}
+
+/**
+ * [C·2026-10-31] `proc_sweep` 的确认框：确认的对象是**命中的进程**, 不是一条命令。
+ *
+ * <p>为什么单开一个而不是复用 {@link confirmRunCommand}：那个框的词是"要执行这条命令"，而 sweep
+ * 没有命令可给 —— 它按 cwd 匹配，用户能核对的事实只有"要杀哪几个 pid、它们各自的命令行"。
+ * 把 pid 与命令行摊在框里，才谈得上"用户自己确认"；同时也**刻意不提供"本次信任"**：
+ * 杀进程不是可复用的安全形状，点过一次不该让后面静默通过（确认疲劳是这类框最大的失效模式）。</p>
+ */
+function confirmSweep(candidates, reason, onLog) {
+  return new Promise((resolve) => {
+    const rows = candidates.slice(0, 20)
+    let resolved = false
+    const finish = (ok) => {
+      if (resolved) return
+      resolved = true
+      resolve(ok)
+    }
+    const content = (
+      <div>
+        <p style={{ marginBottom: 8 }}>
+          <strong>警告</strong>: 这一步会<b>强杀</b>这台机器上命令行含该工作区目录的进程，并连同子进程一起终止。
+          它不受 git 撤销影响，杀错了只能重起。
+        </p>
+        <p style={{ marginBottom: 4 }}><strong>为什么危险</strong>: {reason}</p>
+        <p style={{ marginBottom: 4 }}><strong>将终止 {candidates.length} 个进程</strong>:</p>
+        <pre
+          style={{
+            background: '#1f1f1f', color: '#f5f5f5', padding: 12, borderRadius: 4,
+            overflow: 'auto', maxHeight: 240, margin: 0, fontSize: 12,
+          }}
+        >
+          {rows.map((c) => `${c.pid}  ${String(c.cmd || '').slice(0, 160)}`).join('\n')}
+          {candidates.length > rows.length ? `\n…（还有 ${candidates.length - rows.length} 条未列出）` : ''}
+        </pre>
+        <p style={{ marginTop: 8, marginBottom: 0, color: '#666', fontSize: 12 }}>
+          确认上面每一个都是你要停的那一个，再点「终止」；不确定就点「取消」。
+        </p>
+      </div>
+    )
+    Modal.confirm({
+      title: '确认终止这些进程',
+      content,
+      okText: '终止',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      width: 640,
+      maskClosable: false,
+      onOk: () => {
+        onLog?.(`[AgentCMD] proc_sweep 用户确认终止 ${candidates.length} 条\n`)
+        finish(true)
+      },
       onCancel: () => finish(false),
     })
   })

@@ -196,8 +196,9 @@ export function list() {
  * Terminate a running task. Returns true if a kill signal was sent.
  *
  * @param {string} id
- * @param {{sweep?: boolean}} [opts] sweep=true 时，对<b>已终态</b>的任务也按 cwd 做一次
- *   OS 级兜底查杀（见 [STOP] 说明）——默认关，关停清理等其它路径不受影响。
+ * @param {{sweep?: boolean, excludePids?: number[], excludeMarkers?: string[]}} [opts] sweep=true 时，
+ *   对<b>已终态</b>的任务也按 cwd 做一次 OS 级兜底查杀（见 [STOP] 说明）——默认关，关停清理等其它
+ *   路径不受影响。excludePids/excludeMarkers 原样透传那次兜底扫（workspace=autobot 时不许杀后端）。
  */
 export async function kill(id, opts = {}) {
   const task = TASKS.get(id)
@@ -213,7 +214,10 @@ export async function kill(id, opts = {}) {
   // [STOP] 终态任务：进程可能已从 mvn 父进程脱手成孤儿（Windows 下 killProcessTree 没覆盖到），
   //   task_id 再停也杀不动。仅在显式 sweep 时按 cwd 兜底扫一遍 —— 默认路径不扫，避免误伤。
   if (opts.sweep !== true) return false
-  const sweep = await killOrphansByCwd(task.cwd)
+  const sweep = await killOrphansByCwd(task.cwd, {
+    excludePids: opts.excludePids,
+    excludeMarkers: opts.excludeMarkers,
+  })
   const orphanKilled = sweep.killed
   if (orphanKilled) {
     task.killed = true
@@ -228,9 +232,11 @@ export async function killAll() {
   await Promise.all(ids.map((id) => kill(id)))
 }
 
-/** Public-safe snapshot (no internal `_child` / `_timer` refs). */
+/** Public-safe snapshot (no internal `_child` / `_timer` refs).
+ *  [C·2026-10-31] 但把 `pid` 单列出来：`proc_stop {pid}` 是"台账里查不到的残留进程"唯一的
+ *  停止目标，模型要能从这里拿到它，而不是猜。 */
 export function summarize(task) {
   if (!task) return null
   const { _child, _timer, ...rest } = task
-  return rest
+  return { ...rest, pid: typeof (_child && _child.pid) === 'number' ? _child.pid : null }
 }

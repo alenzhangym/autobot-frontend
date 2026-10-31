@@ -382,7 +382,8 @@ export function isExplicitlySafe(cmd) {
  * the command looks safe.
  *
  * @param {object} cmd - The parsed command object (with .action, .command, .args).
- * @param {object} [options] - { trustedPatterns?: string[] }
+ * @param {object} [options] - { trustedPatterns?: string[], ignoreTrust?: boolean }
+ *   `ignoreTrust: true` = 这一格**不认**会话信任表（起/停进程这类不可复用的动作必须每次都问）。
  * @returns {string | null} Confirmation reason, or null if safe.
  */
 export function shouldRequireConfirmation(cmd, options = {}) {
@@ -406,7 +407,10 @@ export function shouldRequireConfirmation(cmd, options = {}) {
   // 0b) Trust list (session-scoped, localStorage backed). The user can opt
   //     into a pattern during a previous confirmation dialog ("trust for the
   //     rest of this session"). When a pattern matches, skip the prompt.
-  const trusted = options.trustedPatterns || loadTrustedPatterns()
+  //     [C·2026-10-31] 但 "起进程 / 杀进程" 这类**不可复用**的动作必须传
+  //     ignoreTrust=true —— 一次点头不该让后面对同一个形状静默放行，
+  //     确认疲劳正是这样丢掉最后一道人审的。
+  const trusted = options.ignoreTrust ? [] : (options.trustedPatterns || loadTrustedPatterns())
   if (trusted && trusted.length > 0) {
     for (const pattern of trusted) {
       if (patternMatches(pattern, fullCommandLine)) {

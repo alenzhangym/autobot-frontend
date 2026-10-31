@@ -1773,7 +1773,7 @@ function trimToTail(text, lines) {
 import { getOrCreate, get, kill as killShellById, list as listShells, killAll as killAllShells } from './src/runtime/shellRegistry.js';
 import { analyzeCommand, setDefaultRules as setAnalyzerRules, setDefaultAction as setAnalyzerAction, DEFAULT_RULES as ANALYZER_DEFAULT_RULES } from './src/runtime/commandAnalyzer.js';
 import { createTask as createBgTask, get as getTask, list as listTasks, kill as killTask, killAll as killAllTasks, summarize as summarizeTask } from './src/runtime/taskRegistry.js';
-import { killOrphansByCwd, scanProcessesByCwd } from './src/runtime/processGroup.js';
+import { killOrphansByCwd, scanProcessesByCwd, forceKill } from './src/runtime/processGroup.js';
 import { probePortListening, listListeners } from './src/runtime/portProbe.js';
 import { collectProcListen } from './src/runtime/procListen.js';
 import { webfetch, WebfetchError } from './src/runtime/webfetch.js';
@@ -1916,21 +1916,86 @@ app.get('/api/local/bash/tasks/:id', (req, res) => {
     res.json({ task: summarizeTask(t) });
 });
 
+/** 请求体里的 exclude_pids（只留正整数）—— 服务端递下来的"别杀我"名单，两个终止通道共用。 */
+function readExcludePids(body) {
+    return Array.isArray(body && body.exclude_pids)
+        ? body.exclude_pids.map((p) => Number(p)).filter((p) => Number.isFinite(p) && p > 0)
+        : [];
+}
+
 app.delete('/api/local/bash/tasks/:id', async (req, res) => {
     // sweep: true —— 停止腿的 proc_stop 走这里。终态任务（如 timeout）按 task_id 杀不动时，
     //   再按该任务的 cwd 做一次 OS 级兜底查杀，避免 mvn 遗留的孤儿 Java 进程继续占端口。
-    const ok = await killTask(req.params.id, { sweep: true });
+    // [C·2026-10-31] exclude_pids 必须透传：那次兜底扫的归属判据是"命令行含 task.cwd"，
+    //   workspace 就是 autobot 仓库时它会命中后端自己（dogfood 实测把后端杀了）。
+    const ok = await killTask(req.params.id, { sweep: true, excludePids: readExcludePids(req.body) });
     res.json({ killed: ok });
+});
+
+// [C·2026-10-31] proc_stop {pid} —— 显式目标的终止腿：只杀用户看得见的那一个 pid（连同子进程树）。
+//   为什么不复用 DELETE /tasks/:id：那个键是**端侧自己登记过的台账 id**，sidecar 重启后台账清空，
+//   残留的孤儿进程只剩 pid 可指。两道本地守卫：
+//   ① 自身/父进程永不杀；② 调用方递来的 exclude_pids（服务端把后端自己的进程族随手令带下来）。
+app.post('/api/local/bash/kill-pid', async (req, res) => {
+    try {
+        const pid = Number(req.body && req.body.pid)
+        if (!Number.isFinite(pid) || pid <= 0 || Math.floor(pid) !== pid) {
+            return res.status(400).json({ status: 'error', error: 'kill-pid 需要正整数 pid' })
+        }
+        const exclude = new Set([process.pid, process.ppid, ...readExcludePids(req.body)])
+        if (exclude.has(pid)) {
+            return res.status(403).json({ status: 'error', error: `pid=${pid} 是 sidecar 自己的进程族，拒杀` })
+        }
+        const r = await forceKill(pid)
+        res.json({ killed: r.killed, pid, exitCode: r.exitCode, error: r.error })
+    } catch (err) {
+        res.status(500).json({ status: 'error', error: err.message })
+    }
 });
 
 // [方案C 兜底] proc_sweep —— 现查无登记任务（如 sidecar 重启后 taskRegistry 被清空）时，
 //   按工作区目录做一次 OS 级兜底清扫：杀掉命令行里含该目录的残留进程（mvn 遗留的孤儿 Java 等），
 //   排除自身/父进程。这是"停止腿看不见但确实还在跑"的服务唯一的清场手段。
+//
+// [C·2026-10-31] 两段式 + 用户确认：这一格是**唯一**没有命令可分析的破坏性动作（按 cwd 匹配而不是
+//   一个可审的命令字符串），所以确认必须落在"要杀哪几条"上：
+//   ① `dry_run:true` → 只枚举候选（真机 2026-10-31 那次事故里，盲扫把后端自己当成孤儿杀了 ——
+//      用户看不见候选就等于在盲签）；
+//   ② 不带 `confirmed:true` 的实杀请求 → 回 `needs_confirmation` + 候选，不杀；
+//   ③ `confirmed:true` 才真杀，且 `exclude_pids`（调用方把自己的 pid 递进来）与 `exclude_markers`
+//      在同一份判据里参与排除。
 app.post('/api/local/bash/sweep', async (req, res) => {
     try {
         const cwd = String((req.body && req.body.cwd) || '').trim();
         if (!cwd) return res.status(400).json({ status: 'error', error: 'sweep 需要 cwd' });
-        const r = await killOrphansByCwd(cwd);
+        const excludePids = readExcludePids(req.body);
+        const excludeMarkers = Array.isArray(req.body && req.body.exclude_markers)
+            ? req.body.exclude_markers.map(String).filter((m) => m.trim().length > 0)
+            : [];
+        // 用户确认过的那一批 pid（只杀这批：预览之后新起的进程用户没见过，不许顺带杀掉）。
+        // 三态必须保留：没带 only_pids（undefined）→ 不设限（旧调用方/兜底流程照旧按 cwd 全收）；
+        // 带了数组 → 只认这份名单，空名单/全垃圾 → 一条都不杀（fail-safe，不许退化成盲扫）。
+        const onlyRaw = req.body ? req.body.only_pids : undefined;
+        const onlyPids = Array.isArray(onlyRaw)
+            ? onlyRaw.map((p) => Number(p)).filter((p) => Number.isFinite(p) && p > 0)
+            : undefined;
+        // ①/② 只读预览：命中谁先摊开给人看（枚举失败也要如实回，不能折成"没有"）
+        const dryRun = req.body && req.body.dry_run === true;
+        const notConfirmed = !(req.body && req.body.confirmed === true);
+        if (dryRun || notConfirmed) {
+            const scan = await scanProcessesByCwd(cwd, { excludePids, excludeMarkers, onlyPids });
+            const reason = '清扫会强杀这台机器上命令行含该目录的进程，且不受 git 撤销影响 —— '
+                + '先核对下面这些命中的是不是你要停的那一个。';
+            if (req.body && req.body.dry_run === true) {
+                return res.json({ status: 'candidates', cwd, reason,
+                    enumerated: scan.enumerated, matched: scan.matched, via: scan.via,
+                    enumErr: scan.enumErr, anchors: scan.anchors, candidates: scan.procs });
+            }
+            return res.json({ status: 'needs_confirmation', cwd, reason,
+                enumerated: scan.enumerated, matched: scan.matched, via: scan.via,
+                enumErr: scan.enumErr, anchors: scan.anchors, candidates: scan.procs });
+        }
+        const r = await killOrphansByCwd(cwd, { excludePids, excludeMarkers, onlyPids });
         // 诊断透传：枚举通道（via）/条数、命中条数、逐条的 taskkill 退出码与 stderr —— "一个都没
         //   杀到"时必须说得出原因（权限/进程已不在/枚举整条空回），否则停止腿只能拿到一个 false。
         res.json({ killed: r.killed, enumerated: r.enumerated, matched: r.matched,

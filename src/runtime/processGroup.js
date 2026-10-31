@@ -99,6 +99,8 @@ function killWindows(pid) {
 //
 // 安全边界: 只认"命令行里含该任务 cwd"的进程, 且永不杀自身/父进程。task.cwd 是 autobot 起该任务时
 // 记下的工作目录; 别的项目(含 autobot 后端自己)的命令行不含它, 天然不会被误伤。
+//   [C·2026-10-31 更正] 上面这句在"workspace 就是 autobot 仓库"时不成立（dogfood 实测把后端杀了）——
+//   所以现在多两把显式排除：excludePids（调用方把自己的 pid 递进来）与 excludeMarkers。
 
 /** 归一化: 反斜杠转正斜杠 + 小写(Windows 大小写不敏感)。 */
 function norm(s) {
@@ -115,6 +117,29 @@ export function matchesCwd(commandLine, cwd) {
   const c = norm(cwd).replace(/\/+$/, '')
   if (!c) return false
   return norm(commandLine).includes(c)
+}
+
+/**
+ * [C·2026-10-31] 命令行是否命中某条「别杀」标记（大小写不敏感子串；纯函数）。
+ *
+ * <p>为什么要有这一格：{@link matchesCwd} 的假设是"别的项目（含 autobot 后端自己）的命令行不含
+ * 这个 cwd"。workspace 就是 autobot 仓库时这条假设不成立 —— 2026-10-31 的 dogfood 里
+ * {@code proc_sweep(cwd=E:\code\autobot)} 就把后端 JVM 当成孤儿杀了，驱动的那一轮随即连接失败。
+ * 归属判据（含 cwd）只回答"像不像这个项目的"，**"是不是我自己"必须由调用方另行给出**：
+ * 服务端把自己的 pid 递进来（{@code exclude_pids}），端侧再按标记兜一层（{@code exclude_markers}）。</p>
+ *
+ * @param {string} commandLine
+ * @param {string[]} markers
+ * @returns {boolean}
+ */
+export function matchesExcludeMarker(commandLine, markers) {
+  if (!Array.isArray(markers) || markers.length === 0) return false
+  const c = norm(commandLine)
+  return markers.some((m) => {
+    const t = norm(m).trim()
+    if (t.length === 0) return false
+    return c.includes(t.replace(/^[/\\]+|[/\\]+$/g, ''))
+  })
 }
 
 /**
@@ -187,10 +212,13 @@ async function stopProcessPowerShell(pid) {
  * Windows 下 taskkill 失败时兜底改用 PowerShell Stop-Process -Force，把真实原因暴露出来 ——
  * 这是 2026-10-12 实证的失败点：sidecar 进程上下文执行 taskkill 常常杀不动（进程以管理员身份
  * 启动 / 上下文权限不足），旧实现只 resolve(false)，一个字的原因都不留。
+ *
+ * <p>[C·2026-10-31] 公开导出：`proc_stop {pid}` 这条显式目标的腿（{@code POST /api/local/bash/kill-pid}）
+ * 只杀用户看得见的那一个 pid，与 sweep 共用同一套诊断。</p>
  * @param {number} pid
  * @returns {Promise<{killed:boolean, exitCode:number, error:string}>}
  */
-function forceKill(pid) {
+export function forceKill(pid) {
   return new Promise((resolve) => {
     if (platform() !== 'win32') {
       try {
@@ -211,6 +239,41 @@ function forceKill(pid) {
 }
 
 /**
+ * [C·2026-10-31] "这条进程算不算本次清扫的目标"—— 唯一一处判据（纯函数）。
+ *
+ * <p>当场事故是"按 cwd 误杀后端"：workspace 根就是 autobot 仓库时，后端自己的命令行里也含这个
+ * cwd，于是被当成孤儿。四道闸因此必须放在同一条链上，且预览与实杀共用它，否则"确认的不是执行的
+ * 那一份"：</p>
+ * <ol>
+ *   <li>{@code excludePids} —— 自身/父进程/服务端点名的进程族，一个都不许动；</li>
+ *   <li>{@code excludeMarkers} —— 命令行含这些标记的（如 {@code java-backend}）整体排除；</li>
+ *   <li>{@code onlyPids} —— 用户刚确认过的那一批；给了就只杀这一批，预览之后新起的进程不顺手带走；</li>
+ *   <li>{@code anchors} —— 归属判据（工作区根 + 一级子目录），命令行含任一锚点才算这个项目的进程。</li>
+ * </ol>
+ *
+ * @param {Array<{pid:number, commandLine:string}>} procs 全机进程表
+ * @param {{anchors?: string[], excludePids?: number[], excludeMarkers?: string[],
+ *   onlyPids?: number[]}} [opts]
+ * @returns {Array<{pid:number, commandLine:string}>}
+ */
+export function selectSweepTargets(procs, opts = {}) {
+  const exclude = new Set([process.pid, process.ppid, ...(opts.excludePids || [])])
+  // 三态，别把"没给名单"与"名单为空"当成一件事：
+  //   undefined/非数组 → 不设限（server 重启兜底、DELETE /tasks/:id 这类无确认流程照旧按 cwd 全收）；
+  //   数组（哪怕是空数组/全是垃圾值）→ 只认这份名单，空名单意味着"一条都没确认" → 一条都不杀。
+  //   （若把空数组也折成"不设限"，一次参数拼错就会退化成盲扫全 cwd。）
+  const hasOnly = Array.isArray(opts.onlyPids)
+  const only = hasOnly
+    ? new Set(opts.onlyPids.map(Number).filter((p) => Number.isFinite(p) && p > 0))
+    : null
+  const anchors = Array.isArray(opts.anchors) ? opts.anchors : []
+  return (procs || []).filter((p) => !exclude.has(p.pid)
+    && !matchesExcludeMarker(p.commandLine, opts.excludeMarkers)
+    && (!hasOnly || only.has(p.pid))
+    && anchors.some((a) => matchesCwd(p.commandLine, a)))
+}
+
+/**
  * 只读版"按 cwd 扫存活进程"：与 {@link killOrphansByCwd} 共用同一份枚举与归属判据，但**不杀**。
  *
  * <p>为什么要有这一格：用户问"前后端起没起来 / 端口在不在听"时，代码通道此前手里只有文件类动作
@@ -222,17 +285,16 @@ function forceKill(pid) {
  * 枚举失败 ≠ 没有进程 —— 读这一方必须能分开这两件事。</p>
  *
  * @param {string} cwd 工作区根（或某个模块目录）
- * @param {{excludePids?: number[], includeChildren?: boolean}} [opts]
+ * @param {{excludePids?: number[], excludeMarkers?: string[], onlyPids?: number[],
+ *   includeChildren?: boolean}} [opts]
  * @returns {Promise<{enumerated:number, matched:number, via:string, enumErr:string,
  *   anchors:string[], procs:Array<{pid:number, cmd:string}>}>}
  */
 export async function scanProcessesByCwd(cwd, opts = {}) {
   if (!cwd) return { enumerated: 0, matched: 0, via: '', enumErr: '缺少 cwd', anchors: [], procs: [] }
-  const exclude = new Set([process.pid, process.ppid, ...(opts.excludePids || [])])
   const anchors = scanAnchors(cwd, opts.includeChildren !== false)
   const listing = await listProcesses()
-  const procs = listing.procs
-    .filter((p) => !exclude.has(p.pid) && anchors.some((a) => matchesCwd(p.commandLine, a)))
+  const procs = selectSweepTargets(listing.procs, { ...opts, anchors })
     .map((p) => ({
       pid: p.pid,
       cmd: String(p.commandLine || '').replace(/\s+/g, ' ').trim().slice(0, 200),
@@ -277,23 +339,28 @@ function scanAnchors(cwd, includeChildren) {
  * <p>返回诊断而非裸布尔：枚举到几条、命中几条、逐条的 taskkill 退出码与 stderr —— 失败时
  * 才说得清"为什么一个都没杀到"（旧实现只回 killed=false，原因全丢）。</p>
  * @param {string} cwd 任务的工作目录（autobot 起它时记下的）
- * @param {{excludePids?: number[]}} [opts]
- * @returns {Promise<{killed:boolean, enumerated:number, matched:number,
+ * @param {{excludePids?: number[], excludeMarkers?: string[], includeChildren?: boolean,
+ *   onlyPids?: number[]}} [opts] `onlyPids` = 只杀这一份名单里的 pid（用户确认过的那一批）。
+ *   [C·2026-10-31] 为什么要它：预览与实际执行之间有几十毫秒，期间新起的进程若按 cwd 重新枚举
+ *   就会被"顺带"杀掉 —— 而那一条用户根本没见过。确认的对象必须与执行的对象是同一批。
+ * @returns {Promise<{killed:boolean, enumerated:number, matched:number, anchors:string[],
  *   detail:Array<{pid:number, killed:boolean, exitCode:number, error:string}>}>}
  */
 export async function killOrphansByCwd(cwd, opts = {}) {
-  if (!cwd) return { killed: false, enumerated: 0, matched: 0, via: '', enumErr: '', detail: [] }
-  const exclude = new Set([process.pid, process.ppid, ...(opts.excludePids || [])])
+  if (!cwd) return { killed: false, enumerated: 0, matched: 0, via: '', enumErr: '', anchors: [], detail: [] }
+  // [C·2026-10-31] 与只读预览（{@link scanProcessesByCwd}）用同一组锚点、同一处过滤（{@link selectSweepTargets}）：
+  //   预览列出 N 条、用户点头之后杀的却是另一组（旧实现只按 cwd 一根锚点）—— 那是"确认的不是执行的那一份"。
+  const anchors = scanAnchors(cwd, opts.includeChildren !== false)
   const listing = await listProcesses()
   const procs = listing.procs
-  const targets = procs.filter((p) => !exclude.has(p.pid) && matchesCwd(p.commandLine, cwd))
+  const targets = selectSweepTargets(procs, { ...opts, anchors })
   const detail = []
   if (targets.length === 0) {
     console.log(`[sweep] cwd=${cwd} 枚举 ${procs.length} 条(via=${listing.via}, code=${listing.code}, `
       + `bytes=${listing.bytes})，命中 0 条（无孤儿可清）`
       + (listing.err ? `；枚举诊断: ${listing.err}` : ''))
     return { killed: false, enumerated: procs.length, matched: 0, via: listing.via,
-      enumErr: listing.err, detail }
+      enumErr: listing.err, anchors, detail }
   }
   let killedAny = false
   for (const t of targets) {
@@ -309,5 +376,5 @@ export async function killOrphansByCwd(cwd, opts = {}) {
   console.log(`[sweep] cwd=${cwd} 枚举 ${procs.length} 条(via=${listing.via})，命中 ${targets.length} 条，`
     + `终止 ${killedN} 条；逐条: ${JSON.stringify(detail)}`)
   return { killed: killedAny, enumerated: procs.length, matched: targets.length,
-    via: listing.via, enumErr: listing.err, detail }
+    via: listing.via, enumErr: listing.err, anchors, detail }
 }

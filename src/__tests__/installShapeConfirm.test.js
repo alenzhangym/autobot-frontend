@@ -59,3 +59,14 @@ describe('env_probe / proc_status 不被确认门挡住（只读）', () => {
     assert.equal(shouldRequireConfirmation({ action: 'proc_status' }), null)
   })
 })
+
+describe('[C·2026-10-31] 信任表对起/停进程类动作不生效', () => {
+  test('ignoreTrust=true 时即使形状在信任表里也要弹确认', () => {
+    // 后端标了必须确认（proc_start 用 action=run 的伪命令走同一道门）
+    const cmd = { action: 'run', command: 'npm', args: ['run', 'dev'], requires_confirmation: true }
+    const trusted = { trustedPatterns: ['npm run dev'] }
+    assert.equal(shouldRequireConfirmation(cmd, trusted), null, '普通 run：信任表照旧短路')
+    assert.ok(shouldRequireConfirmation(cmd, { ...trusted, ignoreTrust: true }),
+      '不可复用的动作不许被会话信任短路')
+  })
+})
