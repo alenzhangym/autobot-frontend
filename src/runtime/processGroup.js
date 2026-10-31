@@ -108,15 +108,69 @@ function norm(s) {
 }
 
 /**
- * 命令行是否引用给定 cwd（纯函数，便于单测）。
+ * [C·2026-10-31 归属判据·收紧] 命令行是否**引用**给定 cwd —— 按「完整路径 token」判，不按子串判。
+ *
+ * <p>旧实现是 `norm(line).includes(norm(cwd))`（子串），于是两类假归属都会进来：</p>
+ * <ul>
+ *   <li>前缀共享的<b>别的项目</b>：工作区 {@code E:\code\autobot}，对手仓库 {@code E:\code\autobot-fork\app}
+ *       的命令行里"含"这个子串 → 被当成这个项目的孤儿，sweep 会把它杀了；</li>
+ *   <li>命令行里作为<b>内容</b>出现的路径（日志参数、脚本字面量、编辑器打开过的目录）：同样"含"。</li>
+ * </ul>
+ *
+ * <p>新判据要求：该出现位置是一个<b>完整的路径 token</b> —— 前面不是路径的延续字符（字母/数字/
+ * {@code -_.~} 与分隔符），后面只允许结束、路径分隔符（= 该目录下）或标点/空白/引号/分隔符
+ * （{@code = : ; , " ' ) ] } | &}）。这样 {@code E:\code\autobot\autobot-frontend\server.js}
+ * 与 {@code --project=E:\code\autobot} 命中，而 {@code E:\code\autobot-fork\app} 与
+ * {@code E:\code\autobot.jar} 不命中。</p>
+ *
+ * <p>这只是三级证据里的<b>弱</b>一级（{@code path}）：它能证明"命令行里确实写到了这个目录"，
+ * 证明不了"这个进程属于这个项目"（Windows 的命令行里没有工作目录这一格）。强证据在
+ * `sweepOwnership.js` 的两级 —— 本会话登记的 pid 树（{@code tree}）与端口归属（{@code port}）。</p>
+ *
  * @param {string} commandLine
  * @param {string} cwd
  * @returns {boolean}
  */
 export function matchesCwd(commandLine, cwd) {
   const c = norm(cwd).replace(/\/+$/, '')
-  if (!c) return false
-  return norm(commandLine).includes(c)
+  const line = norm(commandLine)
+  if (!c || !line) return false
+  let from = 0
+  while (true) {
+    const i = line.indexOf(c, from)
+    if (i < 0) return false
+    const before = i === 0 ? '' : line[i - 1]
+    const after = i + c.length >= line.length ? '' : line[i + c.length]
+    // 后边界：路径分隔符 = 锚点**之下**的路径（命中）；其余必须是 token 结束符
+    if (breaksPathToken(before) && (after === '' || after === '/' || breaksPathToken(after))) return true
+    from = i + 1
+  }
+}
+
+/** 路径 token 的两侧允许出现的字符（出现即说明是新的 token，而不是同一个更长的路径）。 */
+const PATH_TOKEN_BREAK = new Set([
+  ' ', '\t', '\n', '\r', '"', "'", '`', '=', ';', ':', ',', '(', ')', '[', ']', '{', '}', '<', '>', '|', '&',
+])
+
+/** 该字符是否"路径 token 的边界"（空串 = 行首/行尾）。 */
+function breaksPathToken(ch) {
+  return ch === '' || PATH_TOKEN_BREAK.has(ch)
+}
+
+/**
+ * 子路径是否**在**父路径之下（含相等；按路径分隔符对齐，不做子串判）—— 纯函数。
+ *
+ * <p>给归属用：登记任务的 cwd 必须落在这次 sweep 的 cwd 之下才算同一片工地
+ * （{@code E:\code\autobot-x} 不在 {@code E:\code\autobot} 之下）。</p>
+ * @param {string} childPath
+ * @param {string} parentPath
+ * @returns {boolean}
+ */
+export function isUnderPath(childPath, parentPath) {
+  const child = norm(childPath).replace(/\/+$/, '')
+  const parent = norm(parentPath).replace(/\/+$/, '')
+  if (!child || !parent) return false
+  return child === parent || child.startsWith(parent + '/')
 }
 
 /**
@@ -162,7 +216,15 @@ export function parseProcTable(output) {
 const WIN_ENUM = 'Get-CimInstance Win32_Process | Where-Object { $_.CommandLine } | '
   + 'ForEach-Object { "$($_.ProcessId)\t$($_.CommandLine)" }'
 
-async function listProcesses() {
+/**
+ * 枚举全机「PID + 命令行」（{@code commandLine} 这一格只有停止腿/清扫用得上）。
+ *
+ * <p>[C·2026-10-31] 公开导出：sweep 的归属判据要把"进程表 + 本会话登记的 pid 树 + 端口归属"
+ * 放在同一份快照上判（`sweepOwnership.js`），枚举因此提到调用方，不能再被扫两遍。</p>
+ * @returns {Promise<{procs:Array<{pid:number, commandLine:string}>, via:string,
+ *   code:number, bytes:number, err:string}>}
+ */
+export async function listCommandLines() {
   // [修复1 根因] 这里原来写的是 `platform === 'win32'` —— `platform` 是 node:os 导出的**函数**，
   //   与字符串恒不相等 → Windows 上永远走 POSIX 分支，去起 `ps -eo pid=,args=`（sidecar 在 Git
   //   Bash 的 PATH 上恰好有 MSYS 的 ps，它不认 -eo，直接 "unknown option -- o" 空回）。于是
@@ -242,19 +304,26 @@ export function forceKill(pid) {
  * [C·2026-10-31] "这条进程算不算本次清扫的目标"—— 唯一一处判据（纯函数）。
  *
  * <p>当场事故是"按 cwd 误杀后端"：workspace 根就是 autobot 仓库时，后端自己的命令行里也含这个
- * cwd，于是被当成孤儿。四道闸因此必须放在同一条链上，且预览与实杀共用它，否则"确认的不是执行的
+ * cwd，于是被当成孤儿。所有闸必须放在同一条链上，且预览与实杀共用它，否则"确认的不是执行的
  * 那一份"：</p>
  * <ol>
  *   <li>{@code excludePids} —— 自身/父进程/服务端点名的进程族，一个都不许动；</li>
  *   <li>{@code excludeMarkers} —— 命令行含这些标记的（如 {@code java-backend}）整体排除；</li>
  *   <li>{@code onlyPids} —— 用户刚确认过的那一批；给了就只杀这一批，预览之后新起的进程不顺手带走；</li>
- *   <li>{@code anchors} —— 归属判据（工作区根 + 一级子目录），命令行含任一锚点才算这个项目的进程。</li>
+ *   <li>归属三选一（并给每条打上 {@code evidence}，确认框里看得见"凭什么算它"）：
+ *       <ul>
+ *         <li>{@code tree} = 本会话登记任务的 pid 树成员（{@code ownedPids} 里带 {@code 'tree'}）；</li>
+ *         <li>{@code port} = 正在监听"本会话为这个工作区观测到过的端口"（{@code ownedPids} 里带 {@code 'port'}）；</li>
+ *         <li>{@code path} = 命令行里有**完整路径 token** 指向工作区某锚点（{@link matchesCwd}）。</li>
+ *       </ul>
+ *       旧实现只有 {@code path} 且是子串匹配 —— 前缀共享的对手仓库、命令行里当内容出现的路径都会进来。</li>
  * </ol>
  *
  * @param {Array<{pid:number, commandLine:string}>} procs 全机进程表
  * @param {{anchors?: string[], excludePids?: number[], excludeMarkers?: string[],
- *   onlyPids?: number[]}} [opts]
- * @returns {Array<{pid:number, commandLine:string}>}
+ *   onlyPids?: number[], ownedPids?: (Map<number,'tree'|'port'>|number[])}} [opts]
+ *   {@code ownedPids}：本会话有强证据归属这个工作区的进程（Map 带证据类型；数组按 {@code 'tree'}）。
+ * @returns {Array<{pid:number, commandLine:string, evidence:'tree'|'port'|'path'}>}
  */
 export function selectSweepTargets(procs, opts = {}) {
   const exclude = new Set([process.pid, process.ppid, ...(opts.excludePids || [])])
@@ -266,11 +335,31 @@ export function selectSweepTargets(procs, opts = {}) {
   const only = hasOnly
     ? new Set(opts.onlyPids.map(Number).filter((p) => Number.isFinite(p) && p > 0))
     : null
+  // 强证据表：pid → 'tree' | 'port'
+  const owned = new Map()
+  if (opts.ownedPids instanceof Map) {
+    for (const [pid, why] of opts.ownedPids) {
+      const n = Number(pid)
+      if (n > 0) owned.set(n, String(why || 'tree'))
+    }
+  } else if (Array.isArray(opts.ownedPids)) {
+    for (const pid of opts.ownedPids) {
+      const n = Number(pid)
+      if (n > 0) owned.set(n, 'tree')
+    }
+  }
   const anchors = Array.isArray(opts.anchors) ? opts.anchors : []
-  return (procs || []).filter((p) => !exclude.has(p.pid)
-    && !matchesExcludeMarker(p.commandLine, opts.excludeMarkers)
-    && (!hasOnly || only.has(p.pid))
-    && anchors.some((a) => matchesCwd(p.commandLine, a)))
+  const out = []
+  for (const p of procs || []) {
+    if (exclude.has(p.pid)) continue
+    if (matchesExcludeMarker(p.commandLine, opts.excludeMarkers)) continue
+    if (hasOnly && !only.has(p.pid)) continue
+    const strong = owned.get(p.pid)
+    const evidence = strong || (anchors.some((a) => matchesCwd(p.commandLine, a)) ? 'path' : null)
+    if (!evidence) continue
+    out.push({ pid: p.pid, commandLine: p.commandLine, evidence })
+  }
+  return out
 }
 
 /**
@@ -286,18 +375,22 @@ export function selectSweepTargets(procs, opts = {}) {
  *
  * @param {string} cwd 工作区根（或某个模块目录）
  * @param {{excludePids?: number[], excludeMarkers?: string[], onlyPids?: number[],
- *   includeChildren?: boolean}} [opts]
+ *   ownedPids?: (Map<number,'tree'|'port'>|number[]), includeChildren?: boolean,
+ *   listing?: {procs:Array<{pid:number, commandLine:string}>, via:string, err:string}}} [opts]
  * @returns {Promise<{enumerated:number, matched:number, via:string, enumErr:string,
- *   anchors:string[], procs:Array<{pid:number, cmd:string}>}>}
+ *   anchors:string[], procs:Array<{pid:number, cmd:string, evidence:string}>}>}
  */
 export async function scanProcessesByCwd(cwd, opts = {}) {
   if (!cwd) return { enumerated: 0, matched: 0, via: '', enumErr: '缺少 cwd', anchors: [], procs: [] }
   const anchors = scanAnchors(cwd, opts.includeChildren !== false)
-  const listing = await listProcesses()
+  const listing = opts.listing || await listCommandLines()
   const procs = selectSweepTargets(listing.procs, { ...opts, anchors })
     .map((p) => ({
       pid: p.pid,
       cmd: String(p.commandLine || '').replace(/\s+/g, ' ').trim().slice(0, 200),
+      // 归属证据（tree/port/path）：只读这一格也要能说清"凭什么算它"，否则读的人无从分辨
+      // "确实是我起的" 与 "命令行里恰好写到了这个目录"。
+      evidence: p.evidence,
     }))
   return {
     enumerated: listing.procs.length,
@@ -340,18 +433,20 @@ function scanAnchors(cwd, includeChildren) {
  * 才说得清"为什么一个都没杀到"（旧实现只回 killed=false，原因全丢）。</p>
  * @param {string} cwd 任务的工作目录（autobot 起它时记下的）
  * @param {{excludePids?: number[], excludeMarkers?: string[], includeChildren?: boolean,
- *   onlyPids?: number[]}} [opts] `onlyPids` = 只杀这一份名单里的 pid（用户确认过的那一批）。
+ *   onlyPids?: number[], ownedPids?: (Map<number,'tree'|'port'>|number[]),
+ *   listing?: {procs:Array<{pid:number, commandLine:string}>, via:string, err:string}}} [opts]
+ *   `onlyPids` = 只杀这一份名单里的 pid（用户确认过的那一批）。
  *   [C·2026-10-31] 为什么要它：预览与实际执行之间有几十毫秒，期间新起的进程若按 cwd 重新枚举
  *   就会被"顺带"杀掉 —— 而那一条用户根本没见过。确认的对象必须与执行的对象是同一批。
  * @returns {Promise<{killed:boolean, enumerated:number, matched:number, anchors:string[],
- *   detail:Array<{pid:number, killed:boolean, exitCode:number, error:string}>}>}
+ *   detail:Array<{pid:number, killed:boolean, exitCode:number, error:string, evidence:string}>}>}
  */
 export async function killOrphansByCwd(cwd, opts = {}) {
   if (!cwd) return { killed: false, enumerated: 0, matched: 0, via: '', enumErr: '', anchors: [], detail: [] }
   // [C·2026-10-31] 与只读预览（{@link scanProcessesByCwd}）用同一组锚点、同一处过滤（{@link selectSweepTargets}）：
   //   预览列出 N 条、用户点头之后杀的却是另一组（旧实现只按 cwd 一根锚点）—— 那是"确认的不是执行的那一份"。
   const anchors = scanAnchors(cwd, opts.includeChildren !== false)
-  const listing = await listProcesses()
+  const listing = opts.listing || await listCommandLines()
   const procs = listing.procs
   const targets = selectSweepTargets(procs, { ...opts, anchors })
   const detail = []
@@ -370,6 +465,7 @@ export async function killOrphansByCwd(cwd, opts = {}) {
     //   否则"停止前端服务"永远只能说"扫到几条"，答不出停的是不是前端。摘要只用于归属判断，
     //   不进模型上下文的那格由服务端控制。
     detail.push({ pid: t.pid, killed: r.killed, exitCode: r.exitCode, error: r.error,
+      evidence: t.evidence,
       cmd: String(t.commandLine || '').replace(/\s+/g, ' ').trim().slice(0, 120) })
   }
   const killedN = detail.filter((d) => d.killed).length

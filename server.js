@@ -1773,9 +1773,11 @@ function trimToTail(text, lines) {
 import { getOrCreate, get, kill as killShellById, list as listShells, killAll as killAllShells } from './src/runtime/shellRegistry.js';
 import { analyzeCommand, setDefaultRules as setAnalyzerRules, setDefaultAction as setAnalyzerAction, DEFAULT_RULES as ANALYZER_DEFAULT_RULES } from './src/runtime/commandAnalyzer.js';
 import { createTask as createBgTask, get as getTask, list as listTasks, kill as killTask, killAll as killAllTasks, summarize as summarizeTask } from './src/runtime/taskRegistry.js';
-import { killOrphansByCwd, scanProcessesByCwd, forceKill } from './src/runtime/processGroup.js';
+import { killOrphansByCwd, scanProcessesByCwd, forceKill, listCommandLines, isUnderPath } from './src/runtime/processGroup.js';
 import { probePortListening, listListeners } from './src/runtime/portProbe.js';
-import { collectProcListen } from './src/runtime/procListen.js';
+import { collectProcListen, listPpidTable } from './src/runtime/procListen.js';
+import { attributeOwnedPids } from './src/runtime/sweepOwnership.js';
+import { recordWorkspacePorts, workspacePortsOf } from './src/runtime/workspacePorts.js';
 import { webfetch, WebfetchError } from './src/runtime/webfetch.js';
 import { websearch, WebsearchError } from './src/runtime/websearch.js';
 import { write as todoWrite, read as todoRead, updateItem as todoUpdate, clear as todoClear } from './src/runtime/todoStore.js';
@@ -1953,6 +1955,49 @@ app.post('/api/local/bash/kill-pid', async (req, res) => {
     }
 });
 
+// [C·2026-10-31 归属判据] sweep 的强证据：本会话登记的 pid 树（tree）+ 端口归属（port）。
+//   为什么要有这一格：旧判据只有「命令行里含该 cwd」这一条弱证据，且是子串匹配 —— workspace
+//   就是 autobot 仓库时后端自己也会进来（dogfood 实测），前缀共享的对手仓库、命令行里把路径当
+//   内容写着的进程同样会进来。判据在 `sweepOwnership.js`（纯函数），这里只做 I/O 拼装：
+//   登记表 → 根 pid → PID/PPID 表 → 监听表 → 证据表。任一枚举失败都如实带回，绝不折成"没有"。
+async function collectSweepOwnership(cwd, procs) {
+    const tasks = listTasks();
+    const known = workspacePortsOf(cwd);
+    // 只有本工作区真有登记任务时才多枚举一次 PID→PPID（枚举贵，且只有这一段用得上）
+    let ppidOf = new Map();
+    let treeErr = '';
+    const maybeTree = tasks.some((t) => {
+        const pid = Number(t && t.pid);
+        const taskCwd = String((t && t.cwd) || '');
+        return pid > 0 && taskCwd && isUnderPath(taskCwd, cwd);
+    });
+    if (maybeTree) {
+        const tbl = await listPpidTable();
+        if (tbl.code === 0 && tbl.ppidOf && tbl.ppidOf.size > 0) ppidOf = tbl.ppidOf;
+        else treeErr = tbl.err || '进程树枚举没给出可判的结果（只认根 pid）';
+    }
+    // 端口那一级：只在有账时才读监听表。没账 = 这一级今天给不出归属，不是"没有端口"。
+    let listenRows = [];
+    let listenErr = '';
+    if (known.ports.size > 0) {
+        const l = await listListeners();
+        listenRows = l.rows || [];
+        if (!l.raw && l.err) listenErr = l.err;
+    }
+    const own = attributeOwnedPids({ cwd, tasks, procs, ppidOf, listenRows, knownPorts: known.ports });
+    return { ...own, diag: {
+        ...own.diag,
+        known_port_list: [...known.ports],
+        port_sources: known.sources,
+        expired_ports: known.expired,
+        tree_enum_err: treeErr,
+        listen_enum_err: listenErr,
+        // 登记任务里有谁没被认成根、为什么（pid 复用守卫拒了谁）—— 没有这一格，"树这一级为空"
+        // 就只能靠猜原因。
+        rejected_tasks: own.notes,
+    } };
+}
+
 // [方案C 兜底] proc_sweep —— 现查无登记任务（如 sidecar 重启后 taskRegistry 被清空）时，
 //   按工作区目录做一次 OS 级兜底清扫：杀掉命令行里含该目录的残留进程（mvn 遗留的孤儿 Java 等），
 //   排除自身/父进程。这是"停止腿看不见但确实还在跑"的服务唯一的清场手段。
@@ -1964,6 +2009,8 @@ app.post('/api/local/bash/kill-pid', async (req, res) => {
 //   ② 不带 `confirmed:true` 的实杀请求 → 回 `needs_confirmation` + 候选，不杀；
 //   ③ `confirmed:true` 才真杀，且 `exclude_pids`（调用方把自己的 pid 递进来）与 `exclude_markers`
 //      在同一份判据里参与排除。
+//   ④ [归属判据] 候选必须有证据（tree / port / path，见 `collectSweepOwnership`）：预览与实杀
+//      共用同一份枚举与同一张证据表，回传里逐条带 `evidence`。
 app.post('/api/local/bash/sweep', async (req, res) => {
     try {
         const cwd = String((req.body && req.body.cwd) || '').trim();
@@ -1979,27 +2026,33 @@ app.post('/api/local/bash/sweep', async (req, res) => {
         const onlyPids = Array.isArray(onlyRaw)
             ? onlyRaw.map((p) => Number(p)).filter((p) => Number.isFinite(p) && p > 0)
             : undefined;
+        // 一次枚举、一张证据表：预览与实杀看到的是同一批进程
+        const listing = await listCommandLines();
+        const own = await collectSweepOwnership(cwd, listing.procs);
+        const sel = { excludePids, excludeMarkers, onlyPids, ownedPids: own.evidence, listing };
         // ①/② 只读预览：命中谁先摊开给人看（枚举失败也要如实回，不能折成"没有"）
         const dryRun = req.body && req.body.dry_run === true;
         const notConfirmed = !(req.body && req.body.confirmed === true);
         if (dryRun || notConfirmed) {
-            const scan = await scanProcessesByCwd(cwd, { excludePids, excludeMarkers, onlyPids });
+            const scan = await scanProcessesByCwd(cwd, sel);
             const reason = '清扫会强杀这台机器上命令行含该目录的进程，且不受 git 撤销影响 —— '
                 + '先核对下面这些命中的是不是你要停的那一个。';
             if (req.body && req.body.dry_run === true) {
                 return res.json({ status: 'candidates', cwd, reason,
                     enumerated: scan.enumerated, matched: scan.matched, via: scan.via,
-                    enumErr: scan.enumErr, anchors: scan.anchors, candidates: scan.procs });
+                    enumErr: scan.enumErr, anchors: scan.anchors, candidates: scan.procs,
+                    ownership: own.diag });
             }
             return res.json({ status: 'needs_confirmation', cwd, reason,
                 enumerated: scan.enumerated, matched: scan.matched, via: scan.via,
-                enumErr: scan.enumErr, anchors: scan.anchors, candidates: scan.procs });
+                enumErr: scan.enumErr, anchors: scan.anchors, candidates: scan.procs,
+                ownership: own.diag });
         }
-        const r = await killOrphansByCwd(cwd, { excludePids, excludeMarkers, onlyPids });
+        const r = await killOrphansByCwd(cwd, sel);
         // 诊断透传：枚举通道（via）/条数、命中条数、逐条的 taskkill 退出码与 stderr —— "一个都没
         //   杀到"时必须说得出原因（权限/进程已不在/枚举整条空回），否则停止腿只能拿到一个 false。
         res.json({ killed: r.killed, enumerated: r.enumerated, matched: r.matched,
-            via: r.via, enumErr: r.enumErr, detail: r.detail });
+            via: r.via, enumErr: r.enumErr, detail: r.detail, ownership: own.diag });
     } catch (err) {
         res.status(500).json({ status: 'error', error: err.message });
     }
@@ -2029,6 +2082,14 @@ app.post('/api/local/bash/proc-listen', async (req, res) => {
             taskId: String((req.body && req.body.task_id) || '').trim(),
             rootPid: req.body && req.body.pid,
         });
+        // [C·2026-10-31] 落一笔"端口归属"账：这条任务的树此刻在听的口，按 task.cwd 记进本会话账本，
+        //   供之后的 sweep 认"命令行里没有工作区路径的孤儿"（传的是实测原料，不是猜的归属）。
+        try {
+            const taskCwd = String((getTask(r.task_id) || {}).cwd || '');
+            if (taskCwd && Array.isArray(r.listeners) && r.listeners.length > 0) {
+                recordWorkspacePorts(taskCwd, r.listeners, 'proc-listen');
+            }
+        } catch (_) { /* 落账失败不影响回传（它只是给后续 sweep 的证据） */ }
         res.json(r);
     } catch (err) {
         res.status(500).json({ status: 'error', error: err.message });
@@ -2037,14 +2098,18 @@ app.post('/api/local/bash/proc-listen', async (req, res) => {
 
 // [P4-A·运行时确认] proc-scan —— 只读事实：**这个工作区里此刻有没有进程在跑、它们在听哪些口**。
 //   为什么要有这一格：用户问"前后端是不是都起来了"时，代码通道手里只有文件类动作，跑不出任何
-//   运行时事实，交付就把缺口甩回给用户（"请提供日志 / 请自己 ps -ef"）。归属判据与停止腿同一把
-//   尺子（命令行里含该 cwd），只读、不杀、不占口。
+//   运行时事实，交付就把缺口甩回给用户（"请提供日志 / 请自己 ps -ef"）。只读、不杀、不占口。
+//   归属判据与停止腿同一套证据（tree / port / path，见 `collectSweepOwnership`），逐条带回
+//   `evidence` —— 读这一方要能分清"确实是我起的"与"命令行里恰好写到了这个目录"。
 //   两个枚举的失败各自如实带回（enumErr / listen.err），绝不折成"没有进程 / 没有在听"。
 app.post('/api/local/bash/proc-scan', async (req, res) => {
     try {
         const cwd = String((req.body && req.body.cwd) || '').trim();
-        const r = await scanProcessesByCwd(cwd);
+        const listing = await listCommandLines();
+        const own = await collectSweepOwnership(cwd, listing.procs);
+        const r = await scanProcessesByCwd(cwd, { ownedPids: own.evidence, listing });
         let listen = { via: '', enumerated: -1, rows: [], err: '' };
+        let portsRecorded = { recorded: 0, ports: [] };
         try {
             const l = await listListeners();
             const pids = new Set(r.procs.map((p) => p.pid));
@@ -2054,11 +2119,15 @@ app.post('/api/local/bash/proc-scan', async (req, res) => {
                 rows: (l.rows || []).filter((x) => pids.has(Number((x || {}).pid))),
                 err: l.err || '',
             };
+            // [C·2026-10-31] 落一笔端口账（本会话、按 cwd）：这些口确实有"这个工作区的进程"在听，
+            //   之后 sweep 就能靠它认出"命令行里没有工作区路径的孤儿"（包装层死后 node/Java 还在听）。
+            portsRecorded = recordWorkspacePorts(cwd, listen.rows, 'proc-scan');
         } catch (e) {
             listen = { via: '', enumerated: -1, rows: [], err: String((e && e.message) || e) };
         }
         res.json({ enumerated: r.enumerated, matched: r.matched, via: r.via,
-            enumErr: r.enumErr, anchors: r.anchors || [], procs: r.procs, listen });
+            enumErr: r.enumErr, anchors: r.anchors || [], procs: r.procs, listen,
+            ownership: own.diag, ports_recorded: portsRecorded });
     } catch (err) {
         res.status(500).json({ status: 'error', error: err.message });
     }

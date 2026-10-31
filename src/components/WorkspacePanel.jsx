@@ -1535,7 +1535,8 @@ async function executeSingleCommand(cmd, workspaceDir, onLog, sessionId) {
         const ls = d.listen || {}
         onLog?.(`[AgentCMD] proc_scan cwd=${cwd} enumerated=${d.enumerated} matched=${d.matched}`
           + ` via=${d.via} listen=${(ls.rows || []).length} err=${d.enumErr || ''}`
-          + `${ls.err ? ' listenErr=' + ls.err : ''}\n`)
+          + `${ls.err ? ' listenErr=' + ls.err : ''}`
+          + ` own=${JSON.stringify(d.ownership || {})} ports=${JSON.stringify(d.ports_recorded || {})}\n`)
         return JSON.stringify({
           proc: 'scan', cwd,
           enumerated: Number.isFinite(d.enumerated) ? d.enumerated : -1,
@@ -1830,8 +1831,8 @@ function confirmSweep(candidates, reason, onLog) {
     const content = (
       <div>
         <p style={{ marginBottom: 8 }}>
-          <strong>警告</strong>: 这一步会<b>强杀</b>这台机器上命令行含该工作区目录的进程，并连同子进程一起终止。
-          它不受 git 撤销影响，杀错了只能重起。
+          <strong>警告</strong>: 这一步会<b>强杀</b>有归属证据指向该工作区的进程，并连同子进程一起终止
+          （证据分三级，见下；每一条都标着它是靠哪一级进来的）。它不受 git 撤销影响，杀错了只能重起。
         </p>
         <p style={{ marginBottom: 4 }}><strong>为什么危险</strong>: {reason}</p>
         <p style={{ marginBottom: 4 }}><strong>将终止 {candidates.length} 个进程</strong>:</p>
@@ -1841,10 +1842,12 @@ function confirmSweep(candidates, reason, onLog) {
             overflow: 'auto', maxHeight: 240, margin: 0, fontSize: 12,
           }}
         >
-          {rows.map((c) => `${c.pid}  ${String(c.cmd || '').slice(0, 160)}`).join('\n')}
+          {rows.map((c) => `${c.pid}  [${c.evidence || 'path'}]  ${String(c.cmd || '').slice(0, 160)}`).join('\n')}
           {candidates.length > rows.length ? `\n…（还有 ${candidates.length - rows.length} 条未列出）` : ''}
         </pre>
         <p style={{ marginTop: 8, marginBottom: 0, color: '#666', fontSize: 12 }}>
+          <b>tree</b> = 本会话起的后台任务的进程树；<b>port</b> = 正听本会话为该工作区观测到过的端口；
+          <b>path</b> = 命令行里写到了这个目录（弱证据，要重点看）。<br />
           确认上面每一个都是你要停的那一个，再点「终止」；不确定就点「取消」。
         </p>
       </div>

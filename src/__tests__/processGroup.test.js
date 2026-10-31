@@ -7,7 +7,7 @@
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  matchesCwd, matchesExcludeMarker, parseProcTable, selectSweepTargets,
+  matchesCwd, matchesExcludeMarker, parseProcTable, selectSweepTargets, isUnderPath,
 } from '../runtime/processGroup.js'
 
 describe('processGroup: matchesCwd', () => {
@@ -30,6 +30,28 @@ describe('processGroup: matchesCwd', () => {
 
   test('cwd 尾部斜杠不影响命中', () => {
     assert.equal(matchesCwd('/opt/app/svc/run.sh', '/opt/app/svc/'), true)
+  })
+
+  // [C·2026-10-31 归属判据·收紧] 子串 → 完整路径 token
+  test('[C·2026-10-31] 前缀共享的别的项目不再命中（E:\\code\\autobot-fork ≠ E:\\code\\autobot）', () => {
+    assert.equal(matchesCwd('node E:\\code\\autobot-fork\\app.js', 'E:\\code\\autobot'), false)
+    assert.equal(matchesCwd('node E:\\code\\autobotics\\app.js', 'E:\\code\\autobot'), false)
+    assert.equal(matchesCwd('node /opt/app/svcs/run.sh', '/opt/app/svc'), false)
+  })
+
+  test('[C·2026-10-31] 同名前缀的**文件**不算该目录（autobot.jar）', () => {
+    assert.equal(matchesCwd('java -jar E:\\code\\autobot.jar', 'E:\\code\\autobot'), false)
+  })
+
+  test('[C·2026-10-31] 作为独立参数出现（引号 / = / 结尾）仍命中', () => {
+    assert.equal(matchesCwd('node --project=E:\\code\\autobot', 'E:\\code\\autobot'), true)
+    assert.equal(matchesCwd('"E:\\code\\autobot"', 'E:\\code\\autobot'), true)
+    assert.equal(matchesCwd('cd /opt/app/svc && ./run.sh', '/opt/app/svc'), true)
+  })
+
+  test('[C·2026-10-31] 目录之下的子路径命中（分隔符之后才算）', () => {
+    assert.equal(matchesCwd('node E:\\code\\autobot\\autobot-frontend\\server.js', 'E:\\code\\autobot'), true)
+    assert.equal(matchesCwd('node /opt/app/svc/sub/run.sh', '/opt/app/svc'), true)
   })
 })
 
@@ -119,6 +141,57 @@ describe('processGroup: selectSweepTargets', () => {
       const hit = selectSweepTargets(PROCS, { anchors: ANCHORS, onlyPids: bad })
       assert.deepEqual(hit.map((p) => p.pid), [])
     }
+  })
+
+  // [C·2026-10-31] 第三级证据：命令行里没有工作区路径，但有"确属本项目"的强证据
+  test('[C·2026-10-31] ownedPids 强证据：命令行里没有该目录也能认（tree / port）', () => {
+    const procs = [
+      { pid: 700, commandLine: 'node vite.mjs' },
+      { pid: 701, commandLine: 'node server.js' },
+      { pid: 702, commandLine: 'node unrelated.js' },
+    ]
+    const hit = selectSweepTargets(procs, {
+      anchors: ANCHORS, ownedPids: new Map([[700, 'tree'], [701, 'port']]),
+    })
+    assert.deepEqual(hit.map((p) => [p.pid, p.evidence]), [[700, 'tree'], [701, 'port']])
+    assert.equal(hit.some((p) => p.pid === 702), false)   // 无证据 → 不猜
+  })
+
+  test('[C·2026-10-31] 强证据也要过 exclude / onlyPids 闸（不是"有证据就特权杀"）', () => {
+    const procs = [
+      { pid: 700, commandLine: 'node vite.mjs' },
+      { pid: 701, commandLine: 'node server.js' },
+    ]
+    const hit = selectSweepTargets(procs, {
+      anchors: [], excludePids: [700], onlyPids: [700, 701],
+      ownedPids: new Map([[700, 'tree'], [701, 'tree']]),
+    })
+    assert.deepEqual(hit.map((p) => p.pid), [701])
+  })
+
+  test('[C·2026-10-31] 每条目标都带 evidence 字段（path 是弱证据，另外两级是强证据）', () => {
+    const hit = selectSweepTargets(PROCS, { anchors: ANCHORS })
+    assert.deepEqual(hit.map((p) => p.evidence), ['path', 'path', 'path'])
+  })
+})
+
+describe('processGroup: isUnderPath', () => {
+  test('同级前缀不算之下（autobot-x 不在 autobot 之下）', () => {
+    assert.equal(isUnderPath('E:\\code\\autobot-x', 'E:\\code\\autobot'), false)
+    assert.equal(isUnderPath('/opt/app/svcs', '/opt/app/svc'), false)
+  })
+
+  test('自身 / 真子目录 / 分隔符与大小写归一都算之下', () => {
+    assert.equal(isUnderPath('E:\\code\\autobot', 'E:\\code\\autobot'), true)
+    assert.equal(isUnderPath('e:/code/AUTOBOT', 'E:\\code\\autobot'), true)
+    assert.equal(isUnderPath('E:\\code\\autobot\\java-backend', 'E:\\code\\autobot'), true)
+    assert.equal(isUnderPath('/opt/app/svc/sub', '/opt/app/svc'), true)
+  })
+
+  test('空值一律 false（判不了就不认之下）', () => {
+    assert.equal(isUnderPath('', 'E:\\code\\autobot'), false)
+    assert.equal(isUnderPath('E:\\code\\autobot', ''), false)
+    assert.equal(isUnderPath(null, null), false)
   })
 })
 

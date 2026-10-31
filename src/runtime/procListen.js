@@ -141,8 +141,13 @@ function runCapture(cmd, args, timeoutMs = 8000) {
   })
 }
 
-/** 枚举一次「PID + 父 PID」表；打不到 → code 非 0 且 err 带成因。 */
-async function listProcessTable() {
+/**
+ * 枚举一次「PID + 父 PID」表；打不到 → code 非 0 且 err 带成因。
+ *
+ * <p>[C·2026-10-31] 公开导出：sweep 的归属判据要把"本会话登记的 pid 树"展开一次
+ * （`sweepOwnership.js` 的 `tree` 证据），与这里同一份枚举。</p>
+ */
+export async function listPpidTable() {
   if (platform() === 'win32') {
     const r = await runCapture('powershell', ['-NoProfile', '-NonInteractive', '-Command', WIN_TREE])
     return { ppidOf: parsePpidTable(r.out), via: 'cim', code: r.code, err: r.err.trim() }
@@ -179,7 +184,7 @@ async function listProcessTable() {
  * @returns {Promise<object>}
  */
 export async function collectProcListen(opts = {}, deps = {}) {
-  const listTable = deps.listProcessTable || listProcessTable
+  const listTable = deps.listProcessTable || listPpidTable
   const listListen = deps.listListeners || listListeners
   const lookupTask = deps.getTask || getTask
   const taskId = String(opts.taskId || '').trim()
