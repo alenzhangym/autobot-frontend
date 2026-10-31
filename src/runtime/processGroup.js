@@ -20,6 +20,8 @@
  */
 import { spawn } from 'node:child_process'
 import { platform } from 'node:os'
+import fs from 'node:fs'
+import path from 'node:path'
 
 const KILL_GRACE_MS = 2000
 
@@ -206,6 +208,67 @@ function forceKill(pid) {
       resolve({ killed: fb.killed, exitCode: r.code, error: err })
     })
   })
+}
+
+/**
+ * 只读版"按 cwd 扫存活进程"：与 {@link killOrphansByCwd} 共用同一份枚举与归属判据，但**不杀**。
+ *
+ * <p>为什么要有这一格：用户问"前后端起没起来 / 端口在不在听"时，代码通道此前手里只有文件类动作
+ * （tree_sync / ls / read / search），跑不出任何运行时事实，于是把缺口甩回给用户（"请提供日志 /
+ * 请自己 ps -ef"）。这条腿把"这台机器上这个项目的进程此刻在不在"变成一份可下发的只读原料 ——
+ * 归属判据仍是"命令行里含该 cwd"（与停止腿同一把尺子），排除自身/父进程，不做任何终止。</p>
+ *
+ * <p>覆盖性如实带回：`enumerated`（枚举到几条）、`via`（枚举通道）、`enumErr`（枚举失败原因）。
+ * 枚举失败 ≠ 没有进程 —— 读这一方必须能分开这两件事。</p>
+ *
+ * @param {string} cwd 工作区根（或某个模块目录）
+ * @param {{excludePids?: number[], includeChildren?: boolean}} [opts]
+ * @returns {Promise<{enumerated:number, matched:number, via:string, enumErr:string,
+ *   anchors:string[], procs:Array<{pid:number, cmd:string}>}>}
+ */
+export async function scanProcessesByCwd(cwd, opts = {}) {
+  if (!cwd) return { enumerated: 0, matched: 0, via: '', enumErr: '缺少 cwd', anchors: [], procs: [] }
+  const exclude = new Set([process.pid, process.ppid, ...(opts.excludePids || [])])
+  const anchors = scanAnchors(cwd, opts.includeChildren !== false)
+  const listing = await listProcesses()
+  const procs = listing.procs
+    .filter((p) => !exclude.has(p.pid) && anchors.some((a) => matchesCwd(p.commandLine, a)))
+    .map((p) => ({
+      pid: p.pid,
+      cmd: String(p.commandLine || '').replace(/\s+/g, ' ').trim().slice(0, 200),
+    }))
+  return {
+    enumerated: listing.procs.length,
+    matched: procs.length,
+    via: listing.via,
+    enumErr: listing.err,
+    anchors,
+    procs,
+  }
+}
+
+/**
+ * 归属锚点：工作区根 + 它的一级子目录。
+ *
+ * <p>为什么不能只认根：多模块仓库里服务常从子目录起（{@code litemall-admin} / {@code litemall-all}），
+ * 命令行里只有那个子目录的路径 —— 2026-10-31 的用例正是这种。只按根扫会得到"枚举到几百条、
+ * 命中 0 条"，读起来像"服务没起"，其实是判据太窄。</p>
+ *
+ * <p>仍然是只读的同一把尺子（命令行包含某个锚点），只是把锚点从 1 个扩成"根 + 一级子目录"。
+ * 一级子目录读不到（权限/路径不存在）→ 只按根扫，并把锚点数如实回带。</p>
+ */
+function scanAnchors(cwd, includeChildren) {
+  const anchors = [cwd]
+  if (!includeChildren) return anchors
+  try {
+    for (const e of fs.readdirSync(cwd, { withFileTypes: true })) {
+      if (!e.isDirectory() || e.name.startsWith('.')) continue
+      anchors.push(path.join(cwd, e.name))
+    }
+  } catch (_) {
+    // 目录读不到 → 只按根扫；覆盖性由 anchors.length 与 enumerated 如实体现
+  }
+  return anchors
 }
 
 /**

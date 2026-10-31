@@ -44,6 +44,11 @@ export const FRONTEND_CAPABILITIES = Object.freeze([
   //   与运行腿"起来了没有"都要这一格结构事实。与 proc_port_probe 的分工：那一格按**端口**问，
   //   这一格按**任务**问 —— npm 包了一层 node、端口在子进程上时，只有后者答得出来。
   'proc_listen',
+  // [P4-A·运行时确认] 只读工作区真探（按 cwd 扫"命令行里含该目录"的进程 + 它们各自在听的口）：
+  //   用户问"前后端起没起来 / 端口在不在听"时，代码通道的父循环（CodeOrchestratorAgent）**发前读本
+  //   清单**（allowedActions → clientSupports）。它与 proc_status 的分工：那一格只在 sidecar 任务表里
+  //   找（用户自己在 IDE/终端起的服务不在表里），这一格按工作区目录在 OS 进程表里找。
+  'proc_scan',
   // 写
   'write', 'delete', 'restore_bak', 'delete_bak',
   // 执行

@@ -587,7 +587,9 @@ function extractTrailingAnalysisStateJson(content) {
 // executeAgentCommands path reuses them to avoid double execution.
 
 /** Shared set of read-only action types (same as in executeAgentCommands). */
-const READ_ACTIONS = new Set(['read', 'scan', 'tree_sync', 'ls', 'diff', 'search', 'env_probe'])
+const READ_ACTIONS = new Set(['read', 'scan', 'tree_sync', 'ls', 'diff', 'search', 'env_probe',
+  // [P4-A·运行时确认] 只读探测各族：不写盘、不占口、不杀进程，可与读腿并行预派发。
+  'proc_scan', 'proc_status', 'proc_port_probe', 'proc_listen'])
 
 /** Shared cache: commandId → result string. Populated by the stream dispatcher. */
 export const streamedCmdResults = new Map()
@@ -792,7 +794,9 @@ export async function executeAgentCommands(text, workspaceDir, onLog, sessionId)
   // Read-only commands (read, scan, tree_sync, ls) can execute in parallel.
   // Mutating commands (write, run, delete, restore_bak, delete_bak) run
   // sequentially after reads complete to preserve ordering.
-  const readActions = new Set(['read', 'scan', 'tree_sync', 'ls', 'diff', 'search', 'env_probe'])
+  const readActions = new Set(['read', 'scan', 'tree_sync', 'ls', 'diff', 'search', 'env_probe',
+    // [P4-A·运行时确认] 只读探测各族（进程/端口事实）：不写盘、不占口、不杀进程。
+    'proc_scan', 'proc_status', 'proc_port_probe', 'proc_listen'])
   const readCmds = commands.filter(c => readActions.has(c.action))
   const mutCmds = commands.filter(c => !readActions.has(c.action))
 
@@ -1436,6 +1440,40 @@ async function executeSingleCommand(cmd, workspaceDir, onLog, sessionId) {
         const detail = e.response?.data?.error || e.message
         onLog?.(`[AgentCMD] proc_port_probe failed: ${detail}\n`)
         return `{"proc":"portprobe","state":"unknown","error":${JSON.stringify(detail)}}`
+      }
+    }
+    case 'proc_scan': {
+      // [P4-A·运行时确认] 只读: 这个工作区里此刻有哪些进程在跑（归属判据 = 命令行含该 cwd），
+      //   以及它们各自在听哪些口。回答"前后端起没起来"必须先有这一格 —— 
+      //   否则代码通道只能把缺口甩回给用户（"请提供日志 / 请自己 ps -ef"）。
+      //   两个枚举的失败各自原样带回（enumErr / listen_err），不许折成"没有进程 / 没在听"。
+      const cwd = resolveCommandPath(workspaceDir, cmd.cwd || '')
+      try {
+        const res = await localApi.post('/api/local/bash/proc-scan', { cwd })
+        const d = res.data || {}
+        const ls = d.listen || {}
+        onLog?.(`[AgentCMD] proc_scan cwd=${cwd} enumerated=${d.enumerated} matched=${d.matched}`
+          + ` via=${d.via} listen=${(ls.rows || []).length} err=${d.enumErr || ''}`
+          + `${ls.err ? ' listenErr=' + ls.err : ''}\n`)
+        return JSON.stringify({
+          proc: 'scan', cwd,
+          enumerated: Number.isFinite(d.enumerated) ? d.enumerated : -1,
+          matched: Number.isFinite(d.matched) ? d.matched : -1,
+          via: d.via || '', enumErr: d.enumErr || '',
+          // 归属锚点数（工作区根 + 一级子目录）：多模块仓库里服务常从子目录起，
+          //   只按根扫会把"命中 0 条"读成"服务没起"。这一格让服务端知道覆盖范围到哪。
+          roots: (d.anchors || []).length,
+          // 逐行收成字符串: 服务端的 jsonField 是朴素抽键，嵌套数组会被读歪（与 proc_listen 同一条纪律）。
+          procs: (d.procs || []).map((p) => `${p.pid}|${p.cmd}`).join(' ;; '),
+          listen_via: ls.via || '',
+          listen_enumerated: Number.isFinite(ls.enumerated) ? ls.enumerated : -1,
+          listen_err: ls.err || '',
+          listeners: (ls.rows || []).map((x) => `${x.pid}|${x.port}|${x.address}|${x.channel}`).join(';'),
+        })
+      } catch (e) {
+        const detail = e.response?.data?.error || e.message
+        onLog?.(`[AgentCMD] proc_scan failed: ${detail}\n`)
+        return `{"proc":"scan","state":"unknown","error":${JSON.stringify(detail)}}`
       }
     }
     case 'proc_listen': {

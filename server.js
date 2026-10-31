@@ -1773,8 +1773,8 @@ function trimToTail(text, lines) {
 import { getOrCreate, get, kill as killShellById, list as listShells, killAll as killAllShells } from './src/runtime/shellRegistry.js';
 import { analyzeCommand, setDefaultRules as setAnalyzerRules, setDefaultAction as setAnalyzerAction, DEFAULT_RULES as ANALYZER_DEFAULT_RULES } from './src/runtime/commandAnalyzer.js';
 import { createTask as createBgTask, get as getTask, list as listTasks, kill as killTask, killAll as killAllTasks, summarize as summarizeTask } from './src/runtime/taskRegistry.js';
-import { killOrphansByCwd } from './src/runtime/processGroup.js';
-import { probePortListening } from './src/runtime/portProbe.js';
+import { killOrphansByCwd, scanProcessesByCwd } from './src/runtime/processGroup.js';
+import { probePortListening, listListeners } from './src/runtime/portProbe.js';
 import { collectProcListen } from './src/runtime/procListen.js';
 import { webfetch, WebfetchError } from './src/runtime/webfetch.js';
 import { websearch, WebsearchError } from './src/runtime/websearch.js';
@@ -1965,6 +1965,35 @@ app.post('/api/local/bash/proc-listen', async (req, res) => {
             rootPid: req.body && req.body.pid,
         });
         res.json(r);
+    } catch (err) {
+        res.status(500).json({ status: 'error', error: err.message });
+    }
+});
+
+// [P4-A·运行时确认] proc-scan —— 只读事实：**这个工作区里此刻有没有进程在跑、它们在听哪些口**。
+//   为什么要有这一格：用户问"前后端是不是都起来了"时，代码通道手里只有文件类动作，跑不出任何
+//   运行时事实，交付就把缺口甩回给用户（"请提供日志 / 请自己 ps -ef"）。归属判据与停止腿同一把
+//   尺子（命令行里含该 cwd），只读、不杀、不占口。
+//   两个枚举的失败各自如实带回（enumErr / listen.err），绝不折成"没有进程 / 没有在听"。
+app.post('/api/local/bash/proc-scan', async (req, res) => {
+    try {
+        const cwd = String((req.body && req.body.cwd) || '').trim();
+        const r = await scanProcessesByCwd(cwd);
+        let listen = { via: '', enumerated: -1, rows: [], err: '' };
+        try {
+            const l = await listListeners();
+            const pids = new Set(r.procs.map((p) => p.pid));
+            listen = {
+                via: l.via || '',
+                enumerated: l.table && typeof l.table.size === 'number' ? l.table.size : -1,
+                rows: (l.rows || []).filter((x) => pids.has(Number((x || {}).pid))),
+                err: l.err || '',
+            };
+        } catch (e) {
+            listen = { via: '', enumerated: -1, rows: [], err: String((e && e.message) || e) };
+        }
+        res.json({ enumerated: r.enumerated, matched: r.matched, via: r.via,
+            enumErr: r.enumErr, anchors: r.anchors || [], procs: r.procs, listen });
     } catch (err) {
         res.status(500).json({ status: 'error', error: err.message });
     }
