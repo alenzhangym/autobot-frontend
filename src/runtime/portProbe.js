@@ -13,6 +13,12 @@
 // 回答"谁在听"）。拿绑定试探去问"服务起来了没有"会把服务自己的口抢一下，绝不用于此。
 import { platform } from 'node:os'
 import { spawn } from 'node:child_process'
+import { connect } from 'node:net'
+
+// [第3条·2026-10-31] 本机那张监听表**本身是坏的**（8000/3000 的监听行状态列是无效值，被
+//   `-State Listen` 整批滤掉；netstat 读同一份表也缺行）—— 于是只读表会回 `free` 这个假事实。
+//   表缺席时用 `verifyPortByConnect` 的**不占口**连接核验复核（真机证据写在该函数注释里）；
+//   表命中仍以表为准（它带 pid/地址出处，连接核验给不出）。
 
 /** Windows：逐行 `LocalPort<TAB>OwningProcess<TAB>LocalAddress`（真 TAB，避免 CSV 引号转义）。
  *  第三列（本地地址）是 [F72·枚35] 加的：`proc_listen` 要把"谁在听、听在哪张网卡上"逐字带出处；
@@ -138,6 +144,73 @@ function shapeListen(r, via, err) {
     via, code: r.code, err: (err == null ? r.err : err).trim(), raw: r.out }
 }
 
+/** 连接核验的超时：回环上 open/refused 都在毫秒级，超时只防"卡住"，不参与判定。 */
+const CONNECT_TIMEOUT_MS = 700
+
+/** 一次只读连接：`connect` 成功 = open，`ECONNREFUSED` = refused，其余（超时/不可达）= unknown。 */
+function connectOnce(host, port, timeoutMs) {
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (r) => {
+      if (settled) return
+      settled = true
+      try { socket.destroy() } catch { /* 已经关了就不管 */ }
+      resolve(r)
+    }
+    let socket
+    try {
+      socket = connect({ host, port })
+    } catch (e) {
+      resolve({ state: 'unknown', error: `${String((e && e.message) || e)}（${host}:${port}）` })
+      return
+    }
+    socket.setTimeout(timeoutMs)
+    socket.once('connect', () => finish({ state: 'open' }))
+    socket.once('timeout', () => finish({ state: 'unknown', error: `连接核验超时（${host}:${port}）` }))
+    socket.once('error', (e) => {
+      const code = String((e && e.code) || '')
+      if (code === 'ECONNREFUSED') {
+        finish({ state: 'refused' })
+      } else {
+        finish({ state: 'unknown', error: `${code || String((e && e.message) || e) || '连接失败'}（${host}:${port}）` })
+      }
+    })
+  })
+}
+
+/**
+ * [第3条·2026-10-31] 不占口的 TCP 连接核验 —— 监听表缺格时的**第二份结构事实**。
+ *
+ * <p>与 `monitor/RestartService.js` 的绑定试探**不是一回事**：绑定会真的占住那个口（甚至把服务
+ * 自己的口抢一下），而这一格只问"此刻有没有人接受连接"，<b>不 bind、不发一个字节、连上就断</b>。
+ * 在 TCP 语义上，"有人接受连接"与"端口有人在听"是同一件事的结构事实，而且它<b>不依赖那张表</b>。</p>
+ *
+ * <p>真机证据（2026-10-31）：本机 `Get-NetTCPConnection -State Listen` 只回 11 条临时端口，
+ * 8000 的监听行 `LocalAddress=::` 的 State 列是<b>无效值 0</b>（PowerShell 转枚举直接抛），被过滤整批滤掉；
+ * `netstat` 读同一份表也缺 8000/3000 的 LISTENING 行，而 8000 确在服务。
+ * 于是 `port-probe {"port":8000}` 回了 `{state:"free", enumerated:11}` —— 一个假事实，
+ * 运行腿验收因此恒 UNVERIFIED。坏掉的是枚举通道，不是被探的口：这一格是修那件事的。</p>
+ *
+ * <p>两族地址都试：先 `127.0.0.1`，再 `::1`（v6-only 的监听者）。v4 被拒且 v6 也没开 → refused；
+ * v6 不可用（EADDRNOTAVAIL 等）不算定论，v4 的 refused 仍然成立。</p>
+ *
+ * @param {unknown} port
+ * @param {number} [timeoutMs]
+ * @returns {Promise<{state:'open'|'refused'|'unknown', how:string, error:string}>}
+ */
+export async function verifyPortByConnect(port, timeoutMs = CONNECT_TIMEOUT_MS) {
+  const want = normalizePort(port)
+  if (!want) {
+    return { state: 'unknown', how: '', error: '端口不是可探的形状（要 1~65535 的整数）' }
+  }
+  const v4 = await connectOnce('127.0.0.1', want, timeoutMs)
+  if (v4.state === 'open') return { state: 'open', how: 'connect', error: '' }
+  const v6 = await connectOnce('::1', want, timeoutMs)
+  if (v6.state === 'open') return { state: 'open', how: 'connect6', error: '' }
+  if (v4.state === 'refused') return { state: 'refused', how: 'connect', error: v6.error || '' }
+  return { state: 'unknown', how: 'connect', error: [v4.error, v6.error].filter(Boolean).join(' | ') }
+}
+
 /** 枚举一次监听表；三条通道都失败时把逐条诊断带回去（`state:'unknown'` 的成因不许丢）。 */
 export async function listListeners() {
   if (platform() === 'win32') {
@@ -155,9 +228,14 @@ export async function listListeners() {
 
 /**
  * 探一个端口现在有没有人听。返回**三态**，绝不把"没探成"折成"没在听"：
- *  - `state:'listening'` 监听表里有它（带 pid）
- *  - `state:'free'`      枚举成功、表里没有它
- *  - `state:'unknown'`   枚举失败/超时/端口非法 —— 这一格今天不知道
+ *  - `state:'listening'` 监听表里有它（带 pid），或表缺席但连接核验被接受（表是坏的时候靠这一格）
+ *  - `state:'free'`      枚举成功、表里没有它、且连接核验被拒（两份事实都指向"没人听"）
+ *  - `state:'unknown'`   枚举失败/超时/端口非法/表与连接核验都给不出定论 —— 这一格今天不知道
+ *
+ * <p>[第3条·2026-10-31] 为什么要连接核验：本机那张表可能整批缺监听行（真机证据见
+ * {@link verifyPortByConnect}）。只读表会把"在服务"的 8000 读成 `free`。表命中仍以表为准；
+ * 表缺席才动用不占口的连接核验，两份事实都指向"没人听"才许写 `free`。</p>
+ *
  * @param {unknown} port
  * @returns {Promise<{state:string, port:number|null, pids:string, via:string,
  *   enumerated:number, error:string}>}
@@ -169,12 +247,26 @@ export async function probePortListening(port) {
       error: '端口不是可探的形状（要 1~65535 的整数）' }
   }
   const r = await listListeners()
-  if (!r.raw && r.err) {
-    return { state: 'unknown', port: want, pids: '', via: r.via, enumerated: 0,
-      error: `监听表枚举失败: ${r.err}` }
-  }
+  const enumerated = r.table.size
   const pids = r.table.get(want)
   if (pids) return { state: 'listening', port: want, pids: pids.filter(Boolean).join(' '),
-    via: r.via, enumerated: r.table.size, error: '' }
-  return { state: 'free', port: want, pids: '', via: r.via, enumerated: r.table.size, error: '' }
+    via: r.via, enumerated, error: '' }
+
+  const enumFailed = !r.raw && r.err
+  // [第3条] 表缺席（或整张表都没枚举成）→ 用不占口的连接核验复核：坏的常常是枚举通道，不是被探的口
+  const c = await verifyPortByConnect(want)
+  if (c.state === 'open') {
+    return { state: 'listening', port: want, pids: '',
+      via: `${r.via || 'connect'}${c.how === 'connect6' ? '+connect6' : '+connect'}`, enumerated,
+      error: enumFailed ? `监听表枚举失败（结论来自连接核验）: ${r.err}` : '' }
+  }
+  if (enumFailed) {
+    return { state: 'unknown', port: want, pids: '', via: r.via, enumerated,
+      error: `监听表枚举失败: ${r.err}` }
+  }
+  if (c.state === 'refused') {
+    return { state: 'free', port: want, pids: '', via: `${r.via}+connect`, enumerated, error: '' }
+  }
+  return { state: 'unknown', port: want, pids: '', via: r.via, enumerated,
+    error: `监听表里没有它、连接核验也没给出定论: ${c.error}` }
 }

@@ -1,8 +1,10 @@
 // [F72·枚23/枚26] 端口真探的纯函数：把三种通道的监听表读成"端口 → pid"，以及端口号的收口。
 // 只钉纯函数 —— 真枚举那一步在 sidecar 里由 powershell/ss/netstat 完成（与 processGroup.test.js 同一口径）。
+// [第3条·2026-10-31] 连接核验那组用本机回环起一个真 listener 钉住 open/refused 两态（不连外网）。
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
-import { normalizePort, parseListenTable } from '../runtime/portProbe.js'
+import { createServer } from 'node:net'
+import { normalizePort, parseListenTable, verifyPortByConnect } from '../runtime/portProbe.js'
 
 describe('normalizePort：判不了就不探（绝不拿猜出来的端口去问盘）', () => {
   test('数字与字符串都收，两侧空白剥掉', () => {
@@ -67,5 +69,26 @@ describe('三态的根：表里没有 ≠ 枚举失败', () => {
   test('整表为空（枚举空回）与"枚举到别的端口"在解析层是同一件事 —— 分诊由调用方按 enumerated 判', () => {
     assert.equal(parseListenTable('', 'nettcp').size, 0)
     assert.equal(parseListenTable('8081\t2460', 'nettcp').get(9527), undefined)
+  })
+})
+
+describe('verifyPortByConnect：[第3条] 表缺席时的第二份事实（不占口、不发字节、连上就断）', () => {
+  test('有人接受连接 → open；关掉 listener → refused', async () => {
+    const srv = createServer(() => { /* 收到连接立刻断，不读不写 */ })
+    await new Promise((resolve) => srv.listen(0, '127.0.0.1', resolve))
+    const port = srv.address().port
+    const open = await verifyPortByConnect(port)
+    assert.equal(open.state, 'open', '本机真起了一个 listener，这一格必须是 open（坏表下也不许说没人听）')
+    await new Promise((resolve) => srv.close(resolve))
+    const closed = await verifyPortByConnect(port)
+    assert.equal(closed.state, 'refused', '关掉之后被拒 = 两份事实都指向没人听')
+  })
+
+  test('非法端口 → unknown（不拿猜出来的口去连）', async () => {
+    for (const bad of [0, null, 'abc', 70000]) {
+      const r = await verifyPortByConnect(bad)
+      assert.equal(r.state, 'unknown', `${JSON.stringify(bad)} 不该被拿去连接`)
+      assert.match(r.error, /端口/)
+    }
   })
 })
