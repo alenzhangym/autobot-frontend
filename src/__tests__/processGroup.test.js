@@ -8,6 +8,7 @@ import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   matchesCwd, matchesExcludeMarker, parseProcTable, selectSweepTargets, isUnderPath,
+  countCwdRefs, isOperandOnlyRef, scanProcessesByCwd,
 } from '../runtime/processGroup.js'
 
 describe('processGroup: matchesCwd', () => {
@@ -172,6 +173,97 @@ describe('processGroup: selectSweepTargets', () => {
   test('[C·2026-10-31] 每条目标都带 evidence 字段（path 是弱证据，另外两级是强证据）', () => {
     const hit = selectSweepTargets(PROCS, { anchors: ANCHORS })
     assert.deepEqual(hit.map((p) => p.evidence), ['path', 'path', 'path'])
+  })
+
+  // [口径 2026-11-01] 路径只作为 `--workspace <ws>` 的值出现 → 工具进程，不是这个工作区的服务
+  test('[口径 2026-11-01] dropOperandOnlyPathRefs → 只把工作区当操作对象参数的不算目标', () => {
+    const procs = [
+      // 真机：dogfood 驱动自己就长这样，曾多骗到一轮 proc_listen 补探
+      { pid: 900, commandLine: `node scripts/dogfood/real-session-driver.mjs --workspace ${WS}` },
+      // 服务：路径是入口（node_modules 里的脚本 / jar），保留
+      { pid: 901, commandLine: `node ${WS}\\autobot-frontend\\node_modules\\vite\\bin\\vite.js` },
+      { pid: 902, commandLine: `java -jar ${WS}\\java-backend\\target\\autobot.jar` },
+      // 既是操作对象、又是自己的入口 → 保留（不能因为"还带了 --workspace"就整条踢掉）
+      { pid: 903, commandLine: `node ${WS}\\bin\\guard.mjs --workspace ${WS}` },
+      // git 拿仓库当操作对象：不是服务
+      { pid: 904, commandLine: `git -C ${WS} status` },
+    ]
+    const hit = selectSweepTargets(procs, { anchors: ANCHORS, dropOperandOnlyPathRefs: true })
+    assert.deepEqual(hit.map((p) => p.pid), [901, 902, 903])
+    // 缺省不带这个选项时行为不变（其他调用方/旧流程照旧按 path 全收）
+    assert.deepEqual(
+      selectSweepTargets(procs, { anchors: ANCHORS }).map((p) => p.pid),
+      [900, 901, 902, 903, 904],
+    )
+  })
+
+  test('[口径 2026-11-01] 强证据（tree/port）优先于口径细分：带 --workspace 也照旧算目标', () => {
+    const procs = [{ pid: 950, commandLine: `node driver.mjs --workspace ${WS}` }]
+    const hit = selectSweepTargets(procs, {
+      anchors: ANCHORS, dropOperandOnlyPathRefs: true, ownedPids: new Map([[950, 'tree']]),
+    })
+    assert.deepEqual(hit.map((p) => [p.pid, p.evidence]), [[950, 'tree']])
+  })
+})
+
+describe('processGroup: countCwdRefs / isOperandOnlyRef（2026-11-01 口径）', () => {
+  const WS = 'E:\\code\\litemall-master'
+
+  test('独立 token / 入口形态 → target；--workspace 与 -C 的值 → operand', () => {
+    assert.deepEqual(countCwdRefs(`node ${WS}\\litemall-admin\\x.js`, WS), { target: 1, operand: 0 })
+    assert.deepEqual(countCwdRefs(`java -jar ${WS}\\target\\app.jar`, WS), { target: 1, operand: 0 })
+    assert.deepEqual(countCwdRefs(`node drive.mjs --workspace ${WS}`, WS), { target: 0, operand: 1 })
+    // --workspace=<ws> 与 -C <ws> 两种写法都要认
+    assert.deepEqual(countCwdRefs(`node drive.mjs --workspace=${WS}`, WS), { target: 0, operand: 1 })
+    assert.deepEqual(countCwdRefs(`git -C ${WS} status`, WS), { target: 0, operand: 1 })
+  })
+
+  test('既有独立引用、又有参数值 → 不算"只当操作对象"（要保留）', () => {
+    assert.equal(isOperandOnlyRef(`node ${WS}\\bin\\guard.mjs --workspace ${WS}`, WS), false)
+    assert.equal(isOperandOnlyRef(`node drive.mjs --workspace ${WS}`, WS), true)
+    assert.equal(isOperandOnlyRef(`node ${WS}\\x.js`, WS), false)
+    // 没引用 → 也不算（走"无证据"那一支，不在这里判）
+    assert.equal(isOperandOnlyRef('node unrelated.js', WS), false)
+  })
+
+  test('--prefix / -cp 指向"要跑的东西"，不受口径影响', () => {
+    assert.equal(isOperandOnlyRef(`npm --prefix ${WS}\\admin run dev`, WS), false)
+    assert.equal(isOperandOnlyRef(`java -cp ${WS}\\target\\classes App`, WS), false)
+  })
+
+  test('锚点数组：命中子目录入口同样算 target', () => {
+    const anchors = [WS, `${WS}\\litemall-admin`]
+    assert.deepEqual(
+      countCwdRefs(`node ${WS}\\litemall-admin\\node_modules\\@vue\\cli-service\\bin\\x.js serve`, anchors).target >= 1,
+      true,
+    )
+  })
+})
+
+describe('processGroup: scanProcessesByCwd（只读事实 + 口径剔除）', () => {
+  const WS = 'E:\\code\\litemall-master'
+  const listing = {
+    via: 'cim',
+    err: '',
+    procs: [
+      { pid: 33560, commandLine: `"node" "${WS}\\litemall-admin\\node_modules\\@vue\\cli-service\\bin\\vue-cli-service.js" serve` },
+      { pid: 44332, commandLine: `node scripts/dogfood/real-session-driver.mjs --scenario runtime-confirm --workspace ${WS}` },
+    ],
+  }
+
+  test('驱动/工具进程被剔出 matched，但条数如实带回（operandOnly）', async () => {
+    const r = await scanProcessesByCwd(WS, { listing, includeChildren: false })
+    assert.equal(r.matched, 1)
+    assert.deepEqual(r.procs.map((p) => p.pid), [33560])
+    assert.equal(r.operandOnly, 1)
+    assert.equal(r.enumerated, 2)
+  })
+
+  test('没有 cwd → 空回执也带 operandOnly=0（形状一致，读侧不用判缺键）', async () => {
+    const r = await scanProcessesByCwd('', { listing })
+    assert.equal(r.matched, 0)
+    assert.equal(r.operandOnly, 0)
+    assert.equal(r.enumErr, '缺少 cwd')
   })
 })
 

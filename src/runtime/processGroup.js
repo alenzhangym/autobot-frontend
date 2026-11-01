@@ -158,6 +158,93 @@ function breaksPathToken(ch) {
 }
 
 /**
+ * 「把某目录当作**操作对象**」的选项名：它们的值是"去哪个目录干活"，而不是"在哪个目录起服务"。
+ *
+ * <p>2026-11-01 真机（session {@code dogfood-runtime-confirm-1793523876795}）：驱动脚本自己的
+ * 命令行是 {@code node scripts/dogfood/real-session-driver.mjs --workspace E:\code\litemall-master …}，
+ * 于是被 {@link matchesCwd} 判成"这个工作区的进程"，父循环还替它补了一轮 {@code proc_listen} ——
+ * 多烧一拍，答案里也多出一个跟"起没起来"无关的 pid。</p>
+ *
+ * <p>这条口径只回答一件事：<b>命令行里写到了这个目录 ≠ 从这个目录跑起来的服务</b>。
+ * 它是 {@code path} 这一级证据内部的细分，不改强证据（tree/port 照旧优先）。</p>
+ *
+ * <p>刻意只收"说明在哪干活"的选项（{@code --workspace / --cwd / -C} 这类）；{@code --prefix}、
+ * {@code -jar}、{@code -cp}、{@code -f} 不在内 —— 它们指向的是**要跑的东西**
+ * （npm 子项目的 dev server、Spring Boot 的 jar、Maven 的 pom），那正是"这个工作区的服务"。</p>
+ */
+const OPERAND_DIR_OPTIONS = new Set([
+  '--workspace', '--workdir', '--cwd', '--dir', '--root', '--project-dir', '--projectroot', '-c',
+])
+
+/** 取该位置之前紧邻的 token（去引号、去尾部 {@code =}、小写）；用于判"这个路径是谁的值"。 */
+function prevTokenOf(line, index) {
+  let j = index - 1
+  while (j >= 0 && /\s/.test(line[j])) j -= 1
+  if (j < 0) return ''
+  const end = j
+  while (j >= 0 && /\s/.test(line[j]) === false) j -= 1
+  return line.slice(j + 1, end + 1)
+    .replace(/^["'`]+|["'`]+$/g, '')
+    .replace(/=+$/g, '')
+    .toLowerCase()
+}
+
+/**
+ * 命令行里对这个 cwd 的引用分两类计数（纯函数）：
+ * <ul>
+ *   <li>{@code target} —— 路径作为**独立 token / 入口**出现（{@code node <ws>\a.js}、{@code java -jar <ws>\a.jar}）；</li>
+ *   <li>{@code operand} —— 路径是 {@code --workspace <ws>} / {@code -C <ws>} 这类"操作对象"选项的值。</li>
+ * </ul>
+ *
+ * <p>判据与 {@link matchesCwd} 完全一致（同一个"完整路径 token"算法），只多看一眼**前一个 token**
+ * 是不是操作对象选项 —— 这样 {@code --workspace="<ws>"} 与 {@code -C <ws>} 两种写法都能认出来。</p>
+ *
+ * @param {string} commandLine
+ * @param {string|string[]} anchorsOrCwd 单个 cwd 或锚点数组（多个锚点各自计数后累加）
+ * @returns {{target:number, operand:number}}
+ */
+export function countCwdRefs(commandLine, anchorsOrCwd) {
+  const anchors = Array.isArray(anchorsOrCwd) ? anchorsOrCwd : [anchorsOrCwd]
+  const line = norm(commandLine)
+  let target = 0
+  let operand = 0
+  if (!line) return { target, operand }
+  for (const anchor of anchors) {
+    const c = norm(anchor).replace(/\/+$/, '')
+    if (!c) continue
+    let from = 0
+    while (true) {
+      const i = line.indexOf(c, from)
+      if (i < 0) break
+      const before = i === 0 ? '' : line[i - 1]
+      const after = i + c.length >= line.length ? '' : line[i + c.length]
+      if (breaksPathToken(before) && (after === '' || after === '/' || breaksPathToken(after))) {
+        const prev = prevTokenOf(line, i)
+        if (prev && OPERAND_DIR_OPTIONS.has(prev)) operand += 1
+        else target += 1
+      }
+      from = i + 1
+    }
+  }
+  return { target, operand }
+}
+
+/**
+ * 该进程是不是"只把工作区当操作对象"（{@code --workspace <ws>} 之类），而不是在其中跑起来的服务。
+ *
+ * <p>只读口径用它踢掉工具进程（dogfood 驱动、{@code git -C}、编辑器/搜索工具）；
+ * 只要有**任何一处**引用是独立 token / 入口形态，就不算（{@code node <ws>\bin\x.js --workspace <ws>} 保留）。</p>
+ *
+ * @param {string} commandLine
+ * @param {string|string[]} anchorsOrCwd
+ * @returns {boolean}
+ */
+export function isOperandOnlyRef(commandLine, anchorsOrCwd) {
+  const refs = countCwdRefs(commandLine, anchorsOrCwd)
+  return refs.target === 0 && refs.operand > 0
+}
+
+/**
  * 子路径是否**在**父路径之下（含相等；按路径分隔符对齐，不做子串判）—— 纯函数。
  *
  * <p>给归属用：登记任务的 cwd 必须落在这次 sweep 的 cwd 之下才算同一片工地
@@ -321,8 +408,11 @@ export function forceKill(pid) {
  *
  * @param {Array<{pid:number, commandLine:string}>} procs 全机进程表
  * @param {{anchors?: string[], excludePids?: number[], excludeMarkers?: string[],
- *   onlyPids?: number[], ownedPids?: (Map<number,'tree'|'port'>|number[])}} [opts]
+ *   onlyPids?: number[], ownedPids?: (Map<number,'tree'|'port'>|number[]),
+ *   dropOperandOnlyPathRefs?: boolean}} [opts]
  *   {@code ownedPids}：本会话有强证据归属这个工作区的进程（Map 带证据类型；数组按 {@code 'tree'}）。
+ *   {@code dropOperandOnlyPathRefs}：只把工作区当操作对象参数的进程（{@code --workspace <ws>}）
+ *   不算这个工作区的（见 {@link isOperandOnlyRef}）。
  * @returns {Array<{pid:number, commandLine:string, evidence:'tree'|'port'|'path'}>}
  */
 export function selectSweepTargets(procs, opts = {}) {
@@ -349,13 +439,18 @@ export function selectSweepTargets(procs, opts = {}) {
     }
   }
   const anchors = Array.isArray(opts.anchors) ? opts.anchors : []
+  const dropOperand = opts.dropOperandOnlyPathRefs === true
   const out = []
   for (const p of procs || []) {
     if (exclude.has(p.pid)) continue
     if (matchesExcludeMarker(p.commandLine, opts.excludeMarkers)) continue
     if (hasOnly && !only.has(p.pid)) continue
     const strong = owned.get(p.pid)
-    const evidence = strong || (anchors.some((a) => matchesCwd(p.commandLine, a)) ? 'path' : null)
+    // path 这一级内部再分一档：路径只作为 `--workspace <ws>` 这类"操作对象参数"出现时，
+    // 说明进程是拿着这个目录干活的工具，不是在这个目录里跑起来的服务（真机 2026-11-01）。
+    const refs = strong ? null : countCwdRefs(p.commandLine, anchors)
+    const pathHit = refs && (refs.target > 0 || (refs.operand > 0 && !dropOperand))
+    const evidence = strong || (pathHit ? 'path' : null)
     if (!evidence) continue
     out.push({ pid: p.pid, commandLine: p.commandLine, evidence })
   }
@@ -370,6 +465,11 @@ export function selectSweepTargets(procs, opts = {}) {
  * 请自己 ps -ef"）。这条腿把"这台机器上这个项目的进程此刻在不在"变成一份可下发的只读原料 ——
  * 归属判据仍是"命令行里含该 cwd"（与停止腿同一把尺子），排除自身/父进程，不做任何终止。</p>
  *
+ * <p><b>口径（2026-11-01）</b>：命令行里写到了这个目录 ≠ 从这个目录跑起来的服务。
+ * 只把工作区当操作对象参数的进程（{@code node driver.mjs --workspace E:\code\proj}、{@code git -C …}）
+ * 由 {@link isOperandOnlyRef} 剔出事实（但计入 {@code operandOnly}）；{@code -jar / -cp / --prefix}
+ * 这类"指向要跑的东西"的选项不受影响。</p>
+ *
  * <p>覆盖性如实带回：`enumerated`（枚举到几条）、`via`（枚举通道）、`enumErr`（枚举失败原因）。
  * 枚举失败 ≠ 没有进程 —— 读这一方必须能分开这两件事。</p>
  *
@@ -378,13 +478,30 @@ export function selectSweepTargets(procs, opts = {}) {
  *   ownedPids?: (Map<number,'tree'|'port'>|number[]), includeChildren?: boolean,
  *   listing?: {procs:Array<{pid:number, commandLine:string}>, via:string, err:string}}} [opts]
  * @returns {Promise<{enumerated:number, matched:number, via:string, enumErr:string,
- *   anchors:string[], procs:Array<{pid:number, cmd:string, evidence:string}>}>}
+ *   anchors:string[], procs:Array<{pid:number, cmd:string, evidence:string}>, operandOnly:number}>}
+ *   {@code operandOnly} = 命中锚点、但只把该目录当操作对象参数（{@code --workspace <ws>}）而剔掉的条数
+ *   （"没算进来"与"没有这条进程"必须读得出来；见 {@link isOperandOnlyRef}）。
  */
 export async function scanProcessesByCwd(cwd, opts = {}) {
-  if (!cwd) return { enumerated: 0, matched: 0, via: '', enumErr: '缺少 cwd', anchors: [], procs: [] }
+  if (!cwd) {
+    return { enumerated: 0, matched: 0, via: '', enumErr: '缺少 cwd', anchors: [], procs: [], operandOnly: 0 }
+  }
   const anchors = scanAnchors(cwd, opts.includeChildren !== false)
   const listing = opts.listing || await listCommandLines()
-  const procs = selectSweepTargets(listing.procs, { ...opts, anchors })
+  const base = selectSweepTargets(listing.procs, { ...opts, anchors })
+  // [口径 2026-11-01] 只把工作区当**操作对象参数**的进程（`--workspace <ws>` 的驱动/工具脚本）
+  //   不是"这个工作区里跑起来的服务"：从事实里剔掉，但如实带回 `operandOnly` 条数
+  //   （"没算进来"与"没有这条进程"必须读得出来）。
+  const kept = []
+  let operandOnly = 0
+  for (const p of base) {
+    if (p.evidence === 'path' && isOperandOnlyRef(p.commandLine, anchors)) {
+      operandOnly += 1
+      continue
+    }
+    kept.push(p)
+  }
+  const procs = kept
     .map((p) => ({
       pid: p.pid,
       cmd: String(p.commandLine || '').replace(/\s+/g, ' ').trim().slice(0, 200),
@@ -399,6 +516,7 @@ export async function scanProcessesByCwd(cwd, opts = {}) {
     enumErr: listing.err,
     anchors,
     procs,
+    operandOnly,
   }
 }
 
@@ -448,7 +566,9 @@ export async function killOrphansByCwd(cwd, opts = {}) {
   const anchors = scanAnchors(cwd, opts.includeChildren !== false)
   const listing = opts.listing || await listCommandLines()
   const procs = listing.procs
-  const targets = selectSweepTargets(procs, { ...opts, anchors })
+  // 与只读 scan 同一口径（[口径 2026-11-01]）：把工作区当操作对象参数的工具进程（`--workspace <ws>`）
+  //   不算这个工作区的孤儿 —— 否则清扫会把"拿着这个目录干活的驱动/工具"也带走。
+  const targets = selectSweepTargets(procs, { ...opts, anchors, dropOperandOnlyPathRefs: true })
   const detail = []
   if (targets.length === 0) {
     console.log(`[sweep] cwd=${cwd} 枚举 ${procs.length} 条(via=${listing.via}, code=${listing.code}, `

@@ -2041,12 +2041,12 @@ app.post('/api/local/bash/sweep', async (req, res) => {
                 return res.json({ status: 'candidates', cwd, reason,
                     enumerated: scan.enumerated, matched: scan.matched, via: scan.via,
                     enumErr: scan.enumErr, anchors: scan.anchors, candidates: scan.procs,
-                    ownership: own.diag });
+                    operandOnly: scan.operandOnly, ownership: own.diag });
             }
             return res.json({ status: 'needs_confirmation', cwd, reason,
                 enumerated: scan.enumerated, matched: scan.matched, via: scan.via,
                 enumErr: scan.enumErr, anchors: scan.anchors, candidates: scan.procs,
-                ownership: own.diag });
+                operandOnly: scan.operandOnly, ownership: own.diag });
         }
         const r = await killOrphansByCwd(cwd, sel);
         // 诊断透传：枚举通道（via）/条数、命中条数、逐条的 taskkill 退出码与 stderr —— "一个都没
@@ -2127,6 +2127,8 @@ app.post('/api/local/bash/proc-scan', async (req, res) => {
         }
         res.json({ enumerated: r.enumerated, matched: r.matched, via: r.via,
             enumErr: r.enumErr, anchors: r.anchors || [], procs: r.procs, listen,
+            // [口径 2026-11-01] 命中锚点、但只把该目录当操作对象参数（`--workspace <ws>`）而剔掉的条数
+            operand_only: Number.isFinite(r.operandOnly) ? r.operandOnly : 0,
             ownership: own.diag, ports_recorded: portsRecorded });
     } catch (err) {
         res.status(500).json({ status: 'error', error: err.message });

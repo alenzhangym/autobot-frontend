@@ -1536,13 +1536,16 @@ async function executeSingleCommand(cmd, workspaceDir, onLog, sessionId) {
         const d = res.data || {}
         const ls = d.listen || {}
         onLog?.(`[AgentCMD] proc_scan cwd=${cwd} enumerated=${d.enumerated} matched=${d.matched}`
-          + ` via=${d.via} listen=${(ls.rows || []).length} err=${d.enumErr || ''}`
+          + ` operand_only=${d.operand_only || 0} via=${d.via} listen=${(ls.rows || []).length} err=${d.enumErr || ''}`
           + `${ls.err ? ' listenErr=' + ls.err : ''}`
           + ` own=${JSON.stringify(d.ownership || {})} ports=${JSON.stringify(d.ports_recorded || {})}\n`)
         return JSON.stringify({
           proc: 'scan', cwd,
           enumerated: Number.isFinite(d.enumerated) ? d.enumerated : -1,
           matched: Number.isFinite(d.matched) ? d.matched : -1,
+          // [口径 2026-11-01] 命中锚点、但只把该目录当操作对象参数（`--workspace <ws>`）而剔掉的条数：
+          //   让服务端分得清"没算进来"与"没有这条进程"。
+          operand_only: Number.isFinite(d.operand_only) ? d.operand_only : 0,
           via: d.via || '', enumErr: d.enumErr || '',
           // 归属锚点数（工作区根 + 一级子目录）：多模块仓库里服务常从子目录起，
           //   只按根扫会把"命中 0 条"读成"服务没起"。这一格让服务端知道覆盖范围到哪。
