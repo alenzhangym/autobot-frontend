@@ -1528,7 +1528,9 @@ async function executeSingleCommand(cmd, workspaceDir, onLog, sessionId) {
       //   以及它们各自在听哪些口。回答"前后端起没起来"必须先有这一格 —— 
       //   否则代码通道只能把缺口甩回给用户（"请提供日志 / 请自己 ps -ef"）。
       //   两个枚举的失败各自原样带回（enumErr / listen_err），不许折成"没有进程 / 没在听"。
-      const cwd = resolveCommandPath(workspaceDir, cmd.cwd || '')
+      // [键名容错] 模型常把工作区写成 path=/dir=（后端已归一，这里再兜一层：别的调用方也可能这么发）。
+      const rawScanCwd = String(cmd.cwd || cmd.path || cmd.dir || '').trim()
+      const cwd = resolveCommandPath(workspaceDir, rawScanCwd)
       try {
         const res = await localApi.post('/api/local/bash/proc-scan', { cwd })
         const d = res.data || {}
